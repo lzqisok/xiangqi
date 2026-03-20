@@ -1,0 +1,60 @@
+name: Bug Report
+description: 提交一个可复现的问题报告
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请尽量提供完整信息，便于快速定位问题。
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 实际发生了什么？预期应该是什么？
+      placeholder: 简要描述现象与预期
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请提供稳定复现路径
+      placeholder: |
+        1. 打开 ...
+        2. 选择 ...
+        3. 执行 ...
+        4. 出现 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与截图
+      description: 前端控制台日志、后端日志、截图/录屏（可选）
+      placeholder: 粘贴日志或补充截图链接
+
+  - type: input
+    id: os
+    attributes:
+      label: 操作系统
+      placeholder: macOS / Windows / Linux
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node 版本
+      placeholder: 例如 20.11.1
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: 浏览器版本
+      placeholder: 例如 Chrome 123

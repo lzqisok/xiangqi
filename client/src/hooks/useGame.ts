@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import {
   Board, Position, Move, MoveRecord, PieceColor,
-  GameMode, Difficulty, PlayerSide, GameStatus, WSMessage,
+  GameMode, Difficulty, PlayerSide, GameStatus, WSMessage, PlayerConfig,
 } from '../types'
 import { parseFen, boardToFen, applyMove, INITIAL_FEN, findKing } from '../engine/board'
 import { getLegalMoves, isInCheck, getGameStatus } from '../engine/rules'
@@ -15,10 +15,55 @@ interface UseGameOptions {
   playerSide: PlayerSide
   aiRedDifficulty: Difficulty
   aiBlackDifficulty: Difficulty
+  initialFen?: string
+  redPlayerConfig?: PlayerConfig
+  blackPlayerConfig?: PlayerConfig
 }
 
-export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiBlackDifficulty }: UseGameOptions) {
-  const [board, setBoard] = useState<Board>(() => parseFen(INITIAL_FEN).board)
+function getDefaultPlayers(
+  gameMode: GameMode | null,
+  difficulty: Difficulty,
+  playerSide: PlayerSide,
+  aiRedDifficulty: Difficulty,
+  aiBlackDifficulty: Difficulty,
+  redPlayerConfig?: PlayerConfig,
+  blackPlayerConfig?: PlayerConfig,
+): { red: PlayerConfig; black: PlayerConfig } {
+  if (gameMode === 'endgame' && redPlayerConfig && blackPlayerConfig) {
+    return { red: redPlayerConfig, black: blackPlayerConfig }
+  }
+
+  if (gameMode === 'human-vs-ai') {
+    return playerSide === 'red'
+      ? { red: { type: 'human' }, black: { type: 'ai', difficulty } }
+      : { red: { type: 'ai', difficulty }, black: { type: 'human' } }
+  }
+
+  if (gameMode === 'ai-vs-ai') {
+    return {
+      red: { type: 'ai', difficulty: aiRedDifficulty },
+      black: { type: 'ai', difficulty: aiBlackDifficulty },
+    }
+  }
+
+  return {
+    red: { type: 'human' },
+    black: { type: 'human' },
+  }
+}
+
+export function useGame({
+  gameMode,
+  difficulty,
+  playerSide,
+  aiRedDifficulty,
+  aiBlackDifficulty,
+  initialFen,
+  redPlayerConfig,
+  blackPlayerConfig,
+}: UseGameOptions) {
+  const resolvedInitialFen = initialFen || INITIAL_FEN
+  const [board, setBoard] = useState<Board>(() => parseFen(resolvedInitialFen).board)
   const [currentTurn, setCurrentTurn] = useState<PieceColor>('red')
   const [selectedPos, setSelectedPos] = useState<Position | null>(null)
   const [legalMoves, setLegalMoves] = useState<Position[]>([])
@@ -39,6 +84,16 @@ export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiB
   boardRef.current = board
   const turnRef = useRef(currentTurn)
   turnRef.current = currentTurn
+  const players = getDefaultPlayers(
+    gameMode,
+    difficulty,
+    playerSide,
+    aiRedDifficulty,
+    aiBlackDifficulty,
+    redPlayerConfig,
+    blackPlayerConfig,
+  )
+  const currentPlayerConfig = currentTurn === 'red' ? players.red : players.black
 
   const buildMoveFromUci = useCallback((uci: string, currentBoard: Board): Move | null => {
     const from = { row: parseInt(uci[1]), col: uci.charCodeAt(0) - 97 }
@@ -117,6 +172,9 @@ export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiB
   const prevGameMode = useRef(gameMode)
   const prevDifficulty = useRef(difficulty)
   const prevPlayerSide = useRef(playerSide)
+  const prevInitialFen = useRef(resolvedInitialFen)
+  const prevRedPlayerConfig = useRef(redPlayerConfig)
+  const prevBlackPlayerConfig = useRef(blackPlayerConfig)
 
   useEffect(() => {
     if (!gameMode) return
@@ -124,16 +182,22 @@ export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiB
     const modeChanged = prevGameMode.current !== gameMode
     const diffChanged = prevDifficulty.current !== difficulty
     const sideChanged = prevPlayerSide.current !== playerSide
+    const fenChanged = prevInitialFen.current !== resolvedInitialFen
+    const redConfigChanged = prevRedPlayerConfig.current !== redPlayerConfig
+    const blackConfigChanged = prevBlackPlayerConfig.current !== blackPlayerConfig
 
     prevGameMode.current = gameMode
     prevDifficulty.current = difficulty
     prevPlayerSide.current = playerSide
+    prevInitialFen.current = resolvedInitialFen
+    prevRedPlayerConfig.current = redPlayerConfig
+    prevBlackPlayerConfig.current = blackPlayerConfig
 
-    if (!modeChanged && !diffChanged && !sideChanged) return
+    if (!modeChanged && !diffChanged && !sideChanged && !fenChanged && !redConfigChanged && !blackConfigChanged) return
 
-    const { board: initBoard } = parseFen(INITIAL_FEN)
+    const { board: initBoard, turn } = parseFen(resolvedInitialFen)
     setBoard(initBoard)
-    setCurrentTurn('red')
+    setCurrentTurn(turn)
     setSelectedPos(null)
     setLegalMoves([])
     setMoveHistory([])
@@ -144,11 +208,15 @@ export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiB
     setEvaluation(null)
     setBestLine([])
     setAnalysisDepth(0)
-    setFlipped(gameMode === 'human-vs-ai' && playerSide === 'black')
+    setFlipped(
+      gameMode === 'human-vs-ai'
+        ? playerSide === 'black'
+        : false,
+    )
     setAiThinking(false)
     setHintThinking(false)
     setHintMove(null)
-  }, [gameMode, difficulty, playerSide, aiRedDifficulty, aiBlackDifficulty])
+  }, [gameMode, difficulty, playerSide, aiRedDifficulty, aiBlackDifficulty, resolvedInitialFen, redPlayerConfig, blackPlayerConfig])
 
   // Send init to server whenever connected or difficulty changes
   useEffect(() => {
@@ -158,25 +226,28 @@ export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiB
 
   // Trigger AI move
   useEffect(() => {
-    if (gameMode !== 'human-vs-ai') return
     if (gameStatus !== 'playing') return
     if (aiThinking) return
-
-    const isAiTurn = currentTurn !== playerSide
-    if (!isAiTurn) return
+    if (gameMode === 'ai-vs-ai') return
+    if (currentPlayerConfig.type !== 'ai') return
     if (!connected) return
 
     setAiThinking(true)
-    const sent = send({ type: 'move', fen: INITIAL_FEN, moves: uciMoves, difficulty })
+    const sent = send({
+      type: 'move',
+      fen: resolvedInitialFen,
+      moves: uciMoves,
+      difficulty: currentPlayerConfig.difficulty || difficulty,
+    })
     if (!sent) {
       setAiThinking(false)
     }
-  }, [currentTurn, gameMode, playerSide, gameStatus, connected, send, uciMoves, aiThinking, difficulty])
+  }, [gameStatus, aiThinking, gameMode, currentPlayerConfig, connected, send, resolvedInitialFen, uciMoves, difficulty])
 
   const handleCellClick = useCallback((pos: Position) => {
     if (gameStatus !== 'playing') return
     if (gameMode === 'ai-vs-ai') return
-    if (gameMode === 'human-vs-ai' && currentTurn !== playerSide) return
+    if (currentPlayerConfig.type === 'ai') return
     if (aiThinking) return
 
     const piece = board[pos.row][pos.col]
@@ -235,7 +306,7 @@ export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiB
       setSelectedPos(pos)
       setLegalMoves(getLegalMoves(board, pos))
     }
-  }, [board, selectedPos, legalMoves, currentTurn, gameMode, playerSide, gameStatus, aiThinking, uciMoves, moveHistory, currentMoveIndex])
+  }, [board, selectedPos, legalMoves, currentTurn, gameMode, currentPlayerConfig, gameStatus, aiThinking, uciMoves, moveHistory, currentMoveIndex])
 
   const inCheck = (() => {
     if (isInCheck(board, currentTurn)) {
@@ -246,13 +317,16 @@ export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiB
 
   const undo = useCallback(() => {
     if (currentMoveIndex < 0) return
-    const undoCount = gameMode === 'human-vs-ai' ? 2 : 1
+    const singleAiSide =
+      (players.red.type === 'ai' && players.black.type === 'human') ||
+      (players.red.type === 'human' && players.black.type === 'ai')
+    const undoCount = gameMode === 'human-vs-ai' || (gameMode === 'endgame' && singleAiSide) ? 2 : 1
     const targetIndex = Math.max(-1, currentMoveIndex - undoCount)
 
     if (targetIndex < 0) {
-      const { board: initBoard } = parseFen(INITIAL_FEN)
+      const { board: initBoard, turn } = parseFen(resolvedInitialFen)
       setBoard(initBoard)
-      setCurrentTurn('red')
+      setCurrentTurn(turn)
       setLastMove(null)
     } else {
       const record = moveHistory[targetIndex]
@@ -270,11 +344,14 @@ export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiB
     setAiThinking(false)
     setHintThinking(false)
     setHintMove(null)
-  }, [currentMoveIndex, moveHistory, gameMode, uciMoves])
+  }, [currentMoveIndex, moveHistory, gameMode, uciMoves, players, resolvedInitialFen])
 
   const redo = useCallback(() => {
     if (currentMoveIndex >= moveHistory.length - 1) return
-    const redoCount = gameMode === 'human-vs-ai' ? 2 : 1
+    const singleAiSide =
+      (players.red.type === 'ai' && players.black.type === 'human') ||
+      (players.red.type === 'human' && players.black.type === 'ai')
+    const redoCount = gameMode === 'human-vs-ai' || (gameMode === 'endgame' && singleAiSide) ? 2 : 1
     const targetIndex = Math.min(moveHistory.length - 1, currentMoveIndex + redoCount)
 
     const record = moveHistory[targetIndex]
@@ -290,7 +367,7 @@ export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiB
 
     const status = getGameStatus(nextBoard, turn)
     setGameStatus(status)
-  }, [currentMoveIndex, moveHistory, gameMode, uciMoves])
+  }, [currentMoveIndex, moveHistory, gameMode, uciMoves, players])
 
   const flip = useCallback(() => {
     setFlipped(f => !f)
@@ -336,15 +413,15 @@ export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiB
 
   const requestHint = useCallback(() => {
     if (!connected || gameStatus !== 'playing' || aiThinking || hintThinking) return
-    if (gameMode === 'human-vs-ai' && currentTurn !== playerSide) return
+    if (currentPlayerConfig.type !== 'human') return
 
     setHintThinking(true)
     setHintMove(null)
-    const sent = send({ type: 'hint', fen: INITIAL_FEN, moves: uciMoves, difficulty: 'master' })
+    const sent = send({ type: 'hint', fen: resolvedInitialFen, moves: uciMoves, difficulty: 'master' })
     if (!sent) {
       setHintThinking(false)
     }
-  }, [connected, gameStatus, aiThinking, hintThinking, gameMode, currentTurn, playerSide, send, uciMoves])
+  }, [connected, gameStatus, aiThinking, hintThinking, currentPlayerConfig, send, uciMoves, resolvedInitialFen])
 
   const nextAiMove = useCallback(() => {
     if (gameMode !== 'ai-vs-ai') return
@@ -353,18 +430,18 @@ export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiB
     const difficultyForTurn = currentTurn === 'red' ? aiRedDifficulty : aiBlackDifficulty
     setAiThinking(true)
     setHintMove(null)
-    const sent = send({ type: 'move', fen: INITIAL_FEN, moves: uciMoves, difficulty: difficultyForTurn })
+    const sent = send({ type: 'move', fen: resolvedInitialFen, moves: uciMoves, difficulty: difficultyForTurn })
     if (!sent) {
       setAiThinking(false)
     }
-  }, [gameMode, connected, gameStatus, aiThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves])
+  }, [gameMode, connected, gameStatus, aiThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, resolvedInitialFen])
 
   const canRequestHint =
     connected &&
     gameStatus === 'playing' &&
     !aiThinking &&
     !hintThinking &&
-    !(gameMode === 'human-vs-ai' && currentTurn !== playerSide)
+    currentPlayerConfig.type === 'human'
 
   const canStepAi =
     gameMode === 'ai-vs-ai' &&
@@ -402,5 +479,7 @@ export function useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiB
     nextAiMove,
     getCurrentFen,
     loadFen,
+    redPlayerConfig: players.red,
+    blackPlayerConfig: players.black,
   }
 }

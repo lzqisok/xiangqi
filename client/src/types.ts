@@ -28,10 +28,31 @@ export interface MoveRecord {
   source?: 'human' | 'ai-red' | 'ai-black'
 }
 
-export type GameMode = 'human-vs-ai' | 'human-vs-human' | 'ai-vs-ai'
+export type GameMode = 'human-vs-ai' | 'human-vs-human' | 'ai-vs-ai' | 'endgame'
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'master'
 export type PlayerSide = 'red' | 'black'
 export type GameStatus = 'playing' | 'red-wins' | 'black-wins' | 'draw'
+export type PlayerType = 'human' | 'ai'
+
+export interface PlayerConfig {
+  type: PlayerType
+  difficulty?: Difficulty
+}
+
+export type EndgameSource = 'builtin' | 'custom'
+
+export interface EndgameDefinition {
+  id: string
+  name: string
+  fen: string
+  description?: string
+  source: EndgameSource
+}
+
+export interface EndgameStartConfig {
+  red: PlayerConfig
+  black: PlayerConfig
+}
 
 export interface EngineInfo {
   depth: number

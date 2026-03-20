@@ -130,6 +130,12 @@ body {
   padding-left: 2px;
 }
 
+.scenario-name {
+  margin: 0 4px 12px;
+  font-size: 12px;
+  color: var(--accent);
+}
+
 .panel-buttons {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -333,6 +339,12 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+.endgame-library-card,
+.endgame-editor-card {
+  min-width: 680px;
+  max-width: 900px;
+}
+
 .start-card h1 {
   font-family: 'Noto Serif SC', serif;
   font-size: 42px;
@@ -401,6 +413,284 @@ body {
   border-color: #666;
   background: rgba(100, 100, 100, 0.18);
   color: #bbb;
+}
+
+.endgame-library-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.endgame-library-actions button,
+.endgame-copy-btn,
+.endgame-edit-btn,
+.endgame-delete-btn {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--btn-bg);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.endgame-library-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.endgame-filter-group {
+  flex-wrap: wrap;
+}
+
+.endgame-library-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.endgame-card {
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.2s, background 0.2s;
+}
+
+.endgame-card:hover {
+  border-color: rgba(226, 183, 20, 0.45);
+  transform: translateY(-1px);
+}
+
+.endgame-card.active {
+  border-color: var(--accent);
+  background: rgba(226, 183, 20, 0.08);
+}
+
+.endgame-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.endgame-card-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.endgame-card p {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.endgame-source {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+}
+
+.endgame-source.builtin {
+  color: var(--accent);
+}
+
+.endgame-source.custom {
+  color: #9bd4ff;
+}
+
+.endgame-fen-preview {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+  margin-bottom: 10px;
+}
+
+.endgame-delete-btn {
+  background: rgba(192, 57, 43, 0.18);
+  color: #f3b0a8;
+}
+
+.endgame-copy-btn {
+  background: rgba(226, 183, 20, 0.14);
+  color: var(--accent);
+}
+
+.endgame-edit-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.endgame-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.endgame-favorite-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.endgame-favorite-btn.active {
+  color: var(--accent);
+}
+
+.endgame-empty {
+  grid-column: 1 / -1;
+  color: var(--text-secondary);
+  padding: 18px 0;
+}
+
+.endgame-start-config {
+  text-align: left;
+  margin-top: 8px;
+}
+
+.endgame-start-config h3 {
+  font-family: 'Noto Serif SC', serif;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+
+.endgame-difficulty-group {
+  margin-top: 8px;
+}
+
+.endgame-input,
+.endgame-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-primary);
+  font-family: 'Noto Sans SC', sans-serif;
+  font-size: 14px;
+}
+
+.endgame-textarea {
+  resize: vertical;
+}
+
+.fen-field {
+  font-family: monospace;
+}
+
+.endgame-board-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.endgame-board-toolbar {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.endgame-board-turn,
+.endgame-board-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.endgame-board-turn span {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.endgame-board-turn button,
+.endgame-board-actions button {
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.endgame-board-turn button.active,
+.endgame-board-actions button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.endgame-piece-palette {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.palette-piece {
+  padding: 10px 0;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 18px;
+}
+
+.palette-piece.red {
+  color: #e57373;
+}
+
+.palette-piece.black {
+  color: #90caf9;
+}
+
+.palette-piece.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(226, 183, 20, 0.4);
+}
+
+.endgame-error {
+  text-align: left;
+  color: #f3b0a8;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.endgame-editor-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.endgame-editor-actions .cancel {
+  padding: 10px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
 }
 
 .start-btn {
@@ -505,5 +795,16 @@ body {
   }
   .analysis-bar {
     display: none;
+  }
+  .endgame-library-card,
+  .endgame-editor-card {
+    min-width: auto;
+    width: 100%;
+  }
+  .endgame-library-list {
+    grid-template-columns: 1fr;
+  }
+  .endgame-piece-palette {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }

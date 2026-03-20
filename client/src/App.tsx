@@ -1,10 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Board from './components/Board'
 import GamePanel from './components/GamePanel'
 import MoveHistory from './components/MoveHistory'
 import AnalysisBar from './components/AnalysisBar'
+import EndgameLibrary from './components/EndgameLibrary'
+import EndgameEditor from './components/EndgameEditor'
 import { useGame } from './hooks/useGame'
-import { GameMode, Difficulty, PlayerSide } from './types'
+import { BUILTIN_ENDGAMES } from './endgames/builtin'
+import { deleteCustomEndgame, loadCustomEndgames, loadFavoriteEndgameIds, toggleFavoriteEndgame, upsertCustomEndgame } from './endgames/storage'
+import { EndgameDefinition, EndgameStartConfig, GameMode, Difficulty, PlayerSide } from './types'
 
 export default function App() {
   const [gameMode, setGameMode] = useState<GameMode | null>(null)
@@ -14,8 +18,36 @@ export default function App() {
   const [aiBlackDifficulty, setAiBlackDifficulty] = useState<Difficulty>('medium')
   const [showAnalysis, setShowAnalysis] = useState(false)
   const [showFenDialog, setShowFenDialog] = useState<'import' | 'export' | null>(null)
+  const [selectedEndgame, setSelectedEndgame] = useState<EndgameDefinition | null>(null)
+  const [customEndgames, setCustomEndgames] = useState<EndgameDefinition[]>([])
+  const [favoriteEndgameIds, setFavoriteEndgameIds] = useState<string[]>([])
+  const [editingEndgame, setEditingEndgame] = useState(false)
+  const [editorDraft, setEditorDraft] = useState<{ id: string | null; name: string; description: string; fen: string }>({
+    id: null,
+    name: '',
+    description: '',
+    fen: '',
+  })
+  const [endgameConfig, setEndgameConfig] = useState<EndgameStartConfig>({
+    red: { type: 'human' },
+    black: { type: 'ai', difficulty: 'medium' },
+  })
 
-  const game = useGame({ gameMode, difficulty, playerSide, aiRedDifficulty, aiBlackDifficulty })
+  useEffect(() => {
+    setCustomEndgames(loadCustomEndgames())
+    setFavoriteEndgameIds(loadFavoriteEndgameIds())
+  }, [])
+
+  const game = useGame({
+    gameMode,
+    difficulty,
+    playerSide,
+    aiRedDifficulty,
+    aiBlackDifficulty,
+    initialFen: selectedEndgame?.fen,
+    redPlayerConfig: gameMode === 'endgame' ? endgameConfig.red : undefined,
+    blackPlayerConfig: gameMode === 'endgame' ? endgameConfig.black : undefined,
+  })
 
   if (!gameMode) {
     return <StartScreen onStart={(mode, diff, side, redDiff, blackDiff) => {
@@ -24,7 +56,76 @@ export default function App() {
       setPlayerSide(side)
       setAiRedDifficulty(redDiff)
       setAiBlackDifficulty(blackDiff)
+      setSelectedEndgame(null)
+      setEditingEndgame(false)
     }} />
+  }
+
+  if (editingEndgame) {
+    return (
+      <EndgameEditor
+        initialName={editorDraft.name}
+        initialDescription={editorDraft.description}
+        initialFen={editorDraft.fen}
+        onCancel={() => setEditingEndgame(false)}
+        onSave={({ name, description, fen }) => {
+          const saved = upsertCustomEndgame({
+            id: editorDraft.id || `custom-${Date.now()}`,
+            name,
+            description,
+            fen,
+            source: 'custom',
+          })
+          setCustomEndgames(saved)
+          setEditingEndgame(false)
+          if (gameMode === 'endgame' && !selectedEndgame) {
+            setEditorDraft({ id: null, name: '', description: '', fen: '' })
+          }
+        }}
+      />
+    )
+  }
+
+  if (gameMode === 'endgame' && !selectedEndgame) {
+    return (
+      <EndgameLibrary
+        builtinEndgames={BUILTIN_ENDGAMES}
+        customEndgames={customEndgames}
+        favoriteIds={favoriteEndgameIds}
+        onBack={() => {
+          setGameMode(null)
+          setEditingEndgame(false)
+        }}
+        onCreate={() => {
+          setEditorDraft({ id: null, name: '', description: '', fen: '' })
+          setEditingEndgame(true)
+        }}
+        onDelete={(id) => setCustomEndgames(deleteCustomEndgame(id))}
+        onEdit={(endgame) => {
+          setEditorDraft({
+            id: endgame.id,
+            name: endgame.name,
+            description: endgame.description || '',
+            fen: endgame.fen,
+          })
+          setEditingEndgame(true)
+        }}
+        onDuplicate={(endgame) => {
+          const saved = upsertCustomEndgame({
+            ...endgame,
+            id: `custom-${Date.now()}`,
+            name: `${endgame.name}-副本`,
+            source: 'custom',
+          })
+          setCustomEndgames(saved)
+        }}
+        onToggleFavorite={(id) => setFavoriteEndgameIds(toggleFavoriteEndgame(id))}
+        onStart={(endgame, config) => {
+          setSelectedEndgame(endgame)
+          setEndgameConfig(config)
+        }}
+      />
+    )
   }
 
   return (
@@ -54,16 +155,37 @@ export default function App() {
             difficulty={difficulty}
             aiRedDifficulty={aiRedDifficulty}
             aiBlackDifficulty={aiBlackDifficulty}
+            redPlayerConfig={game.redPlayerConfig}
+            blackPlayerConfig={game.blackPlayerConfig}
             gameStatus={game.gameStatus}
             flipped={game.flipped}
             showAnalysis={showAnalysis}
-            onNewGame={() => setGameMode(null)}
+            scenarioName={gameMode === 'endgame' ? selectedEndgame?.name ?? null : null}
+            onNewGame={() => {
+              if (gameMode === 'endgame') {
+                setSelectedEndgame(null)
+                setEditingEndgame(false)
+              } else {
+                setGameMode(null)
+              }
+            }}
             onUndo={game.undo}
             onRedo={game.redo}
             onFlip={game.flip}
             onToggleAnalysis={() => setShowAnalysis(!showAnalysis)}
             onExportFen={() => setShowFenDialog('export')}
             onImportFen={() => setShowFenDialog('import')}
+            onSaveAsEndgame={() => {
+              setEditorDraft({
+                id: null,
+                name: scenarioNameFromState(gameMode, selectedEndgame),
+                description: gameMode === 'endgame' && selectedEndgame
+                  ? `基于残局「${selectedEndgame.name}」另存`
+                  : '从当前局面保存',
+                fen: game.getCurrentFen(),
+              })
+              setEditingEndgame(true)
+            }}
             onHint={game.requestHint}
             onNextAiMove={game.nextAiMove}
             canUndo={game.canUndo}
@@ -100,6 +222,13 @@ export default function App() {
       )}
     </div>
   )
+}
+
+function scenarioNameFromState(gameMode: GameMode, selectedEndgame: EndgameDefinition | null): string {
+  if (gameMode === 'endgame' && selectedEndgame) {
+    return `${selectedEndgame.name}-副本`
+  }
+  return '自定义残局'
 }
 
 function FenDialog({ mode, fen, onClose, onLoad }: {
@@ -174,6 +303,10 @@ function StartScreen({ onStart }: {
               className={mode === 'ai-vs-ai' ? 'active' : ''}
               onClick={() => setMode('ai-vs-ai')}
             >AI 对战</button>
+            <button
+              className={mode === 'endgame' ? 'active' : ''}
+              onClick={() => setMode('endgame')}
+            >残局模式</button>
           </div>
         </div>
 

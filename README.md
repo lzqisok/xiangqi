@@ -51,6 +51,20 @@ xiangqi/
 - Pikafish 可执行文件
 - Pikafish NNUE 权重文件
 
+## 三平台快速启动
+
+| 平台 | Node / pnpm | 引擎文件 | 额外步骤 | 启动命令 |
+| --- | --- | --- | --- | --- |
+| Windows | 安装 Node.js 18+ 与 pnpm | `engine/pikafish.exe` + `engine/pikafish.nnue` | 如被 Defender 拦截，手动允许可执行文件 | `pnpm install`<br>`pnpm dev` |
+| macOS | 安装 Node.js 18+ 与 pnpm | `engine/pikafish` + `engine/pikafish.nnue` | 首次使用建议执行 `codesign --force --sign - engine/pikafish` | `pnpm install`<br>`pnpm dev` |
+| Linux | 安装 Node.js 18+ 与 pnpm | `engine/pikafish` + `engine/pikafish.nnue` | 确保二进制有执行权限：`chmod +x engine/pikafish` | `pnpm install`<br>`pnpm dev` |
+
+启动后默认访问：
+
+- 前端：`http://localhost:5173`
+- 后端：`http://localhost:3001`
+- WebSocket：`ws://localhost:3001/ws`
+
 ## 安装依赖
 
 ```bash
@@ -81,6 +95,38 @@ codesign --force --sign - /path/to/xiangqi/engine/pikafish
 make -j ARCH=x86-64-bmi2 build
 ```
 
+### Windows
+
+Windows 下更推荐直接使用 Pikafish 官方发布的预编译文件，而不是本地 `make build`。
+
+准备方式：
+
+1. 从 Pikafish Releases 下载 Windows 可执行文件
+2. 下载对应的 `pikafish.nnue` 权重文件
+3. 将它们放到项目根目录下的 `engine/` 中
+
+目录结构示例：
+
+```text
+engine/
+├── pikafish.exe
+└── pikafish.nnue
+```
+
+准备完成后直接执行：
+
+```bash
+pnpm install
+pnpm dev
+```
+
+注意事项：
+
+- Windows 不需要执行 `codesign`
+- 后端会自动优先查找 `engine/pikafish.exe`
+- 如果首次运行被 Windows Defender 拦截，需要手动允许该可执行文件
+- 建议将项目放在不含空格和中文的路径下，例如 `C:\\code\\xiangqi`
+
 ## 启动开发环境
 
 ```bash
@@ -106,7 +152,7 @@ pnpm build
 
 ## 当前引擎配置说明
 
-项目当前采用偏保守的引擎参数配置：
+当前代码中的引擎参数如下（以 `server/src/engine.ts` 为准）：
 
 - `easy`: 深度 8
 - `medium`: 深度 14
@@ -115,7 +161,7 @@ pnpm build
 - 线程数：自动按 CPU 核心数设置，上限 8
 - Hash：128 MB
 
-这样可以在保留较强棋力的同时，避免大师级出现过长的思考等待。
+这套配置在棋力和响应速度之间做了折中，适合日常本地对弈体验。
 
 ## 典型使用方式
 

@@ -1,4 +1,4 @@
-import { GameMode, Difficulty, GameStatus, PieceColor } from '../types'
+import { GameMode, Difficulty, GameStatus, PieceColor, PlayerConfig } from '../types'
 
 interface Props {
   currentTurn: PieceColor
@@ -6,9 +6,12 @@ interface Props {
   difficulty: Difficulty
   aiRedDifficulty: Difficulty
   aiBlackDifficulty: Difficulty
+  redPlayerConfig: PlayerConfig
+  blackPlayerConfig: PlayerConfig
   gameStatus: GameStatus
   flipped: boolean
   showAnalysis: boolean
+  scenarioName: string | null
   onNewGame: () => void
   onUndo: () => void
   onRedo: () => void
@@ -16,6 +19,7 @@ interface Props {
   onToggleAnalysis: () => void
   onExportFen: () => void
   onImportFen: () => void
+  onSaveAsEndgame: () => void
   onHint: () => void
   onNextAiMove: () => void
   canUndo: boolean
@@ -39,11 +43,17 @@ const STATUS_TEXT: Record<GameStatus, string> = {
   draw: '和棋',
 }
 
+function formatPlayerConfig(config: PlayerConfig): string {
+  if (config.type === 'human') return '人类'
+  return `AI(${DIFFICULTY_NAMES[config.difficulty || 'medium']})`
+}
+
 export default function GamePanel({
-  currentTurn, gameMode, difficulty, aiRedDifficulty, aiBlackDifficulty, gameStatus,
+  currentTurn, gameMode, difficulty, aiRedDifficulty, aiBlackDifficulty, redPlayerConfig, blackPlayerConfig, gameStatus,
   showAnalysis,
+  scenarioName,
   onNewGame, onUndo, onRedo, onFlip, onToggleAnalysis,
-  onExportFen, onImportFen,
+  onExportFen, onImportFen, onSaveAsEndgame,
   onHint, onNextAiMove,
   canUndo, canRedo, canRequestHint, canStepAi, hintThinking,
 }: Props) {
@@ -63,17 +73,23 @@ export default function GamePanel({
       </div>
 
       <div className="info-row">
-        <span>模式: {isHumanVsAi ? '人机对弈' : isAiVsAi ? 'AI 对战' : '双人对弈'}</span>
+        <span>模式: {isHumanVsAi ? '人机对弈' : isAiVsAi ? 'AI 对战' : gameMode === 'endgame' ? '残局模式' : '双人对弈'}</span>
         {isHumanVsAi && <span>难度: {DIFFICULTY_NAMES[difficulty]}</span>}
         {isAiVsAi && <span>红: {DIFFICULTY_NAMES[aiRedDifficulty]} / 黑: {DIFFICULTY_NAMES[aiBlackDifficulty]}</span>}
+        {gameMode === 'endgame' && (
+          <span>
+            红: {formatPlayerConfig(redPlayerConfig)} / 黑: {formatPlayerConfig(blackPlayerConfig)}
+          </span>
+        )}
       </div>
+      {scenarioName && <div className="scenario-name">{scenarioName}</div>}
 
       <div className="panel-section">
         <div className="panel-section-title">常用操作</div>
         <div className="panel-buttons panel-buttons-primary">
           <button className="primary-action" onClick={onUndo} disabled={!canUndo}>悔棋</button>
           <button className="primary-action" onClick={onRedo} disabled={!canRedo}>重做</button>
-          {isHumanVsAi && (
+          {!isAiVsAi && (
             <button className="primary-action accent-action" onClick={onHint} disabled={!canRequestHint}>
               {hintThinking ? '提示中...' : '提示'}
             </button>
@@ -98,6 +114,7 @@ export default function GamePanel({
           </button>
           <button onClick={onExportFen}>导出 FEN</button>
           <button onClick={onImportFen}>导入 FEN</button>
+          <button onClick={onSaveAsEndgame}>另存残局</button>
           <button className="new-game" onClick={onNewGame}>新游戏</button>
         </div>
       </div>

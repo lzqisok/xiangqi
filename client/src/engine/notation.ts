@@ -82,12 +82,13 @@ function numToChinese(n: number): string {
 
 export function posToUci(pos: Position): string {
   const col = String.fromCharCode('a'.charCodeAt(0) + pos.col)
-  return `${col}${pos.row}`
+  // UCI rank is from Red side perspective (bottom=0), UI board row is top=0.
+  return `${col}${9 - pos.row}`
 }
 
 export function uciToPos(uci: string): Position {
   const col = uci.charCodeAt(0) - 'a'.charCodeAt(0)
-  const row = parseInt(uci[1])
+  const row = 9 - parseInt(uci[1])
   return { row, col }
 }
 

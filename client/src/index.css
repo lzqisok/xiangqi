@@ -60,6 +60,36 @@ body {
   flex-shrink: 0;
 }
 
+.board-game-over-banner {
+  position: absolute;
+  /* River line: padding(40) + 4.5 * cell(64) */
+  top: calc(40px + 288px);
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 2;
+  color: var(--accent);
+  font-family: 'Noto Serif SC', serif;
+  font-weight: 900;
+  font-size: 40px;
+  letter-spacing: 6px;
+  text-shadow:
+    0 2px 2px rgba(0, 0, 0, 0.45),
+    0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.board-game-over-banner.red-win {
+  color: #e74c3c;
+}
+
+.board-game-over-banner.black-win {
+  color: #9db4ff;
+}
+
+.board-game-over-banner.draw {
+  color: var(--accent);
+}
+
 .board-canvas {
   border-radius: 8px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
@@ -332,10 +362,10 @@ body {
 .start-card {
   background: var(--bg-card);
   border-radius: 20px;
-  padding: 48px 40px;
+  padding: 48px 44px;
   box-shadow: 0 16px 64px rgba(0, 0, 0, 0.5);
   text-align: center;
-  min-width: 400px;
+  min-width: 460px;
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
@@ -376,6 +406,20 @@ body {
 .btn-group {
   display: flex;
   gap: 8px;
+}
+
+.mode-option-group {
+  margin-bottom: 28px;
+}
+
+.mode-btn-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.mode-btn-group button {
+  min-height: 44px;
 }
 
 .btn-group button {
@@ -801,10 +845,19 @@ body {
     min-width: auto;
     width: 100%;
   }
+  .start-card {
+    min-width: min(100%, 460px);
+    width: min(100%, 460px);
+    padding: 36px 24px;
+  }
   .endgame-library-list {
     grid-template-columns: 1fr;
   }
   .endgame-piece-palette {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .board-game-over-banner {
+    font-size: 30px;
+    letter-spacing: 2px;
   }
 }

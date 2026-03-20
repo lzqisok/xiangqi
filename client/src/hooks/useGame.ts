@@ -5,7 +5,7 @@ import {
 } from '../types'
 import { parseFen, boardToFen, applyMove, INITIAL_FEN, findKing } from '../engine/board'
 import { getLegalMoves, isInCheck, getGameStatus } from '../engine/rules'
-import { moveToNotation, moveToUci } from '../engine/notation'
+import { moveToNotation, moveToUci, uciToMove } from '../engine/notation'
 import { useWebSocket } from './useWebSocket'
 import { playMoveSound, playCaptureSound, playCheckSound, playGameOverSound } from '../audio'
 
@@ -96,8 +96,7 @@ export function useGame({
   const currentPlayerConfig = currentTurn === 'red' ? players.red : players.black
 
   const buildMoveFromUci = useCallback((uci: string, currentBoard: Board): Move | null => {
-    const from = { row: parseInt(uci[1]), col: uci.charCodeAt(0) - 97 }
-    const to = { row: parseInt(uci[3]), col: uci.charCodeAt(2) - 97 }
+    const { from, to } = uciToMove(uci)
     const piece = currentBoard[from.row][from.col]
     if (!piece) return null
     return {

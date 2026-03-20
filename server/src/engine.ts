@@ -25,12 +25,7 @@ const DEPTH_MAP: Record<Difficulty, number> = {
 }
 
 function toEngineFen(fen: string): string {
-  const parts = fen.trim().split(/\s+/)
-  if (parts.length < 2) return fen
-  const turn = parts[1]
-  if (turn === 'w') parts[1] = 'b'
-  else if (turn === 'b') parts[1] = 'w'
-  return parts.join(' ')
+  return fen.trim()
 }
 
 function getEngineThreads(): number {

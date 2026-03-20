@@ -140,6 +140,7 @@ export default function App() {
         )}
         <Board
           board={game.board}
+          gameStatus={game.gameStatus}
           selectedPos={game.selectedPos}
           legalMoves={game.legalMoves}
           lastMove={game.lastMove}
@@ -288,9 +289,9 @@ function StartScreen({ onStart }: {
         <h1>中国象棋</h1>
         <p className="subtitle">基于 Pikafish 引擎</p>
 
-        <div className="option-group">
+        <div className="option-group mode-option-group">
           <label>游戏模式</label>
-          <div className="btn-group">
+          <div className="btn-group mode-btn-group">
             <button
               className={mode === 'human-vs-ai' ? 'active' : ''}
               onClick={() => setMode('human-vs-ai')}

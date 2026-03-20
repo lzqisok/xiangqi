@@ -1,9 +1,10 @@
 import { useRef, useEffect, useCallback } from 'react'
-import { Board as BoardType, Position, Move } from '../types'
+import { Board as BoardType, Position, Move, GameStatus } from '../types'
 import { ROWS, COLS } from '../engine/board'
 
 interface Props {
   board: BoardType
+  gameStatus: GameStatus
   selectedPos: Position | null
   legalMoves: Position[]
   lastMove: Move | null
@@ -24,7 +25,19 @@ const PIECE_CHARS: Record<string, Record<string, string>> = {
   black: { k: '将', a: '士', b: '象', n: '馬', r: '車', c: '砲', p: '卒' },
 }
 
-export default function Board({ board, selectedPos, legalMoves, lastMove, hintMove, inCheck, flipped, onCellClick }: Props) {
+const GAME_OVER_TEXT: Record<Exclude<GameStatus, 'playing'>, string> = {
+  'red-wins': '红方胜',
+  'black-wins': '黑方胜',
+  draw: '和棋',
+}
+
+const GAME_OVER_CLASS: Record<Exclude<GameStatus, 'playing'>, string> = {
+  'red-wins': 'red-win',
+  'black-wins': 'black-win',
+  draw: 'draw',
+}
+
+export default function Board({ board, gameStatus, selectedPos, legalMoves, lastMove, hintMove, inCheck, flipped, onCellClick }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animRef = useRef<{
     piece: BoardType[0][0]
@@ -214,6 +227,11 @@ export default function Board({ board, selectedPos, legalMoves, lastMove, hintMo
         className="board-canvas"
         onClick={handleClick}
       />
+      {gameStatus !== 'playing' && (
+        <div className={`board-game-over-banner ${GAME_OVER_CLASS[gameStatus]}`} aria-live="polite">
+          {GAME_OVER_TEXT[gameStatus]}
+        </div>
+      )}
     </div>
   )
 }

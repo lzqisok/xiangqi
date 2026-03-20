@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+*.log
+engine/pikafish
+engine/*.nnue
+.DS_Store
+.cursor/
+client/dist/
+server/dist/
+*.tsbuildinfo

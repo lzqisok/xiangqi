@@ -1,0 +1,294 @@
+import { useRef, useEffect, useCallback } from 'react'
+import { Board as BoardType, Position, Move } from '../types'
+import { ROWS, COLS } from '../engine/board'
+
+interface Props {
+  board: BoardType
+  selectedPos: Position | null
+  legalMoves: Position[]
+  lastMove: Move | null
+  hintMove: Move | null
+  inCheck: Position | null
+  flipped: boolean
+  onCellClick: (pos: Position) => void
+}
+
+const CELL_SIZE = 64
+const PADDING = 40
+const PIECE_RADIUS = 27
+const BOARD_WIDTH = (COLS - 1) * CELL_SIZE + PADDING * 2
+const BOARD_HEIGHT = (ROWS - 1) * CELL_SIZE + PADDING * 2
+
+const PIECE_CHARS: Record<string, Record<string, string>> = {
+  red: { k: '帅', a: '仕', b: '相', n: '馬', r: '車', c: '炮', p: '兵' },
+  black: { k: '将', a: '士', b: '象', n: '馬', r: '車', c: '砲', p: '卒' },
+}
+
+export default function Board({ board, selectedPos, legalMoves, lastMove, hintMove, inCheck, flipped, onCellClick }: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const animRef = useRef<{
+    piece: BoardType[0][0]
+    fromX: number; fromY: number
+    toX: number; toY: number
+    progress: number
+    startTime: number
+  } | null>(null)
+
+  const getPixelPos = useCallback((row: number, col: number): [number, number] => {
+    const r = flipped ? ROWS - 1 - row : row
+    const c = flipped ? COLS - 1 - col : col
+    return [PADDING + c * CELL_SIZE, PADDING + r * CELL_SIZE]
+  }, [flipped])
+
+  const draw = useCallback((ctx: CanvasRenderingContext2D) => {
+    const dpr = window.devicePixelRatio || 1
+    ctx.save()
+    ctx.scale(dpr, dpr)
+
+    // Background
+    ctx.fillStyle = '#f0d9a0'
+    ctx.fillRect(0, 0, BOARD_WIDTH, BOARD_HEIGHT)
+
+    // Board border
+    ctx.strokeStyle = '#5c3d1a'
+    ctx.lineWidth = 2.5
+    ctx.strokeRect(PADDING - 2, PADDING - 2, (COLS - 1) * CELL_SIZE + 4, (ROWS - 1) * CELL_SIZE + 4)
+
+    ctx.lineWidth = 1.2
+    ctx.strokeStyle = '#5c3d1a'
+
+    // Horizontal lines
+    for (let r = 0; r < ROWS; r++) {
+      const y = PADDING + r * CELL_SIZE
+      ctx.beginPath()
+      ctx.moveTo(PADDING, y)
+      ctx.lineTo(PADDING + (COLS - 1) * CELL_SIZE, y)
+      ctx.stroke()
+    }
+
+    // Vertical lines (split by river)
+    for (let c = 0; c < COLS; c++) {
+      const x = PADDING + c * CELL_SIZE
+      if (c === 0 || c === COLS - 1) {
+        ctx.beginPath()
+        ctx.moveTo(x, PADDING)
+        ctx.lineTo(x, PADDING + (ROWS - 1) * CELL_SIZE)
+        ctx.stroke()
+      } else {
+        ctx.beginPath()
+        ctx.moveTo(x, PADDING)
+        ctx.lineTo(x, PADDING + 4 * CELL_SIZE)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(x, PADDING + 5 * CELL_SIZE)
+        ctx.lineTo(x, PADDING + 9 * CELL_SIZE)
+        ctx.stroke()
+      }
+    }
+
+    // Palace diagonals
+    const drawPalaceDiag = (topRow: number) => {
+      const [x1, y1] = getPixelPos(topRow, 3)
+      const [x2, y2] = getPixelPos(topRow + 2, 5)
+      const [x3, y3] = getPixelPos(topRow, 5)
+      const [x4, y4] = getPixelPos(topRow + 2, 3)
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(x3, y3); ctx.lineTo(x4, y4); ctx.stroke()
+    }
+    drawPalaceDiag(0)
+    drawPalaceDiag(7)
+
+    // River text
+    ctx.fillStyle = '#5c3d1a'
+    ctx.font = '26px "Noto Serif SC", serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    const riverY = PADDING + 4.5 * CELL_SIZE
+    ctx.fillText('楚 河', PADDING + 1.5 * CELL_SIZE, riverY)
+    ctx.fillText('汉 界', PADDING + 6.5 * CELL_SIZE, riverY)
+
+    // Star points (position markers)
+    const starPoints = [
+      [2, 1], [2, 7], [3, 0], [3, 2], [3, 4], [3, 6], [3, 8],
+      [6, 0], [6, 2], [6, 4], [6, 6], [6, 8], [7, 1], [7, 7],
+    ]
+    for (const [r, c] of starPoints) {
+      drawStarPoint(ctx, ...getPixelPos(r, c), c, r)
+    }
+
+    // Highlights
+    if (lastMove) {
+      highlightCell(ctx, ...getPixelPos(lastMove.from.row, lastMove.from.col), 'rgba(100, 149, 237, 0.35)')
+      highlightCell(ctx, ...getPixelPos(lastMove.to.row, lastMove.to.col), 'rgba(100, 149, 237, 0.35)')
+    }
+    if (hintMove) {
+      outlineCell(ctx, ...getPixelPos(hintMove.from.row, hintMove.from.col), 'rgba(226, 183, 20, 0.9)')
+      outlineCell(ctx, ...getPixelPos(hintMove.to.row, hintMove.to.col), 'rgba(46, 204, 113, 0.9)')
+    }
+    if (selectedPos) {
+      highlightCell(ctx, ...getPixelPos(selectedPos.row, selectedPos.col), 'rgba(255, 215, 0, 0.5)')
+    }
+    if (inCheck) {
+      highlightCell(ctx, ...getPixelPos(inCheck.row, inCheck.col), 'rgba(255, 0, 0, 0.35)')
+    }
+
+    // Legal move dots
+    for (const m of legalMoves) {
+      const [mx, my] = getPixelPos(m.row, m.col)
+      const isCapture = board[m.row][m.col] !== null
+      if (isCapture) {
+        ctx.strokeStyle = 'rgba(0, 180, 80, 0.6)'
+        ctx.lineWidth = 3
+        ctx.beginPath()
+        ctx.arc(mx, my, PIECE_RADIUS + 2, 0, Math.PI * 2)
+        ctx.stroke()
+      } else {
+        ctx.fillStyle = 'rgba(0, 180, 80, 0.45)'
+        ctx.beginPath()
+        ctx.arc(mx, my, 8, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+
+    // Pieces
+    const animating = animRef.current
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const piece = board[r][c]
+        if (!piece) continue
+        if (animating && animating.piece === piece) continue
+        const [px, py] = getPixelPos(r, c)
+        drawPiece(ctx, px, py, piece.color, PIECE_CHARS[piece.color][piece.type])
+      }
+    }
+
+    // Animated piece
+    if (animating && animating.piece) {
+      const t = easeOutCubic(animating.progress)
+      const x = animating.fromX + (animating.toX - animating.fromX) * t
+      const y = animating.fromY + (animating.toY - animating.fromY) * t
+      drawPiece(ctx, x, y, animating.piece.color, PIECE_CHARS[animating.piece.color][animating.piece.type])
+    }
+
+    ctx.restore()
+  }, [board, selectedPos, legalMoves, lastMove, hintMove, inCheck, flipped, getPixelPos])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = BOARD_WIDTH * dpr
+    canvas.height = BOARD_HEIGHT * dpr
+    canvas.style.width = `${BOARD_WIDTH}px`
+    canvas.style.height = `${BOARD_HEIGHT}px`
+    const ctx = canvas.getContext('2d')!
+    draw(ctx)
+  }, [draw])
+
+  const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+
+    let minDist = Infinity
+    let closest: Position | null = null
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const [px, py] = getPixelPos(r, c)
+        const dist = Math.hypot(x - px, y - py)
+        if (dist < CELL_SIZE * 0.5 && dist < minDist) {
+          minDist = dist
+          closest = { row: r, col: c }
+        }
+      }
+    }
+    if (closest) onCellClick(closest)
+  }, [getPixelPos, onCellClick])
+
+  return (
+    <div className="board-wrapper">
+      <canvas
+        ref={canvasRef}
+        className="board-canvas"
+        onClick={handleClick}
+      />
+    </div>
+  )
+}
+
+function drawPiece(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, char: string) {
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.18)'
+  ctx.beginPath()
+  ctx.arc(x + 1.5, y + 2.5, PIECE_RADIUS, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Piece body
+  const grad = ctx.createRadialGradient(x - 6, y - 6, 2, x, y, PIECE_RADIUS)
+  grad.addColorStop(0, '#fff8e8')
+  grad.addColorStop(1, '#e8d5a8')
+  ctx.fillStyle = grad
+  ctx.beginPath()
+  ctx.arc(x, y, PIECE_RADIUS, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Border
+  ctx.strokeStyle = '#8b6914'
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  ctx.arc(x, y, PIECE_RADIUS, 0, Math.PI * 2)
+  ctx.stroke()
+
+  // Inner border
+  ctx.strokeStyle = color === 'red' ? '#c0392b' : '#1a1a2e'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.arc(x, y, PIECE_RADIUS - 4, 0, Math.PI * 2)
+  ctx.stroke()
+
+  // Text
+  ctx.fillStyle = color === 'red' ? '#c0392b' : '#1a1a2e'
+  ctx.font = 'bold 24px "Noto Serif SC", serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(char, x, y + 1)
+}
+
+function highlightCell(ctx: CanvasRenderingContext2D, x: number, y: number, color: string) {
+  ctx.fillStyle = color
+  ctx.fillRect(x - CELL_SIZE / 2, y - CELL_SIZE / 2, CELL_SIZE, CELL_SIZE)
+}
+
+function outlineCell(ctx: CanvasRenderingContext2D, x: number, y: number, color: string) {
+  ctx.strokeStyle = color
+  ctx.lineWidth = 3
+  ctx.strokeRect(x - CELL_SIZE / 2 + 2, y - CELL_SIZE / 2 + 2, CELL_SIZE - 4, CELL_SIZE - 4)
+}
+
+function drawStarPoint(ctx: CanvasRenderingContext2D, x: number, y: number, col: number, _row: number) {
+  const len = 6
+  const gap = 4
+  ctx.strokeStyle = '#5c3d1a'
+  ctx.lineWidth = 1
+
+  const dirs: [number, number][] = []
+  if (col > 0) { dirs.push([-1, -1]); dirs.push([-1, 1]) }
+  if (col < COLS - 1) { dirs.push([1, -1]); dirs.push([1, 1]) }
+
+  for (const [dx, dy] of dirs) {
+    ctx.beginPath()
+    ctx.moveTo(x + dx * gap, y + dy * gap)
+    ctx.lineTo(x + dx * gap, y + dy * (gap + len))
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(x + dx * gap, y + dy * gap)
+    ctx.lineTo(x + dx * (gap + len), y + dy * gap)
+    ctx.stroke()
+  }
+}
+
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3)
+}

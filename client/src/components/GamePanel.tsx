@@ -22,6 +22,8 @@ interface Props {
   onSaveAsEndgame: () => void
   onHint: () => void
   onNextAiMove: () => void
+  aiVsAiAutoStep: boolean
+  onToggleAiVsAiAuto: () => void
   canUndo: boolean
   canRedo: boolean
   canRequestHint: boolean
@@ -54,7 +56,7 @@ export default function GamePanel({
   scenarioName,
   onNewGame, onUndo, onRedo, onFlip, onToggleAnalysis,
   onExportFen, onImportFen, onSaveAsEndgame,
-  onHint, onNextAiMove,
+  onHint, onNextAiMove, aiVsAiAutoStep, onToggleAiVsAiAuto,
   canUndo, canRedo, canRequestHint, canStepAi, hintThinking,
 }: Props) {
   const isAiVsAi = gameMode === 'ai-vs-ai'
@@ -95,9 +97,19 @@ export default function GamePanel({
             </button>
           )}
           {isAiVsAi && (
-            <button className="primary-action accent-action" onClick={onNextAiMove} disabled={!canStepAi}>
-              下一步
-            </button>
+            <>
+              <button className="primary-action accent-action" onClick={onNextAiMove} disabled={!canStepAi}>
+                下一步
+              </button>
+              <button
+                type="button"
+                className={`primary-action ${aiVsAiAutoStep ? 'auto-active' : ''}`}
+                onClick={onToggleAiVsAiAuto}
+                disabled={gameStatus !== 'playing' || (!aiVsAiAutoStep && !canStepAi)}
+              >
+                {aiVsAiAutoStep ? '暂停' : '自动'}
+              </button>
+            </>
           )}
         </div>
       </div>

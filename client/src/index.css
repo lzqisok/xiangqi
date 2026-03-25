@@ -226,6 +226,15 @@ body {
   background: var(--success);
 }
 
+.panel-buttons .primary-action.auto-active {
+  background: var(--success);
+  color: #fff;
+}
+
+.panel-buttons .primary-action.auto-active:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
 /* Move History */
 .move-history {
   background: var(--bg-card);

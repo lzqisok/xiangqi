@@ -189,6 +189,8 @@ export default function App() {
             }}
             onHint={game.requestHint}
             onNextAiMove={game.nextAiMove}
+            aiVsAiAutoStep={game.aiVsAiAutoStep}
+            onToggleAiVsAiAuto={() => game.setAiVsAiAutoStep(s => !s)}
             canUndo={game.canUndo}
             canRedo={game.canRedo}
             canRequestHint={game.canRequestHint}

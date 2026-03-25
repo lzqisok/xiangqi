@@ -79,11 +79,14 @@ export function useGame({
   const [aiThinking, setAiThinking] = useState(false)
   const [hintThinking, setHintThinking] = useState(false)
   const [hintMove, setHintMove] = useState<Move | null>(null)
+  const [aiVsAiAutoStep, setAiVsAiAutoStep] = useState(false)
 
   const boardRef = useRef(board)
   boardRef.current = board
   const turnRef = useRef(currentTurn)
   turnRef.current = currentTurn
+  const aiThinkingRef = useRef(aiThinking)
+  aiThinkingRef.current = aiThinking
   const players = getDefaultPlayers(
     gameMode,
     difficulty,
@@ -215,7 +218,16 @@ export function useGame({
     setAiThinking(false)
     setHintThinking(false)
     setHintMove(null)
+    if (gameMode !== 'ai-vs-ai') {
+      setAiVsAiAutoStep(false)
+    }
   }, [gameMode, difficulty, playerSide, aiRedDifficulty, aiBlackDifficulty, resolvedInitialFen, redPlayerConfig, blackPlayerConfig])
+
+  useEffect(() => {
+    if (gameMode === 'ai-vs-ai' && gameStatus !== 'playing') {
+      setAiVsAiAutoStep(false)
+    }
+  }, [gameMode, gameStatus])
 
   // Send init to server whenever connected or difficulty changes
   useEffect(() => {
@@ -422,9 +434,9 @@ export function useGame({
     }
   }, [connected, gameStatus, aiThinking, hintThinking, currentPlayerConfig, send, uciMoves, resolvedInitialFen])
 
-  const nextAiMove = useCallback(() => {
+  const triggerAiVsAiMove = useCallback(() => {
     if (gameMode !== 'ai-vs-ai') return
-    if (!connected || gameStatus !== 'playing' || aiThinking) return
+    if (!connected || gameStatus !== 'playing' || aiThinkingRef.current) return
 
     const difficultyForTurn = currentTurn === 'red' ? aiRedDifficulty : aiBlackDifficulty
     setAiThinking(true)
@@ -433,7 +445,16 @@ export function useGame({
     if (!sent) {
       setAiThinking(false)
     }
-  }, [gameMode, connected, gameStatus, aiThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, resolvedInitialFen])
+  }, [gameMode, connected, gameStatus, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, resolvedInitialFen])
+
+  useEffect(() => {
+    if (gameMode !== 'ai-vs-ai' || !aiVsAiAutoStep) return
+    triggerAiVsAiMove()
+  }, [gameMode, aiVsAiAutoStep, triggerAiVsAiMove, uciMoves])
+
+  const nextAiMove = useCallback(() => {
+    triggerAiVsAiMove()
+  }, [triggerAiVsAiMove])
 
   const canRequestHint =
     connected &&
@@ -476,6 +497,8 @@ export function useGame({
     jumpToMove,
     requestHint,
     nextAiMove,
+    aiVsAiAutoStep,
+    setAiVsAiAutoStep,
     getCurrentFen,
     loadFen,
     redPlayerConfig: players.red,

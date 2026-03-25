@@ -105,6 +105,7 @@ export default function EndgameBoardEditor({
 
       <Board
         board={board}
+        gameStatus="playing"
         selectedPos={null}
         legalMoves={[]}
         lastMove={null}

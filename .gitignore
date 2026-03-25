@@ -5,7 +5,9 @@ dist/
 engine/pikafish
 engine/*.nnue
 .DS_Store
-.cursor/
+.cursor/*
+!.cursor/skills/
+!.cursor/skills/**
 client/dist/
 server/dist/
 *.tsbuildinfo

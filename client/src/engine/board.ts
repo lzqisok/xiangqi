@@ -23,8 +23,15 @@ const PIECE_MAP: Record<string, { type: PieceType; color: PieceColor }> = {
 }
 
 export function parseFen(fen: string): { board: Board; turn: PieceColor } {
-  const parts = fen.split(' ')
-  const rows = parts[0].split('/')
+  const parts = fen.trim().split(/\s+/)
+  const rows = parts[0]?.split('/') ?? []
+  if (rows.length !== ROWS) {
+    throw new Error('Invalid FEN: expected 10 rows')
+  }
+  if (parts[1] !== 'w' && parts[1] !== 'b') {
+    throw new Error('Invalid FEN: expected side to move')
+  }
+
   const board: Board = []
 
   for (let r = 0; r < ROWS; r++) {
@@ -35,8 +42,11 @@ export function parseFen(fen: string): { board: Board; turn: PieceColor } {
       } else {
         const p = PIECE_MAP[ch]
         if (p) row.push({ type: p.type, color: p.color })
-        else row.push(null)
+        else throw new Error(`Invalid FEN: unknown piece ${ch}`)
       }
+    }
+    if (row.length !== COLS) {
+      throw new Error('Invalid FEN: row width must be 9')
     }
     board.push(row)
   }

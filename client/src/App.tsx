@@ -44,6 +44,7 @@ export default function App() {
     playerSide,
     aiRedDifficulty,
     aiBlackDifficulty,
+    analysisEnabled: showAnalysis,
     initialFen: selectedEndgame?.fen,
     redPlayerConfig: gameMode === 'endgame' ? endgameConfig.red : undefined,
     blackPlayerConfig: gameMode === 'endgame' ? endgameConfig.black : undefined,

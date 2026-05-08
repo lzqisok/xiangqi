@@ -41,6 +41,8 @@ export class PikafishEngine extends EventEmitter {
   private buffer = ''
   private difficulty: Difficulty = 'medium'
   private threads = 1
+  private searching = false
+  private commandQueue: Promise<void> = Promise.resolve()
 
   async init(): Promise<boolean> {
     const engineDir = path.resolve(process.cwd(), '../engine')
@@ -120,6 +122,10 @@ export class PikafishEngine extends EventEmitter {
   }
 
   async getBestMove(fen: string, moves: string[]): Promise<string | null> {
+    return this.enqueue(() => this.getBestMoveLocked(fen, moves))
+  }
+
+  private async getBestMoveLocked(fen: string, moves: string[]): Promise<string | null> {
     if (!this.ready || !this.process) {
       console.error('Engine not ready, attempting reinit...')
       const ok = await this.init()
@@ -127,6 +133,7 @@ export class PikafishEngine extends EventEmitter {
     }
 
     try {
+      await this.stopSearchIfNeeded()
       const depth = DEPTH_MAP[this.difficulty]
       this.send('isready')
       await this.waitFor('readyok', 5000)
@@ -137,9 +144,11 @@ export class PikafishEngine extends EventEmitter {
       }
       this.send(posCmd)
 
+      this.searching = true
       this.send(`go depth ${depth}`)
 
       const result = await this.waitFor('bestmove', 60000)
+      this.searching = false
       if (result) {
         const parts = result.split(' ')
         const idx = parts.indexOf('bestmove')
@@ -150,25 +159,30 @@ export class PikafishEngine extends EventEmitter {
     } catch (err) {
       console.error('getBestMove error:', err)
       this.ready = false
+      this.searching = false
     }
     return null
   }
 
   async analyze(fen: string, moves: string[]): Promise<void> {
+    return this.enqueue(() => this.analyzeLocked(fen, moves))
+  }
+
+  private async analyzeLocked(fen: string, moves: string[]): Promise<void> {
     if (!this.ready || !this.process) return
 
+    await this.stopSearchIfNeeded()
     let posCmd = `position fen ${toEngineFen(fen)}`
     if (moves.length > 0) {
       posCmd += ` moves ${moves.join(' ')}`
     }
     this.send(posCmd)
+    this.searching = true
     this.send('go infinite')
   }
 
   stopAnalysis() {
-    if (this.ready && this.process) {
-      this.send('stop')
-    }
+    void this.enqueue(() => this.stopSearchIfNeeded())
   }
 
   private send(cmd: string) {
@@ -188,6 +202,7 @@ export class PikafishEngine extends EventEmitter {
     }
 
     if (line.startsWith('bestmove')) {
+      this.searching = false
       this.emit('line', line)
     } else if (line === 'uciok' || line === 'readyok') {
       this.emit('line', line)
@@ -249,6 +264,24 @@ export class PikafishEngine extends EventEmitter {
 
       this.on('line', handler)
     })
+  }
+
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.commandQueue.then(task, task)
+    this.commandQueue = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  private async stopSearchIfNeeded(): Promise<void> {
+    if (!this.ready || !this.process || !this.searching) return
+    this.send('stop')
+    try {
+      await this.waitFor('bestmove', 5000)
+    } catch {
+      this.ready = false
+    } finally {
+      this.searching = false
+    }
   }
 
   destroy() {

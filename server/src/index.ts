@@ -62,6 +62,7 @@ wss.on('connection', async (ws) => {
 
           const requestDifficulty = msg.difficulty || currentDifficulty
           engine.setDifficulty(requestDifficulty)
+          const requestId = msg.requestId
           const fen = msg.fen || INITIAL_FEN
           const moves: string[] = msg.moves || []
 
@@ -71,6 +72,7 @@ wss.on('connection', async (ws) => {
             if (bestMove && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({
                 type: 'bestmove',
+                requestId,
                 move: bestMove,
                 elapsedMs: Date.now() - startedAt,
                 requestKind: 'move',
@@ -93,6 +95,7 @@ wss.on('connection', async (ws) => {
           }
 
           engine.setDifficulty(msg.difficulty || 'master')
+          const requestId = msg.requestId
           const fen = msg.fen || INITIAL_FEN
           const moves: string[] = msg.moves || []
 
@@ -102,6 +105,7 @@ wss.on('connection', async (ws) => {
             if (bestMove && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({
                 type: 'bestmove',
+                requestId,
                 move: bestMove,
                 elapsedMs: Date.now() - startedAt,
                 requestKind: 'hint',
@@ -138,6 +142,10 @@ wss.on('connection', async (ws) => {
         }
 
         case 'stop': {
+          if (infoHandler && sharedEngine) {
+            sharedEngine.removeListener('info', infoHandler)
+            infoHandler = null
+          }
           if (sharedEngine && engineReady) {
             sharedEngine.stopAnalysis()
           }

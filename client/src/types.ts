@@ -64,10 +64,10 @@ export interface EngineInfo {
 
 export type WSMessage =
   | { type: 'init'; difficulty: Difficulty }
-  | { type: 'move'; fen: string; moves: string[]; difficulty?: Difficulty }
-  | { type: 'hint'; fen: string; moves: string[]; difficulty?: Difficulty }
-  | { type: 'analyze'; fen: string; moves: string[] }
+  | { type: 'move'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty }
+  | { type: 'hint'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty }
+  | { type: 'analyze'; requestId: string; fen: string; moves: string[] }
   | { type: 'stop' }
-  | { type: 'bestmove'; move: string; ponder?: string; elapsedMs?: number; requestKind?: 'move' | 'hint' }
+  | { type: 'bestmove'; requestId?: string; move: string; ponder?: string; elapsedMs?: number; requestKind?: 'move' | 'hint' }
   | { type: 'info'; data: EngineInfo }
   | { type: 'error'; message: string }

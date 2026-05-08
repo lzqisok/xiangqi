@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Board, Position, Move, MoveRecord, PieceColor,
   GameMode, Difficulty, PlayerSide, GameStatus, WSMessage, PlayerConfig,
@@ -15,6 +15,7 @@ interface UseGameOptions {
   playerSide: PlayerSide
   aiRedDifficulty: Difficulty
   aiBlackDifficulty: Difficulty
+  analysisEnabled?: boolean
   initialFen?: string
   redPlayerConfig?: PlayerConfig
   blackPlayerConfig?: PlayerConfig
@@ -52,17 +53,34 @@ function getDefaultPlayers(
   }
 }
 
+function uciListFromRecords(records: MoveRecord[]): string[] {
+  return records.map(r => moveToUci(r.move.from, r.move.to))
+}
+
+type PendingEngineRequest = {
+  id: string
+  kind: 'move' | 'hint'
+  fen: string
+  movesKey: string
+}
+
+function makeRequestId(kind: string): string {
+  return `${kind}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
 export function useGame({
   gameMode,
   difficulty,
   playerSide,
   aiRedDifficulty,
   aiBlackDifficulty,
+  analysisEnabled = false,
   initialFen,
   redPlayerConfig,
   blackPlayerConfig,
 }: UseGameOptions) {
   const resolvedInitialFen = initialFen || INITIAL_FEN
+  const [engineBaseFen, setEngineBaseFen] = useState(resolvedInitialFen)
   const [board, setBoard] = useState<Board>(() => parseFen(resolvedInitialFen).board)
   const [currentTurn, setCurrentTurn] = useState<PieceColor>('red')
   const [selectedPos, setSelectedPos] = useState<Position | null>(null)
@@ -84,6 +102,11 @@ export function useGame({
   boardRef.current = board
   const turnRef = useRef(currentTurn)
   turnRef.current = currentTurn
+  const uciMovesRef = useRef(uciMoves)
+  uciMovesRef.current = uciMoves
+  const currentMoveIndexRef = useRef(currentMoveIndex)
+  currentMoveIndexRef.current = currentMoveIndex
+  const pendingRequestRef = useRef<PendingEngineRequest | null>(null)
   const players = getDefaultPlayers(
     gameMode,
     difficulty,
@@ -109,16 +132,39 @@ export function useGame({
 
   const handleWsMessage = useCallback((msg: WSMessage) => {
     if (msg.type === 'bestmove') {
+      const pending = pendingRequestRef.current
+      const requestKind = msg.requestKind || pending?.kind
+      if (
+        !pending ||
+        (msg.requestId && msg.requestId !== pending.id) ||
+        (requestKind && requestKind !== pending.kind) ||
+        pending.movesKey !== uciMovesRef.current.join(' ')
+      ) {
+        return
+      }
+
       const currentBoard = boardRef.current
       const move = buildMoveFromUci(msg.move, currentBoard)
       if (!move) {
+        pendingRequestRef.current = null
         setAiThinking(false)
         setHintThinking(false)
         return
       }
 
-      if (msg.requestKind === 'hint') {
+      const legalTargets = getLegalMoves(currentBoard, move.from)
+      const isLegal = move.piece.color === turnRef.current &&
+        legalTargets.some(to => to.row === move.to.row && to.col === move.to.col)
+      if (!isLegal) {
+        pendingRequestRef.current = null
+        setAiThinking(false)
+        setHintThinking(false)
+        return
+      }
+
+      if (pending.kind === 'hint') {
         setHintMove(move)
+        pendingRequestRef.current = null
         setHintThinking(false)
         return
       }
@@ -129,19 +175,19 @@ export function useGame({
       const fen = boardToFen(newBoard, nextTurn)
       const source: MoveRecord['source'] = move.piece.color === 'red' ? 'ai-red' : 'ai-black'
 
+      const historyIdx = currentMoveIndexRef.current
+
       setBoard(newBoard)
       setLastMove(move)
       setCurrentTurn(nextTurn)
       setHintMove(null)
-      setUciMoves(prev => [...prev, msg.move])
-      setMoveHistory(prev => {
-        const updated = [...prev, { move, notation, fen, elapsedMs: msg.elapsedMs, source }]
-        setCurrentMoveIndex(updated.length - 1)
-        return updated
-      })
+      setUciMoves(prev => [...prev.slice(0, historyIdx + 1), msg.move])
+      setMoveHistory(prev => [...prev.slice(0, historyIdx + 1), { move, notation, fen, elapsedMs: msg.elapsedMs, source }])
+      setCurrentMoveIndex(historyIdx + 1)
       setSelectedPos(null)
       setLegalMoves([])
       setAiThinking(false)
+      pendingRequestRef.current = null
 
       const status = getGameStatus(newBoard, nextTurn)
       setGameStatus(status)
@@ -156,10 +202,12 @@ export function useGame({
         playMoveSound()
       }
     } else if (msg.type === 'info') {
-      setEvaluation(msg.data.score)
+      const redPerspectiveScore = turnRef.current === 'red' ? msg.data.score : -msg.data.score
+      setEvaluation(redPerspectiveScore)
       setBestLine(msg.data.pv)
       setAnalysisDepth(msg.data.depth)
     } else if (msg.type === 'error') {
+      pendingRequestRef.current = null
       setAiThinking(false)
       setHintThinking(false)
     }
@@ -195,6 +243,7 @@ export function useGame({
     if (!modeChanged && !diffChanged && !sideChanged && !fenChanged && !redConfigChanged && !blackConfigChanged) return
 
     const { board: initBoard, turn } = parseFen(resolvedInitialFen)
+    setEngineBaseFen(resolvedInitialFen)
     setBoard(initBoard)
     setCurrentTurn(turn)
     setSelectedPos(null)
@@ -215,6 +264,7 @@ export function useGame({
     setAiThinking(false)
     setHintThinking(false)
     setHintMove(null)
+    pendingRequestRef.current = null
   }, [gameMode, difficulty, playerSide, aiRedDifficulty, aiBlackDifficulty, resolvedInitialFen, redPlayerConfig, blackPlayerConfig])
 
   // Send init to server whenever connected or difficulty changes
@@ -222,6 +272,27 @@ export function useGame({
     if (!gameMode || !connected) return
     send({ type: 'init', difficulty })
   }, [connected, difficulty, gameMode, send])
+
+  useEffect(() => {
+    if (!gameMode || !connected || !analysisEnabled) {
+      if (connected) send({ type: 'stop' })
+      return
+    }
+
+    setEvaluation(null)
+    setBestLine([])
+    setAnalysisDepth(0)
+    send({
+      type: 'analyze',
+      requestId: makeRequestId('analyze'),
+      fen: engineBaseFen,
+      moves: uciMoves,
+    })
+
+    return () => {
+      send({ type: 'stop' })
+    }
+  }, [analysisEnabled, connected, engineBaseFen, gameMode, send, uciMoves])
 
   // Trigger AI move
   useEffect(() => {
@@ -232,16 +303,25 @@ export function useGame({
     if (!connected) return
 
     setAiThinking(true)
+    const requestId = makeRequestId('move')
+    pendingRequestRef.current = {
+      id: requestId,
+      kind: 'move',
+      fen: engineBaseFen,
+      movesKey: uciMoves.join(' '),
+    }
     const sent = send({
       type: 'move',
-      fen: resolvedInitialFen,
+      requestId,
+      fen: engineBaseFen,
       moves: uciMoves,
       difficulty: currentPlayerConfig.difficulty || difficulty,
     })
     if (!sent) {
+      pendingRequestRef.current = null
       setAiThinking(false)
     }
-  }, [gameStatus, aiThinking, gameMode, currentPlayerConfig, connected, send, resolvedInitialFen, uciMoves, difficulty])
+  }, [gameStatus, aiThinking, gameMode, currentPlayerConfig, connected, send, engineBaseFen, uciMoves, difficulty])
 
   const handleCellClick = useCallback((pos: Position) => {
     if (gameStatus !== 'playing') return
@@ -336,14 +416,15 @@ export function useGame({
     }
 
     setCurrentMoveIndex(targetIndex)
-    setUciMoves(uciMoves.slice(0, targetIndex + 1))
+    setUciMoves(uciListFromRecords(moveHistory.slice(0, targetIndex + 1)))
     setSelectedPos(null)
     setLegalMoves([])
     setGameStatus('playing')
     setAiThinking(false)
     setHintThinking(false)
     setHintMove(null)
-  }, [currentMoveIndex, moveHistory, gameMode, uciMoves, players, resolvedInitialFen])
+    pendingRequestRef.current = null
+  }, [currentMoveIndex, moveHistory, gameMode, players, resolvedInitialFen])
 
   const redo = useCallback(() => {
     if (currentMoveIndex >= moveHistory.length - 1) return
@@ -359,14 +440,15 @@ export function useGame({
     setCurrentTurn(turn)
     setLastMove(record.move)
     setCurrentMoveIndex(targetIndex)
-    setUciMoves(uciMoves.slice(0, targetIndex + 1))
+    setUciMoves(uciListFromRecords(moveHistory.slice(0, targetIndex + 1)))
     setSelectedPos(null)
     setLegalMoves([])
     setHintMove(null)
+    pendingRequestRef.current = null
 
     const status = getGameStatus(nextBoard, turn)
     setGameStatus(status)
-  }, [currentMoveIndex, moveHistory, gameMode, uciMoves, players])
+  }, [currentMoveIndex, moveHistory, gameMode, players])
 
   const flip = useCallback(() => {
     setFlipped(f => !f)
@@ -380,9 +462,11 @@ export function useGame({
     setCurrentTurn(turn)
     setLastMove(record.move)
     setCurrentMoveIndex(index)
+    setUciMoves(uciListFromRecords(moveHistory.slice(0, index + 1)))
     setSelectedPos(null)
     setLegalMoves([])
     setHintMove(null)
+    pendingRequestRef.current = null
   }, [moveHistory])
 
   const getCurrentFen = useCallback(() => {
@@ -391,7 +475,9 @@ export function useGame({
 
   const loadFen = useCallback((fen: string) => {
     try {
-      const { board: newBoard, turn } = parseFen(fen)
+      const normalizedFen = fen.trim()
+      const { board: newBoard, turn } = parseFen(normalizedFen)
+      setEngineBaseFen(normalizedFen)
       setBoard(newBoard)
       setCurrentTurn(turn)
       setSelectedPos(null)
@@ -404,6 +490,10 @@ export function useGame({
       setAiThinking(false)
       setHintThinking(false)
       setHintMove(null)
+      setEvaluation(null)
+      setBestLine([])
+      setAnalysisDepth(0)
+      pendingRequestRef.current = null
       return true
     } catch {
       return false
@@ -416,11 +506,19 @@ export function useGame({
 
     setHintThinking(true)
     setHintMove(null)
-    const sent = send({ type: 'hint', fen: resolvedInitialFen, moves: uciMoves, difficulty: 'master' })
+    const requestId = makeRequestId('hint')
+    pendingRequestRef.current = {
+      id: requestId,
+      kind: 'hint',
+      fen: engineBaseFen,
+      movesKey: uciMoves.join(' '),
+    }
+    const sent = send({ type: 'hint', requestId, fen: engineBaseFen, moves: uciMoves, difficulty: 'master' })
     if (!sent) {
+      pendingRequestRef.current = null
       setHintThinking(false)
     }
-  }, [connected, gameStatus, aiThinking, hintThinking, currentPlayerConfig, send, uciMoves, resolvedInitialFen])
+  }, [connected, gameStatus, aiThinking, hintThinking, currentPlayerConfig, send, uciMoves, engineBaseFen])
 
   const nextAiMove = useCallback(() => {
     if (gameMode !== 'ai-vs-ai') return
@@ -429,11 +527,19 @@ export function useGame({
     const difficultyForTurn = currentTurn === 'red' ? aiRedDifficulty : aiBlackDifficulty
     setAiThinking(true)
     setHintMove(null)
-    const sent = send({ type: 'move', fen: resolvedInitialFen, moves: uciMoves, difficulty: difficultyForTurn })
+    const requestId = makeRequestId('move')
+    pendingRequestRef.current = {
+      id: requestId,
+      kind: 'move',
+      fen: engineBaseFen,
+      movesKey: uciMoves.join(' '),
+    }
+    const sent = send({ type: 'move', requestId, fen: engineBaseFen, moves: uciMoves, difficulty: difficultyForTurn })
     if (!sent) {
+      pendingRequestRef.current = null
       setAiThinking(false)
     }
-  }, [gameMode, connected, gameStatus, aiThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, resolvedInitialFen])
+  }, [gameMode, connected, gameStatus, aiThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, engineBaseFen])
 
   const canRequestHint =
     connected &&
@@ -448,6 +554,11 @@ export function useGame({
     gameStatus === 'playing' &&
     !aiThinking
 
+  const moveRecords = useMemo(
+    () => moveHistory.slice(0, currentMoveIndex + 1),
+    [moveHistory, currentMoveIndex],
+  )
+
   return {
     board,
     currentTurn,
@@ -461,7 +572,7 @@ export function useGame({
     evaluation,
     bestLine,
     analysisDepth,
-    moveRecords: moveHistory,
+    moveRecords,
     currentMoveIndex,
     hintThinking,
     aiThinking,

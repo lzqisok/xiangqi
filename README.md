@@ -374,6 +374,8 @@ pnpm --filter server start
 - [ ] 在线对战（房间、观战、回放）
 - [ ] CI 工作流（lint/build/test）
 
+更细的功能待办、交互优化和优先级见 [`TODO.md`](./TODO.md)。
+
 > 欢迎按这个清单提 PR 或 Issue。
 
 ---

@@ -1,10 +1,11 @@
 import { useRef, useEffect, useCallback } from 'react'
-import { Board as BoardType, Position, Move, GameStatus } from '../types'
+import { Board as BoardType, Position, Move, GameStatus, GameStatusReason } from '../types'
 import { ROWS, COLS } from '../engine/board'
 
 interface Props {
   board: BoardType
   gameStatus: GameStatus
+  gameStatusReason?: GameStatusReason
   selectedPos: Position | null
   legalMoves: Position[]
   lastMove: Move | null
@@ -25,19 +26,24 @@ const PIECE_CHARS: Record<string, Record<string, string>> = {
   black: { k: '将', a: '士', b: '象', n: '馬', r: '車', c: '砲', p: '卒' },
 }
 
-const GAME_OVER_TEXT: Record<Exclude<GameStatus, 'playing'>, string> = {
-  'red-wins': '红方胜',
-  'black-wins': '黑方胜',
-  draw: '和棋',
-}
-
 const GAME_OVER_CLASS: Record<Exclude<GameStatus, 'playing'>, string> = {
   'red-wins': 'red-win',
   'black-wins': 'black-win',
   draw: 'draw',
 }
 
-export default function Board({ board, gameStatus, selectedPos, legalMoves, lastMove, hintMove, inCheck, flipped, onCellClick }: Props) {
+function formatGameOverText(status: Exclude<GameStatus, 'playing'>, reason?: GameStatusReason): string {
+  if (status === 'draw') return '和棋'
+  const winner = status === 'red-wins' ? '红方胜' : '黑方胜'
+  const reasonText: Partial<Record<GameStatusReason, string>> = {
+    checkmate: '将死',
+    stalemate: '困毙',
+    'illegal-position': '非法局面',
+  }
+  return reason && reasonText[reason] ? `${winner} ${reasonText[reason]}` : winner
+}
+
+export default function Board({ board, gameStatus, gameStatusReason, selectedPos, legalMoves, lastMove, hintMove, inCheck, flipped, onCellClick }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animRef = useRef<{
     piece: BoardType[0][0]
@@ -59,16 +65,16 @@ export default function Board({ board, gameStatus, selectedPos, legalMoves, last
     ctx.scale(dpr, dpr)
 
     // Background
-    ctx.fillStyle = '#f0d9a0'
+    ctx.fillStyle = '#e8c981'
     ctx.fillRect(0, 0, BOARD_WIDTH, BOARD_HEIGHT)
 
     // Board border
-    ctx.strokeStyle = '#5c3d1a'
+    ctx.strokeStyle = '#6d3f22'
     ctx.lineWidth = 2.5
     ctx.strokeRect(PADDING - 2, PADDING - 2, (COLS - 1) * CELL_SIZE + 4, (ROWS - 1) * CELL_SIZE + 4)
 
     ctx.lineWidth = 1.2
-    ctx.strokeStyle = '#5c3d1a'
+    ctx.strokeStyle = '#6d3f22'
 
     // Horizontal lines
     for (let r = 0; r < ROWS; r++) {
@@ -112,7 +118,7 @@ export default function Board({ board, gameStatus, selectedPos, legalMoves, last
     drawPalaceDiag(7)
 
     // River text
-    ctx.fillStyle = '#5c3d1a'
+    ctx.fillStyle = '#6d3f22'
     ctx.font = '26px "Noto Serif SC", serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -131,18 +137,18 @@ export default function Board({ board, gameStatus, selectedPos, legalMoves, last
 
     // Highlights
     if (lastMove) {
-      highlightCell(ctx, ...getPixelPos(lastMove.from.row, lastMove.from.col), 'rgba(100, 149, 237, 0.35)')
-      highlightCell(ctx, ...getPixelPos(lastMove.to.row, lastMove.to.col), 'rgba(100, 149, 237, 0.35)')
+      highlightCell(ctx, ...getPixelPos(lastMove.from.row, lastMove.from.col), 'rgba(70, 132, 123, 0.38)')
+      highlightCell(ctx, ...getPixelPos(lastMove.to.row, lastMove.to.col), 'rgba(70, 132, 123, 0.38)')
     }
     if (hintMove) {
-      outlineCell(ctx, ...getPixelPos(hintMove.from.row, hintMove.from.col), 'rgba(226, 183, 20, 0.9)')
-      outlineCell(ctx, ...getPixelPos(hintMove.to.row, hintMove.to.col), 'rgba(46, 204, 113, 0.9)')
+      outlineCell(ctx, ...getPixelPos(hintMove.from.row, hintMove.from.col), 'rgba(214, 166, 75, 0.9)')
+      outlineCell(ctx, ...getPixelPos(hintMove.to.row, hintMove.to.col), 'rgba(47, 158, 111, 0.9)')
     }
     if (selectedPos) {
-      highlightCell(ctx, ...getPixelPos(selectedPos.row, selectedPos.col), 'rgba(255, 215, 0, 0.5)')
+      highlightCell(ctx, ...getPixelPos(selectedPos.row, selectedPos.col), 'rgba(232, 178, 55, 0.48)')
     }
     if (inCheck) {
-      highlightCell(ctx, ...getPixelPos(inCheck.row, inCheck.col), 'rgba(255, 0, 0, 0.35)')
+      highlightCell(ctx, ...getPixelPos(inCheck.row, inCheck.col), 'rgba(216, 73, 56, 0.34)')
     }
 
     // Legal move dots
@@ -150,13 +156,13 @@ export default function Board({ board, gameStatus, selectedPos, legalMoves, last
       const [mx, my] = getPixelPos(m.row, m.col)
       const isCapture = board[m.row][m.col] !== null
       if (isCapture) {
-        ctx.strokeStyle = 'rgba(0, 180, 80, 0.6)'
+        ctx.strokeStyle = 'rgba(47, 158, 111, 0.62)'
         ctx.lineWidth = 3
         ctx.beginPath()
         ctx.arc(mx, my, PIECE_RADIUS + 2, 0, Math.PI * 2)
         ctx.stroke()
       } else {
-        ctx.fillStyle = 'rgba(0, 180, 80, 0.45)'
+        ctx.fillStyle = 'rgba(47, 158, 111, 0.48)'
         ctx.beginPath()
         ctx.arc(mx, my, 8, 0, Math.PI * 2)
         ctx.fill()
@@ -202,8 +208,8 @@ export default function Board({ board, gameStatus, selectedPos, legalMoves, last
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
+    const x = (e.clientX - rect.left) * (BOARD_WIDTH / rect.width)
+    const y = (e.clientY - rect.top) * (BOARD_HEIGHT / rect.height)
 
     let minDist = Infinity
     let closest: Position | null = null
@@ -229,7 +235,7 @@ export default function Board({ board, gameStatus, selectedPos, legalMoves, last
       />
       {gameStatus !== 'playing' && (
         <div className={`board-game-over-banner ${GAME_OVER_CLASS[gameStatus]}`} aria-live="polite">
-          {GAME_OVER_TEXT[gameStatus]}
+          {formatGameOverText(gameStatus, gameStatusReason)}
         </div>
       )}
     </div>
@@ -245,29 +251,29 @@ function drawPiece(ctx: CanvasRenderingContext2D, x: number, y: number, color: s
 
   // Piece body
   const grad = ctx.createRadialGradient(x - 6, y - 6, 2, x, y, PIECE_RADIUS)
-  grad.addColorStop(0, '#fff8e8')
-  grad.addColorStop(1, '#e8d5a8')
+  grad.addColorStop(0, '#fff4d8')
+  grad.addColorStop(1, '#e3c37d')
   ctx.fillStyle = grad
   ctx.beginPath()
   ctx.arc(x, y, PIECE_RADIUS, 0, Math.PI * 2)
   ctx.fill()
 
   // Border
-  ctx.strokeStyle = '#8b6914'
+  ctx.strokeStyle = '#9a6a32'
   ctx.lineWidth = 1.5
   ctx.beginPath()
   ctx.arc(x, y, PIECE_RADIUS, 0, Math.PI * 2)
   ctx.stroke()
 
   // Inner border
-  ctx.strokeStyle = color === 'red' ? '#c0392b' : '#1a1a2e'
+  ctx.strokeStyle = color === 'red' ? '#d84938' : '#1d2421'
   ctx.lineWidth = 1
   ctx.beginPath()
   ctx.arc(x, y, PIECE_RADIUS - 4, 0, Math.PI * 2)
   ctx.stroke()
 
   // Text
-  ctx.fillStyle = color === 'red' ? '#c0392b' : '#1a1a2e'
+  ctx.fillStyle = color === 'red' ? '#d84938' : '#1d2421'
   ctx.font = 'bold 24px "Noto Serif SC", serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
@@ -288,7 +294,7 @@ function outlineCell(ctx: CanvasRenderingContext2D, x: number, y: number, color:
 function drawStarPoint(ctx: CanvasRenderingContext2D, x: number, y: number, col: number, _row: number) {
   const len = 6
   const gap = 4
-  ctx.strokeStyle = '#5c3d1a'
+  ctx.strokeStyle = '#6d3f22'
   ctx.lineWidth = 1
 
   const dirs: [number, number][] = []

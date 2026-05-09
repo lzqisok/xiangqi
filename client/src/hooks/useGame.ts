@@ -1,11 +1,12 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Board, Position, Move, MoveRecord, PieceColor,
-  GameMode, Difficulty, PlayerSide, GameStatus, WSMessage, PlayerConfig,
+  GameMode, Difficulty, PlayerSide, GameStatus, GameStatusReason, WSMessage, PlayerConfig,
 } from '../types'
 import { parseFen, boardToFen, applyMove, INITIAL_FEN, findKing } from '../engine/board'
-import { getLegalMoves, isInCheck, getGameStatus } from '../engine/rules'
+import { getLegalMoves, isInCheck, getGameStatusDetail } from '../engine/rules'
 import { moveToNotation, moveToUci, uciToMove } from '../engine/notation'
+import { validateFenPosition } from '../engine/validation'
 import { useWebSocket } from './useWebSocket'
 import { playMoveSound, playCaptureSound, playCheckSound, playGameOverSound } from '../audio'
 
@@ -68,6 +69,11 @@ function makeRequestId(kind: string): string {
   return `${kind}-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+function parseInitialGameState(fen: string) {
+  const parsed = parseFen(fen)
+  return { board: parsed.board, turn: parsed.turn }
+}
+
 export function useGame({
   gameMode,
   difficulty,
@@ -81,14 +87,15 @@ export function useGame({
 }: UseGameOptions) {
   const resolvedInitialFen = initialFen || INITIAL_FEN
   const [engineBaseFen, setEngineBaseFen] = useState(resolvedInitialFen)
-  const [board, setBoard] = useState<Board>(() => parseFen(resolvedInitialFen).board)
-  const [currentTurn, setCurrentTurn] = useState<PieceColor>('red')
+  const [board, setBoard] = useState<Board>(() => parseInitialGameState(resolvedInitialFen).board)
+  const [currentTurn, setCurrentTurn] = useState<PieceColor>(() => parseInitialGameState(resolvedInitialFen).turn)
   const [selectedPos, setSelectedPos] = useState<Position | null>(null)
   const [legalMoves, setLegalMoves] = useState<Position[]>([])
   const [moveHistory, setMoveHistory] = useState<MoveRecord[]>([])
   const [currentMoveIndex, setCurrentMoveIndex] = useState(-1)
   const [uciMoves, setUciMoves] = useState<string[]>([])
   const [gameStatus, setGameStatus] = useState<GameStatus>('playing')
+  const [gameStatusReason, setGameStatusReason] = useState<GameStatusReason | undefined>()
   const [lastMove, setLastMove] = useState<Move | null>(null)
   const [flipped, setFlipped] = useState(false)
   const [evaluation, setEvaluation] = useState<number | null>(null)
@@ -107,6 +114,7 @@ export function useGame({
   const currentMoveIndexRef = useRef(currentMoveIndex)
   currentMoveIndexRef.current = currentMoveIndex
   const pendingRequestRef = useRef<PendingEngineRequest | null>(null)
+  const analysisRequestRef = useRef<{ id: string; movesKey: string } | null>(null)
   const players = getDefaultPlayers(
     gameMode,
     difficulty,
@@ -189,10 +197,11 @@ export function useGame({
       setAiThinking(false)
       pendingRequestRef.current = null
 
-      const status = getGameStatus(newBoard, nextTurn)
-      setGameStatus(status)
+      const statusDetail = getGameStatusDetail(newBoard, nextTurn)
+      setGameStatus(statusDetail.status)
+      setGameStatusReason(statusDetail.reason)
 
-      if (status !== 'playing') {
+      if (statusDetail.status !== 'playing') {
         playGameOverSound()
       } else if (isInCheck(newBoard, nextTurn)) {
         playCheckSound()
@@ -202,6 +211,10 @@ export function useGame({
         playMoveSound()
       }
     } else if (msg.type === 'info') {
+      const currentAnalysis = analysisRequestRef.current
+      if (msg.requestId && (!currentAnalysis || msg.requestId !== currentAnalysis.id)) {
+        return
+      }
       const redPerspectiveScore = turnRef.current === 'red' ? msg.data.score : -msg.data.score
       setEvaluation(redPerspectiveScore)
       setBestLine(msg.data.pv)
@@ -251,7 +264,9 @@ export function useGame({
     setMoveHistory([])
     setCurrentMoveIndex(-1)
     setUciMoves([])
-    setGameStatus('playing')
+    const statusDetail = getGameStatusDetail(initBoard, turn)
+    setGameStatus(statusDetail.status)
+    setGameStatusReason(statusDetail.reason)
     setLastMove(null)
     setEvaluation(null)
     setBestLine([])
@@ -265,6 +280,7 @@ export function useGame({
     setHintThinking(false)
     setHintMove(null)
     pendingRequestRef.current = null
+    analysisRequestRef.current = null
   }, [gameMode, difficulty, playerSide, aiRedDifficulty, aiBlackDifficulty, resolvedInitialFen, redPlayerConfig, blackPlayerConfig])
 
   // Send init to server whenever connected or difficulty changes
@@ -282,15 +298,20 @@ export function useGame({
     setEvaluation(null)
     setBestLine([])
     setAnalysisDepth(0)
+    const requestId = makeRequestId('analyze')
+    analysisRequestRef.current = { id: requestId, movesKey: uciMoves.join(' ') }
     send({
       type: 'analyze',
-      requestId: makeRequestId('analyze'),
+      requestId,
       fen: engineBaseFen,
       moves: uciMoves,
     })
 
     return () => {
-      send({ type: 'stop' })
+      send({ type: 'stop', requestId })
+      if (analysisRequestRef.current?.id === requestId) {
+        analysisRequestRef.current = null
+      }
     }
   }, [analysisEnabled, connected, engineBaseFen, gameMode, send, uciMoves])
 
@@ -355,10 +376,11 @@ export function useGame({
         setSelectedPos(null)
         setLegalMoves([])
 
-        const status = getGameStatus(newBoard, nextTurn)
-        setGameStatus(status)
+        const statusDetail = getGameStatusDetail(newBoard, nextTurn)
+        setGameStatus(statusDetail.status)
+        setGameStatusReason(statusDetail.reason)
 
-        if (status !== 'playing') {
+        if (statusDetail.status !== 'playing') {
           playGameOverSound()
         } else if (isInCheck(newBoard, nextTurn)) {
           playCheckSound()
@@ -407,19 +429,24 @@ export function useGame({
       setBoard(initBoard)
       setCurrentTurn(turn)
       setLastMove(null)
+      const statusDetail = getGameStatusDetail(initBoard, turn)
+      setGameStatus(statusDetail.status)
+      setGameStatusReason(statusDetail.reason)
     } else {
       const record = moveHistory[targetIndex]
       const { board: prevBoard, turn } = parseFen(record.fen)
       setBoard(prevBoard)
       setCurrentTurn(turn)
       setLastMove(record.move)
+      const statusDetail = getGameStatusDetail(prevBoard, turn)
+      setGameStatus(statusDetail.status)
+      setGameStatusReason(statusDetail.reason)
     }
 
     setCurrentMoveIndex(targetIndex)
     setUciMoves(uciListFromRecords(moveHistory.slice(0, targetIndex + 1)))
     setSelectedPos(null)
     setLegalMoves([])
-    setGameStatus('playing')
     setAiThinking(false)
     setHintThinking(false)
     setHintMove(null)
@@ -446,8 +473,9 @@ export function useGame({
     setHintMove(null)
     pendingRequestRef.current = null
 
-    const status = getGameStatus(nextBoard, turn)
-    setGameStatus(status)
+    const statusDetail = getGameStatusDetail(nextBoard, turn)
+    setGameStatus(statusDetail.status)
+    setGameStatusReason(statusDetail.reason)
   }, [currentMoveIndex, moveHistory, gameMode, players])
 
   const flip = useCallback(() => {
@@ -467,6 +495,9 @@ export function useGame({
     setLegalMoves([])
     setHintMove(null)
     pendingRequestRef.current = null
+    const statusDetail = getGameStatusDetail(targetBoard, turn)
+    setGameStatus(statusDetail.status)
+    setGameStatusReason(statusDetail.reason)
   }, [moveHistory])
 
   const getCurrentFen = useCallback(() => {
@@ -476,6 +507,8 @@ export function useGame({
   const loadFen = useCallback((fen: string) => {
     try {
       const normalizedFen = fen.trim()
+      const validation = validateFenPosition(normalizedFen)
+      if (!validation.ok) return false
       const { board: newBoard, turn } = parseFen(normalizedFen)
       setEngineBaseFen(normalizedFen)
       setBoard(newBoard)
@@ -485,7 +518,9 @@ export function useGame({
       setMoveHistory([])
       setCurrentMoveIndex(-1)
       setUciMoves([])
-      setGameStatus('playing')
+      const statusDetail = getGameStatusDetail(newBoard, turn)
+      setGameStatus(statusDetail.status)
+      setGameStatusReason(statusDetail.reason)
       setLastMove(null)
       setAiThinking(false)
       setHintThinking(false)
@@ -569,6 +604,7 @@ export function useGame({
     inCheck,
     flipped,
     gameStatus,
+    gameStatusReason,
     evaluation,
     bestLine,
     analysisDepth,

@@ -1,5 +1,6 @@
-import { Board, Piece, PieceColor, Position } from '../types'
+import { Board, Piece, PieceColor, Position, GameStatus, GameStatusReason } from '../types'
 import { ROWS, COLS, applyMove, findKing } from './board'
+import { validateBoardPosition } from './validation'
 
 function inBounds(r: number, c: number): boolean {
   return r >= 0 && r < ROWS && c >= 0 && c < COLS
@@ -208,9 +209,29 @@ export function hasAnyLegalMove(board: Board, color: PieceColor): boolean {
   return false
 }
 
-export function getGameStatus(board: Board, currentTurn: PieceColor): 'playing' | 'red-wins' | 'black-wins' | 'draw' {
-  if (!hasAnyLegalMove(board, currentTurn)) {
-    return currentTurn === 'red' ? 'black-wins' : 'red-wins'
+export interface GameStatusDetail {
+  status: GameStatus
+  reason?: GameStatusReason
+}
+
+export function getGameStatusDetail(board: Board, currentTurn: PieceColor): GameStatusDetail {
+  const validation = validateBoardPosition(board)
+  if (!validation.ok) {
+    return {
+      status: currentTurn === 'red' ? 'black-wins' : 'red-wins',
+      reason: 'illegal-position',
+    }
   }
-  return 'playing'
+
+  if (!hasAnyLegalMove(board, currentTurn)) {
+    return {
+      status: currentTurn === 'red' ? 'black-wins' : 'red-wins',
+      reason: isInCheck(board, currentTurn) ? 'checkmate' : 'stalemate',
+    }
+  }
+  return { status: 'playing' }
+}
+
+export function getGameStatus(board: Board, currentTurn: PieceColor): GameStatus {
+  return getGameStatusDetail(board, currentTurn).status
 }

@@ -1,4 +1,4 @@
-import { GameMode, Difficulty, GameStatus, PieceColor, PlayerConfig } from '../types'
+import { GameMode, Difficulty, GameStatus, GameStatusReason, PieceColor, PlayerConfig } from '../types'
 
 interface Props {
   currentTurn: PieceColor
@@ -9,6 +9,7 @@ interface Props {
   redPlayerConfig: PlayerConfig
   blackPlayerConfig: PlayerConfig
   gameStatus: GameStatus
+  gameStatusReason?: GameStatusReason
   flipped: boolean
   showAnalysis: boolean
   scenarioName: string | null
@@ -36,11 +37,18 @@ const DIFFICULTY_NAMES: Record<Difficulty, string> = {
   master: '大师',
 }
 
-const STATUS_TEXT: Record<GameStatus, string> = {
-  playing: '',
-  'red-wins': '红方胜！',
-  'black-wins': '黑方胜！',
-  draw: '和棋',
+function formatStatus(status: GameStatus, reason?: GameStatusReason): string {
+  if (status === 'playing') return ''
+  if (status === 'draw') return '和棋'
+
+  const winner = status === 'red-wins' ? '红方胜' : '黑方胜'
+  const reasonText: Record<GameStatusReason, string> = {
+    checkmate: '将死',
+    stalemate: '困毙',
+    'illegal-position': '非法局面',
+    manual: '手动结束',
+  }
+  return reason ? `${winner}（${reasonText[reason]}）` : `${winner}！`
 }
 
 function formatPlayerConfig(config: PlayerConfig): string {
@@ -49,7 +57,7 @@ function formatPlayerConfig(config: PlayerConfig): string {
 }
 
 export default function GamePanel({
-  currentTurn, gameMode, difficulty, aiRedDifficulty, aiBlackDifficulty, redPlayerConfig, blackPlayerConfig, gameStatus,
+  currentTurn, gameMode, difficulty, aiRedDifficulty, aiBlackDifficulty, redPlayerConfig, blackPlayerConfig, gameStatus, gameStatusReason,
   showAnalysis,
   scenarioName,
   onNewGame, onUndo, onRedo, onFlip, onToggleAnalysis,
@@ -59,6 +67,7 @@ export default function GamePanel({
 }: Props) {
   const isAiVsAi = gameMode === 'ai-vs-ai'
   const isHumanVsAi = gameMode === 'human-vs-ai'
+  const modeText = isHumanVsAi ? '人机对弈' : isAiVsAi ? 'AI 对战' : gameMode === 'endgame' ? '残局模式' : '双人对弈'
 
   return (
     <div className="game-panel">
@@ -68,16 +77,16 @@ export default function GamePanel({
             {currentTurn === 'red' ? '红方走棋' : '黑方走棋'}
           </div>
         ) : (
-          <div className="game-over">{STATUS_TEXT[gameStatus]}</div>
+          <div className="game-over">{formatStatus(gameStatus, gameStatusReason)}</div>
         )}
       </div>
 
       <div className="info-row">
-        <span>模式: {isHumanVsAi ? '人机对弈' : isAiVsAi ? 'AI 对战' : gameMode === 'endgame' ? '残局模式' : '双人对弈'}</span>
-        {isHumanVsAi && <span>难度: {DIFFICULTY_NAMES[difficulty]}</span>}
-        {isAiVsAi && <span>红: {DIFFICULTY_NAMES[aiRedDifficulty]} / 黑: {DIFFICULTY_NAMES[aiBlackDifficulty]}</span>}
+        <span className="info-chip">{modeText}</span>
+        {isHumanVsAi && <span className="info-chip">{DIFFICULTY_NAMES[difficulty]}</span>}
+        {isAiVsAi && <span className="info-chip">红 {DIFFICULTY_NAMES[aiRedDifficulty]} / 黑 {DIFFICULTY_NAMES[aiBlackDifficulty]}</span>}
         {gameMode === 'endgame' && (
-          <span>
+          <span className="info-chip">
             红: {formatPlayerConfig(redPlayerConfig)} / 黑: {formatPlayerConfig(blackPlayerConfig)}
           </span>
         )}
@@ -87,15 +96,15 @@ export default function GamePanel({
       <div className="panel-section">
         <div className="panel-section-title">常用操作</div>
         <div className="panel-buttons panel-buttons-primary">
-          <button className="primary-action" onClick={onUndo} disabled={!canUndo}>悔棋</button>
-          <button className="primary-action" onClick={onRedo} disabled={!canRedo}>重做</button>
+          <button className="primary-action" onClick={onUndo} disabled={!canUndo} title="回到上一手">悔棋</button>
+          <button className="primary-action" onClick={onRedo} disabled={!canRedo} title="前进到下一手">重做</button>
           {!isAiVsAi && (
-            <button className="primary-action accent-action" onClick={onHint} disabled={!canRequestHint}>
+            <button className="primary-action accent-action" onClick={onHint} disabled={!canRequestHint} title="请求引擎给出当前方建议">
               {hintThinking ? '提示中...' : '提示'}
             </button>
           )}
           {isAiVsAi && (
-            <button className="primary-action accent-action" onClick={onNextAiMove} disabled={!canStepAi}>
+            <button className="primary-action accent-action" onClick={onNextAiMove} disabled={!canStepAi} title="让当前 AI 走一步">
               下一步
             </button>
           )}

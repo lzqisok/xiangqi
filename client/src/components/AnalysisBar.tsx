@@ -28,6 +28,7 @@ export default function AnalysisBar({ evaluation, bestLine, depth }: Props) {
       />
       <div className="analysis-score">{displayEval}</div>
       {depth > 0 && <div className="analysis-details">D{depth}</div>}
+      {bestLine.length > 0 && <div className="analysis-pv">{bestLine.slice(0, 2).join(' ')}</div>}
     </div>
   )
 }

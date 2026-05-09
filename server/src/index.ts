@@ -2,6 +2,7 @@ import express from 'express'
 import { createServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
 import { PikafishEngine } from './engine.js'
+import { validateFenPosition } from './validation.js'
 
 const app = express()
 const server = createServer(app)
@@ -11,6 +12,17 @@ const INITIAL_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR
 
 let sharedEngine: PikafishEngine | null = null
 let engineReady = false
+let activeAnalysis: { sessionId: string; requestId?: string } | null = null
+
+function makeSessionId(): string {
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function sendError(ws: WebSocket, message: string, requestId?: string) {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'error', requestId, message }))
+  }
+}
 
 async function getEngine(): Promise<PikafishEngine | null> {
   if (sharedEngine && engineReady) return sharedEngine
@@ -40,8 +52,10 @@ getEngine()
 wss.on('connection', async (ws) => {
   console.log('Client connected')
 
+  const sessionId = makeSessionId()
   let currentDifficulty: 'easy' | 'medium' | 'hard' | 'master' = 'medium'
   let infoHandler: ((info: unknown) => void) | null = null
+  let localAnalysisRequestId: string | undefined
 
   ws.on('message', async (data) => {
     try {
@@ -61,14 +75,18 @@ wss.on('connection', async (ws) => {
           }
 
           const requestDifficulty = msg.difficulty || currentDifficulty
-          engine.setDifficulty(requestDifficulty)
           const requestId = msg.requestId
           const fen = msg.fen || INITIAL_FEN
           const moves: string[] = msg.moves || []
+          const validation = validateFenPosition(fen)
+          if (!validation.ok) {
+            sendError(ws, validation.errors[0] || 'Invalid position', requestId)
+            break
+          }
 
           try {
             const startedAt = Date.now()
-            const bestMove = await engine.getBestMove(fen, moves)
+            const bestMove = await engine.getBestMove(fen, moves, requestDifficulty)
             if (bestMove && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({
                 type: 'bestmove',
@@ -94,14 +112,18 @@ wss.on('connection', async (ws) => {
             break
           }
 
-          engine.setDifficulty(msg.difficulty || 'master')
           const requestId = msg.requestId
           const fen = msg.fen || INITIAL_FEN
           const moves: string[] = msg.moves || []
+          const validation = validateFenPosition(fen)
+          if (!validation.ok) {
+            sendError(ws, validation.errors[0] || 'Invalid position', requestId)
+            break
+          }
 
           try {
             const startedAt = Date.now()
-            const bestMove = await engine.getBestMove(fen, moves)
+            const bestMove = await engine.getBestMove(fen, moves, msg.difficulty || 'master')
             if (bestMove && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({
                 type: 'bestmove',
@@ -124,19 +146,31 @@ wss.on('connection', async (ws) => {
           const engine = await getEngine()
           if (!engine) break
 
+          const fen = msg.fen || INITIAL_FEN
+          const moves: string[] = msg.moves || []
+          const validation = validateFenPosition(fen)
+          if (!validation.ok) {
+            sendError(ws, validation.errors[0] || 'Invalid position', msg.requestId)
+            break
+          }
+
           if (infoHandler) {
             engine.removeListener('info', infoHandler)
           }
+          localAnalysisRequestId = msg.requestId
+          activeAnalysis = { sessionId, requestId: msg.requestId }
           infoHandler = (info) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'info', data: info }))
+            if (
+              activeAnalysis?.sessionId === sessionId &&
+              activeAnalysis.requestId === localAnalysisRequestId &&
+              ws.readyState === WebSocket.OPEN
+            ) {
+              ws.send(JSON.stringify({ type: 'info', requestId: localAnalysisRequestId, data: info }))
             }
           }
           engine.on('info', infoHandler)
 
           engine.stopAnalysis()
-          const fen = msg.fen || INITIAL_FEN
-          const moves: string[] = msg.moves || []
           await engine.analyze(fen, moves)
           break
         }
@@ -146,7 +180,14 @@ wss.on('connection', async (ws) => {
             sharedEngine.removeListener('info', infoHandler)
             infoHandler = null
           }
-          if (sharedEngine && engineReady) {
+          const stopsOwnAnalysis =
+            activeAnalysis?.sessionId === sessionId &&
+            (!msg.requestId || activeAnalysis.requestId === msg.requestId)
+          if (stopsOwnAnalysis) {
+            activeAnalysis = null
+            localAnalysisRequestId = undefined
+          }
+          if (sharedEngine && engineReady && stopsOwnAnalysis) {
             sharedEngine.stopAnalysis()
           }
           break
@@ -162,6 +203,10 @@ wss.on('connection', async (ws) => {
     if (infoHandler && sharedEngine) {
       sharedEngine.removeListener('info', infoHandler)
       infoHandler = null
+    }
+    if (activeAnalysis?.sessionId === sessionId) {
+      activeAnalysis = null
+      if (sharedEngine && engineReady) sharedEngine.stopAnalysis()
     }
   })
 })

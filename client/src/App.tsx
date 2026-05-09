@@ -8,6 +8,7 @@ import EndgameEditor from './components/EndgameEditor'
 import { useGame } from './hooks/useGame'
 import { BUILTIN_ENDGAMES } from './endgames/builtin'
 import { deleteCustomEndgame, loadCustomEndgames, loadFavoriteEndgameIds, toggleFavoriteEndgame, upsertCustomEndgame } from './endgames/storage'
+import { validateFenPosition } from './engine/validation'
 import { EndgameDefinition, EndgameStartConfig, GameMode, Difficulty, PlayerSide } from './types'
 
 export default function App() {
@@ -142,6 +143,7 @@ export default function App() {
         <Board
           board={game.board}
           gameStatus={game.gameStatus}
+          gameStatusReason={game.gameStatusReason}
           selectedPos={game.selectedPos}
           legalMoves={game.legalMoves}
           lastMove={game.lastMove}
@@ -160,6 +162,7 @@ export default function App() {
             redPlayerConfig={game.redPlayerConfig}
             blackPlayerConfig={game.blackPlayerConfig}
             gameStatus={game.gameStatus}
+            gameStatusReason={game.gameStatusReason}
             flipped={game.flipped}
             showAnalysis={showAnalysis}
             scenarioName={gameMode === 'endgame' ? selectedEndgame?.name ?? null : null}
@@ -217,8 +220,9 @@ export default function App() {
           fen=""
           onClose={() => setShowFenDialog(null)}
           onLoad={(fen) => {
-            game.loadFen(fen)
-            setShowFenDialog(null)
+            const loaded = game.loadFen(fen)
+            if (loaded) setShowFenDialog(null)
+            return loaded
           }}
         />
       )}
@@ -237,10 +241,16 @@ function FenDialog({ mode, fen, onClose, onLoad }: {
   mode: 'import' | 'export'
   fen: string
   onClose: () => void
-  onLoad?: (fen: string) => void
+  onLoad?: (fen: string) => boolean
 }) {
   const [value, setValue] = useState(fen)
   const [copied, setCopied] = useState(false)
+  const [error, setError] = useState('')
+
+  const validation = mode === 'import' && value.trim()
+    ? validateFenPosition(value)
+    : null
+  const canLoad = mode === 'export' || (Boolean(value.trim()) && validation?.ok !== false)
 
   return (
     <div className="fen-dialog" onClick={onClose}>
@@ -249,11 +259,18 @@ function FenDialog({ mode, fen, onClose, onLoad }: {
         <input
           type="text"
           value={value}
-          onChange={e => setValue(e.target.value)}
+          onChange={e => {
+            setValue(e.target.value)
+            setError('')
+          }}
           readOnly={mode === 'export'}
           placeholder="输入 FEN 字符串..."
           autoFocus
         />
+        {mode === 'import' && value.trim() && validation && !validation.ok && (
+          <div className="fen-dialog-error">{validation.errors[0]}</div>
+        )}
+        {error && <div className="fen-dialog-error">{error}</div>}
         <div className="btn-row">
           <button className="cancel" onClick={onClose}>取消</button>
           {mode === 'export' ? (
@@ -265,7 +282,13 @@ function FenDialog({ mode, fen, onClose, onLoad }: {
               {copied ? '已复制' : '复制'}
             </button>
           ) : (
-            <button className="confirm" onClick={() => onLoad?.(value)}>
+            <button
+              className="confirm"
+              disabled={!canLoad}
+              onClick={() => {
+                if (!onLoad?.(value)) setError('局面加载失败，请检查 FEN。')
+              }}
+            >
               加载
             </button>
           )}

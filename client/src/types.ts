@@ -32,6 +32,7 @@ export type GameMode = 'human-vs-ai' | 'human-vs-human' | 'ai-vs-ai' | 'endgame'
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'master'
 export type PlayerSide = 'red' | 'black'
 export type GameStatus = 'playing' | 'red-wins' | 'black-wins' | 'draw'
+export type GameStatusReason = 'checkmate' | 'stalemate' | 'illegal-position' | 'manual'
 export type PlayerType = 'human' | 'ai'
 
 export interface PlayerConfig {
@@ -67,7 +68,7 @@ export type WSMessage =
   | { type: 'move'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty }
   | { type: 'hint'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty }
   | { type: 'analyze'; requestId: string; fen: string; moves: string[] }
-  | { type: 'stop' }
+  | { type: 'stop'; requestId?: string }
   | { type: 'bestmove'; requestId?: string; move: string; ponder?: string; elapsedMs?: number; requestKind?: 'move' | 'hint' }
-  | { type: 'info'; data: EngineInfo }
-  | { type: 'error'; message: string }
+  | { type: 'info'; requestId?: string; data: EngineInfo }
+  | { type: 'error'; requestId?: string; message: string }

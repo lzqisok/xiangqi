@@ -39,7 +39,6 @@ export class PikafishEngine extends EventEmitter {
   private process: ChildProcess | null = null
   private ready = false
   private buffer = ''
-  private difficulty: Difficulty = 'medium'
   private threads = 1
   private searching = false
   private commandQueue: Promise<void> = Promise.resolve()
@@ -117,15 +116,11 @@ export class PikafishEngine extends EventEmitter {
     }
   }
 
-  setDifficulty(diff: Difficulty) {
-    this.difficulty = diff
+  async getBestMove(fen: string, moves: string[], difficulty: Difficulty): Promise<string | null> {
+    return this.enqueue(() => this.getBestMoveLocked(fen, moves, difficulty))
   }
 
-  async getBestMove(fen: string, moves: string[]): Promise<string | null> {
-    return this.enqueue(() => this.getBestMoveLocked(fen, moves))
-  }
-
-  private async getBestMoveLocked(fen: string, moves: string[]): Promise<string | null> {
+  private async getBestMoveLocked(fen: string, moves: string[], difficulty: Difficulty): Promise<string | null> {
     if (!this.ready || !this.process) {
       console.error('Engine not ready, attempting reinit...')
       const ok = await this.init()
@@ -134,7 +129,7 @@ export class PikafishEngine extends EventEmitter {
 
     try {
       await this.stopSearchIfNeeded()
-      const depth = DEPTH_MAP[this.difficulty]
+      const depth = DEPTH_MAP[difficulty]
       this.send('isready')
       await this.waitFor('readyok', 5000)
 

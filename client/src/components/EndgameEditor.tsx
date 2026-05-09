@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import EndgameBoardEditor from './EndgameBoardEditor'
-import { parseFen, findKing } from '../engine/board'
+import { validateFenPosition } from '../engine/validation'
 
 interface Props {
   initialName?: string
@@ -11,18 +11,8 @@ interface Props {
 }
 
 function validateFen(fen: string): string | null {
-  try {
-    const { board } = parseFen(fen.trim())
-    if (board.length !== 10 || board.some(row => row.length !== 9)) {
-      return 'FEN 棋盘尺寸不正确'
-    }
-    if (!findKing(board, 'red') || !findKing(board, 'black')) {
-      return '残局必须同时包含红帅和黑将'
-    }
-    return null
-  } catch {
-    return 'FEN 格式无效'
-  }
+  const result = validateFenPosition(fen)
+  return result.ok ? null : result.errors[0] || 'FEN 格式无效'
 }
 
 export default function EndgameEditor({

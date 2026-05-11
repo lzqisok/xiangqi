@@ -8,8 +8,9 @@ import EndgameEditor from './components/EndgameEditor'
 import { useGame } from './hooks/useGame'
 import { BUILTIN_ENDGAMES } from './endgames/builtin'
 import { deleteCustomEndgame, loadCustomEndgames, loadFavoriteEndgameIds, toggleFavoriteEndgame, upsertCustomEndgame } from './endgames/storage'
+import { loadRecentFenPositions, RecentFenPosition, saveRecentFenPosition } from './fen/storage'
 import { validateFenPosition } from './engine/validation'
-import { EndgameDefinition, EndgameStartConfig, GameMode, Difficulty, PlayerSide } from './types'
+import { EndgameDefinition, EndgameStartConfig, GameMode, Difficulty, MoveRecord, PlayerSide } from './types'
 
 export default function App() {
   const [gameMode, setGameMode] = useState<GameMode | null>(null)
@@ -22,7 +23,10 @@ export default function App() {
   const [selectedEndgame, setSelectedEndgame] = useState<EndgameDefinition | null>(null)
   const [customEndgames, setCustomEndgames] = useState<EndgameDefinition[]>([])
   const [favoriteEndgameIds, setFavoriteEndgameIds] = useState<string[]>([])
+  const [recentFenPositions, setRecentFenPositions] = useState<RecentFenPosition[]>([])
   const [editingEndgame, setEditingEndgame] = useState(false)
+  const [aiAutoPlaying, setAiAutoPlaying] = useState(false)
+  const [aiAutoDelay, setAiAutoDelay] = useState(900)
   const [editorDraft, setEditorDraft] = useState<{ id: string | null; name: string; description: string; fen: string }>({
     id: null,
     name: '',
@@ -37,6 +41,7 @@ export default function App() {
   useEffect(() => {
     setCustomEndgames(loadCustomEndgames())
     setFavoriteEndgameIds(loadFavoriteEndgameIds())
+    setRecentFenPositions(loadRecentFenPositions())
   }, [])
 
   const game = useGame({
@@ -50,6 +55,20 @@ export default function App() {
     redPlayerConfig: gameMode === 'endgame' ? endgameConfig.red : undefined,
     blackPlayerConfig: gameMode === 'endgame' ? endgameConfig.black : undefined,
   })
+
+  useEffect(() => {
+    if (gameMode !== 'ai-vs-ai' || game.gameStatus !== 'playing') {
+      setAiAutoPlaying(false)
+    }
+  }, [gameMode, game.gameStatus])
+
+  useEffect(() => {
+    if (!aiAutoPlaying || gameMode !== 'ai-vs-ai' || !game.canStepAi) return
+    const timer = setTimeout(() => {
+      game.nextAiMove()
+    }, aiAutoDelay)
+    return () => clearTimeout(timer)
+  }, [aiAutoDelay, aiAutoPlaying, gameMode, game.canStepAi, game.nextAiMove])
 
   if (!gameMode) {
     return <StartScreen onStart={(mode, diff, side, redDiff, blackDiff) => {
@@ -137,6 +156,7 @@ export default function App() {
           <AnalysisBar
             evaluation={game.evaluation}
             bestLine={game.bestLine}
+            bestLineNotation={game.bestLineNotation}
             depth={game.analysisDepth}
           />
         )}
@@ -150,7 +170,10 @@ export default function App() {
           hintMove={game.hintMove}
           inCheck={game.inCheck}
           flipped={game.flipped}
+          aiThinking={game.aiThinking}
+          thinkingText={`${game.currentTurn === 'red' ? '红方' : '黑方'} AI 思考中...`}
           onCellClick={game.handleCellClick}
+          onCancelSelection={game.cancelSelection}
         />
         <div className="side-panel">
           <GamePanel
@@ -166,7 +189,14 @@ export default function App() {
             flipped={game.flipped}
             showAnalysis={showAnalysis}
             scenarioName={gameMode === 'endgame' ? selectedEndgame?.name ?? null : null}
+            aiThinking={game.aiThinking}
+            connectionState={game.connectionState}
+            engineAvailable={game.engineAvailable}
+            engineStatusMessage={game.engineStatusMessage}
+            aiAutoPlaying={aiAutoPlaying}
+            aiAutoDelay={aiAutoDelay}
             onNewGame={() => {
+              setAiAutoPlaying(false)
               if (gameMode === 'endgame') {
                 setSelectedEndgame(null)
                 setEditingEndgame(false)
@@ -180,6 +210,12 @@ export default function App() {
             onToggleAnalysis={() => setShowAnalysis(!showAnalysis)}
             onExportFen={() => setShowFenDialog('export')}
             onImportFen={() => setShowFenDialog('import')}
+            onCopyMoveText={() => {
+              navigator.clipboard.writeText(formatMoveRecords(game.moveRecords))
+            }}
+            onSaveRecentFen={() => {
+              setRecentFenPositions(saveRecentFenPosition(game.getCurrentFen(), '手动保存'))
+            }}
             onSaveAsEndgame={() => {
               setEditorDraft({
                 id: null,
@@ -193,6 +229,8 @@ export default function App() {
             }}
             onHint={game.requestHint}
             onNextAiMove={game.nextAiMove}
+            onToggleAiAutoPlay={() => setAiAutoPlaying(value => !value)}
+            onAiAutoDelayChange={setAiAutoDelay}
             canUndo={game.canUndo}
             canRedo={game.canRedo}
             canRequestHint={game.canRequestHint}
@@ -218,10 +256,14 @@ export default function App() {
         <FenDialog
           mode="import"
           fen=""
+          recentPositions={recentFenPositions}
           onClose={() => setShowFenDialog(null)}
           onLoad={(fen) => {
             const loaded = game.loadFen(fen)
-            if (loaded) setShowFenDialog(null)
+            if (loaded) {
+              setRecentFenPositions(saveRecentFenPosition(fen, '导入局面'))
+              setShowFenDialog(null)
+            }
             return loaded
           }}
         />
@@ -237,9 +279,23 @@ function scenarioNameFromState(gameMode: GameMode, selectedEndgame: EndgameDefin
   return '自定义残局'
 }
 
-function FenDialog({ mode, fen, onClose, onLoad }: {
+function formatMoveRecords(records: MoveRecord[]): string {
+  if (records.length === 0) return '暂无走棋记录'
+
+  const lines: string[] = []
+  for (let i = 0; i < records.length; i += 2) {
+    const moveNum = Math.floor(i / 2) + 1
+    const redMove = records[i]?.notation || ''
+    const blackMove = records[i + 1]?.notation || ''
+    lines.push(`${moveNum}. ${redMove}${blackMove ? ` ${blackMove}` : ''}`.trim())
+  }
+  return lines.join('\n')
+}
+
+function FenDialog({ mode, fen, recentPositions, onClose, onLoad }: {
   mode: 'import' | 'export'
   fen: string
+  recentPositions?: RecentFenPosition[]
   onClose: () => void
   onLoad?: (fen: string) => boolean
 }) {
@@ -268,9 +324,31 @@ function FenDialog({ mode, fen, onClose, onLoad }: {
           autoFocus
         />
         {mode === 'import' && value.trim() && validation && !validation.ok && (
-          <div className="fen-dialog-error">{validation.errors[0]}</div>
+          <div className="fen-dialog-error">
+            <ul>
+              {validation.errors.map(error => <li key={error}>{error}</li>)}
+            </ul>
+          </div>
         )}
         {error && <div className="fen-dialog-error">{error}</div>}
+        {mode === 'import' && recentPositions && recentPositions.length > 0 && (
+          <div className="recent-fen-list">
+            <div className="recent-fen-title">最近局面</div>
+            {recentPositions.map(item => (
+              <button
+                key={`${item.savedAt}-${item.fen}`}
+                className="recent-fen-item"
+                onClick={() => {
+                  setValue(item.fen)
+                  setError('')
+                }}
+              >
+                <span>{item.label}</span>
+                <code>{item.fen}</code>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="btn-row">
           <button className="cancel" onClick={onClose}>取消</button>
           {mode === 'export' ? (

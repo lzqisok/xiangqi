@@ -1,10 +1,13 @@
 interface Props {
   evaluation: number | null
   bestLine: string[]
+  bestLineNotation: string[]
   depth: number
 }
 
-export default function AnalysisBar({ evaluation, bestLine, depth }: Props) {
+export default function AnalysisBar({ evaluation, bestLine, bestLineNotation, depth }: Props) {
+  const displayLine = bestLineNotation.length > 0 ? bestLineNotation : bestLine
+
   if (evaluation === null) {
     return (
       <div className="analysis-bar" style={{ height: 576 }}>
@@ -21,14 +24,14 @@ export default function AnalysisBar({ evaluation, bestLine, depth }: Props) {
     : (evaluation > 0 ? '+' : '') + (evaluation / 100).toFixed(1)
 
   return (
-    <div className="analysis-bar" style={{ height: 576 }} title={`深度: ${depth} | 最优: ${bestLine.join(' ')}`}>
+    <div className="analysis-bar" style={{ height: 576 }} title={`深度: ${depth} | 最优: ${displayLine.join(' ')}`}>
       <div
         className={`analysis-fill ${evaluation < 0 ? 'black-advantage' : ''}`}
         style={{ height: evaluation >= 0 ? `${percentage}%` : `${100 - percentage}%` }}
       />
       <div className="analysis-score">{displayEval}</div>
       {depth > 0 && <div className="analysis-details">D{depth}</div>}
-      {bestLine.length > 0 && <div className="analysis-pv">{bestLine.slice(0, 2).join(' ')}</div>}
+      {displayLine.length > 0 && <div className="analysis-pv">{displayLine.slice(0, 5).join(' ')}</div>}
     </div>
   )
 }

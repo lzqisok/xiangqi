@@ -1,4 +1,4 @@
-import { GameMode, Difficulty, GameStatus, GameStatusReason, PieceColor, PlayerConfig } from '../types'
+import { ConnectionState, GameMode, Difficulty, GameStatus, GameStatusReason, PieceColor, PlayerConfig } from '../types'
 
 interface Props {
   currentTurn: PieceColor
@@ -13,6 +13,12 @@ interface Props {
   flipped: boolean
   showAnalysis: boolean
   scenarioName: string | null
+  aiThinking: boolean
+  connectionState: ConnectionState
+  engineAvailable: boolean | null
+  engineStatusMessage: string
+  aiAutoPlaying: boolean
+  aiAutoDelay: number
   onNewGame: () => void
   onUndo: () => void
   onRedo: () => void
@@ -20,9 +26,13 @@ interface Props {
   onToggleAnalysis: () => void
   onExportFen: () => void
   onImportFen: () => void
+  onCopyMoveText: () => void
+  onSaveRecentFen: () => void
   onSaveAsEndgame: () => void
   onHint: () => void
   onNextAiMove: () => void
+  onToggleAiAutoPlay: () => void
+  onAiAutoDelayChange: (delay: number) => void
   canUndo: boolean
   canRedo: boolean
   canRequestHint: boolean
@@ -56,13 +66,27 @@ function formatPlayerConfig(config: PlayerConfig): string {
   return `AI(${DIFFICULTY_NAMES[config.difficulty || 'medium']})`
 }
 
+function formatEngineStatus(connectionState: ConnectionState, engineAvailable: boolean | null, message: string): string {
+  if (connectionState === 'connecting') return '后端连接中'
+  if (connectionState === 'disconnected') return '后端未连接'
+  if (engineAvailable === false) return message || '引擎不可用'
+  if (engineAvailable === null) return '引擎检测中'
+  return '引擎可用'
+}
+
 export default function GamePanel({
   currentTurn, gameMode, difficulty, aiRedDifficulty, aiBlackDifficulty, redPlayerConfig, blackPlayerConfig, gameStatus, gameStatusReason,
   showAnalysis,
   scenarioName,
+  aiThinking,
+  connectionState,
+  engineAvailable,
+  engineStatusMessage,
+  aiAutoPlaying,
+  aiAutoDelay,
   onNewGame, onUndo, onRedo, onFlip, onToggleAnalysis,
-  onExportFen, onImportFen, onSaveAsEndgame,
-  onHint, onNextAiMove,
+  onExportFen, onImportFen, onCopyMoveText, onSaveRecentFen, onSaveAsEndgame,
+  onHint, onNextAiMove, onToggleAiAutoPlay, onAiAutoDelayChange,
   canUndo, canRedo, canRequestHint, canStepAi, hintThinking,
 }: Props) {
   const isAiVsAi = gameMode === 'ai-vs-ai'
@@ -74,7 +98,7 @@ export default function GamePanel({
       <div className="status">
         {gameStatus === 'playing' ? (
           <div className={`turn-indicator ${currentTurn}`}>
-            {currentTurn === 'red' ? '红方走棋' : '黑方走棋'}
+            {aiThinking ? `${currentTurn === 'red' ? '红方' : '黑方'} AI 思考中...` : currentTurn === 'red' ? '红方走棋' : '黑方走棋'}
           </div>
         ) : (
           <div className="game-over">{formatStatus(gameStatus, gameStatusReason)}</div>
@@ -93,6 +117,11 @@ export default function GamePanel({
       </div>
       {scenarioName && <div className="scenario-name">{scenarioName}</div>}
 
+      <div className={`engine-status ${connectionState} ${engineAvailable === false ? 'engine-offline' : ''}`}>
+        <span className="engine-status-dot" />
+        <span>{formatEngineStatus(connectionState, engineAvailable, engineStatusMessage)}</span>
+      </div>
+
       <div className="panel-section">
         <div className="panel-section-title">常用操作</div>
         <div className="panel-buttons panel-buttons-primary">
@@ -105,11 +134,31 @@ export default function GamePanel({
           )}
           {isAiVsAi && (
             <button className="primary-action accent-action" onClick={onNextAiMove} disabled={!canStepAi} title="让当前 AI 走一步">
-              下一步
+              {aiThinking ? '思考中...' : '下一步'}
             </button>
           )}
         </div>
       </div>
+
+      {isAiVsAi && (
+        <div className="panel-section">
+          <div className="panel-section-title">自动播放</div>
+          <div className="panel-buttons panel-buttons-primary">
+            <button className="primary-action accent-action" onClick={onToggleAiAutoPlay} disabled={!canStepAi && !aiAutoPlaying}>
+              {aiAutoPlaying ? '暂停自动' : '开始自动'}
+            </button>
+          </div>
+          <select
+            className="speed-select"
+            value={aiAutoDelay}
+            onChange={e => onAiAutoDelayChange(Number(e.target.value))}
+          >
+            <option value={400}>快速</option>
+            <option value={900}>标准</option>
+            <option value={1600}>慢速</option>
+          </select>
+        </div>
+      )}
 
       <div className="panel-section">
         <div className="panel-section-title">其他功能</div>
@@ -123,6 +172,8 @@ export default function GamePanel({
           </button>
           <button onClick={onExportFen}>导出 FEN</button>
           <button onClick={onImportFen}>导入 FEN</button>
+          <button onClick={onSaveRecentFen}>保存局面</button>
+          <button onClick={onCopyMoveText}>复制棋谱</button>
           <button onClick={onSaveAsEndgame}>另存残局</button>
           <button className="new-game" onClick={onNewGame}>新游戏</button>
         </div>

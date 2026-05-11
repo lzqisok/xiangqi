@@ -12,7 +12,10 @@ interface Props {
   hintMove: Move | null
   inCheck: Position | null
   flipped: boolean
+  aiThinking: boolean
+  thinkingText: string
   onCellClick: (pos: Position) => void
+  onCancelSelection: () => void
 }
 
 const CELL_SIZE = 64
@@ -43,8 +46,24 @@ function formatGameOverText(status: Exclude<GameStatus, 'playing'>, reason?: Gam
   return reason && reasonText[reason] ? `${winner} ${reasonText[reason]}` : winner
 }
 
-export default function Board({ board, gameStatus, gameStatusReason, selectedPos, legalMoves, lastMove, hintMove, inCheck, flipped, onCellClick }: Props) {
+export default function Board({
+  board,
+  gameStatus,
+  gameStatusReason,
+  selectedPos,
+  legalMoves,
+  lastMove,
+  hintMove,
+  inCheck,
+  flipped,
+  aiThinking,
+  thinkingText,
+  onCellClick,
+  onCancelSelection,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const longPressHandledRef = useRef(false)
   const animRef = useRef<{
     piece: BoardType[0][0]
     fromX: number; fromY: number
@@ -204,12 +223,19 @@ export default function Board({ board, gameStatus, gameStatusReason, selectedPos
     draw(ctx)
   }, [draw])
 
-  const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }, [])
+
+  const getClosestPosition = useCallback((clientX: number, clientY: number, toleranceRatio: number): Position | null => {
     const canvas = canvasRef.current
-    if (!canvas) return
+    if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
-    const x = (e.clientX - rect.left) * (BOARD_WIDTH / rect.width)
-    const y = (e.clientY - rect.top) * (BOARD_HEIGHT / rect.height)
+    const x = (clientX - rect.left) * (BOARD_WIDTH / rect.width)
+    const y = (clientY - rect.top) * (BOARD_HEIGHT / rect.height)
 
     let minDist = Infinity
     let closest: Position | null = null
@@ -217,22 +243,66 @@ export default function Board({ board, gameStatus, gameStatusReason, selectedPos
       for (let c = 0; c < COLS; c++) {
         const [px, py] = getPixelPos(r, c)
         const dist = Math.hypot(x - px, y - py)
-        if (dist < CELL_SIZE * 0.5 && dist < minDist) {
+        if (dist < CELL_SIZE * toleranceRatio && dist < minDist) {
           minDist = dist
           closest = { row: r, col: c }
         }
       }
     }
-    if (closest) onCellClick(closest)
-  }, [getPixelPos, onCellClick])
+    return closest
+  }, [getPixelPos])
+
+  const getPointerTolerance = useCallback((pointerType: string) => {
+    const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches
+    return pointerType === 'touch' || pointerType === 'pen' || coarsePointer ? 0.68 : 0.5
+  }, [])
+
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    longPressHandledRef.current = false
+    clearLongPressTimer()
+    const pointerType = e.pointerType
+    const supportsLongPress = pointerType === 'touch' || pointerType === 'pen' || window.matchMedia?.('(pointer: coarse)').matches
+    if (!supportsLongPress) return
+
+    longPressTimerRef.current = setTimeout(() => {
+      longPressHandledRef.current = true
+      onCancelSelection()
+      if (pointerType === 'touch') navigator.vibrate?.(12)
+    }, 520)
+  }, [clearLongPressTimer, onCancelSelection])
+
+  const handlePointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    clearLongPressTimer()
+    if (longPressHandledRef.current) return
+
+    const closest = getClosestPosition(e.clientX, e.clientY, getPointerTolerance(e.pointerType))
+    if (closest) {
+      if (e.pointerType === 'touch') navigator.vibrate?.(8)
+      onCellClick(closest)
+    }
+  }, [clearLongPressTimer, getClosestPosition, getPointerTolerance, onCellClick])
+
+  const handlePointerCancel = useCallback(() => {
+    clearLongPressTimer()
+  }, [clearLongPressTimer])
+
+  useEffect(() => clearLongPressTimer, [clearLongPressTimer])
 
   return (
     <div className="board-wrapper">
       <canvas
         ref={canvasRef}
         className="board-canvas"
-        onClick={handleClick}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        onPointerLeave={handlePointerCancel}
       />
+      {aiThinking && gameStatus === 'playing' && (
+        <div className="board-thinking-banner" aria-live="polite">
+          {thinkingText}
+        </div>
+      )}
       {gameStatus !== 'playing' && (
         <div className={`board-game-over-banner ${GAME_OVER_CLASS[gameStatus]}`} aria-live="polite">
           {formatGameOverText(gameStatus, gameStatusReason)}

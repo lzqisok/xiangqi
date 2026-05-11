@@ -104,6 +104,8 @@ export function useGame({
   const [aiThinking, setAiThinking] = useState(false)
   const [hintThinking, setHintThinking] = useState(false)
   const [hintMove, setHintMove] = useState<Move | null>(null)
+  const [engineAvailable, setEngineAvailable] = useState<boolean | null>(null)
+  const [engineStatusMessage, setEngineStatusMessage] = useState('')
 
   const boardRef = useRef(board)
   boardRef.current = board
@@ -219,14 +221,21 @@ export function useGame({
       setEvaluation(redPerspectiveScore)
       setBestLine(msg.data.pv)
       setAnalysisDepth(msg.data.depth)
+    } else if (msg.type === 'engine-status') {
+      setEngineAvailable(msg.available)
+      setEngineStatusMessage(msg.message || (msg.available ? 'Engine ready' : 'Engine not available'))
     } else if (msg.type === 'error') {
+      setEngineStatusMessage(msg.message)
+      if (msg.message.toLowerCase().includes('engine')) {
+        setEngineAvailable(false)
+      }
       pendingRequestRef.current = null
       setAiThinking(false)
       setHintThinking(false)
     }
   }, [buildMoveFromUci])
 
-  const { send, connected } = useWebSocket(handleWsMessage)
+  const { send, connected, connectionState } = useWebSocket(handleWsMessage)
 
   // Initialize game when mode changes (not when connection flickers)
   const prevGameMode = useRef(gameMode)
@@ -282,6 +291,17 @@ export function useGame({
     pendingRequestRef.current = null
     analysisRequestRef.current = null
   }, [gameMode, difficulty, playerSide, aiRedDifficulty, aiBlackDifficulty, resolvedInitialFen, redPlayerConfig, blackPlayerConfig])
+
+  useEffect(() => {
+    if (!connected) {
+      setEngineAvailable(null)
+      setEngineStatusMessage('')
+      setAiThinking(false)
+      setHintThinking(false)
+      pendingRequestRef.current = null
+      analysisRequestRef.current = null
+    }
+  }, [connected])
 
   // Send init to server whenever connected or difficulty changes
   useEffect(() => {
@@ -482,6 +502,11 @@ export function useGame({
     setFlipped(f => !f)
   }, [])
 
+  const cancelSelection = useCallback(() => {
+    setSelectedPos(null)
+    setLegalMoves([])
+  }, [])
+
   const jumpToMove = useCallback((index: number) => {
     if (index < 0 || index >= moveHistory.length) return
     const record = moveHistory[index]
@@ -578,6 +603,7 @@ export function useGame({
 
   const canRequestHint =
     connected &&
+    engineAvailable !== false &&
     gameStatus === 'playing' &&
     !aiThinking &&
     !hintThinking &&
@@ -586,8 +612,31 @@ export function useGame({
   const canStepAi =
     gameMode === 'ai-vs-ai' &&
     connected &&
+    engineAvailable !== false &&
     gameStatus === 'playing' &&
     !aiThinking
+
+  const bestLineNotation = useMemo(() => {
+    let replayBoard = board
+    const translated: string[] = []
+
+    for (const uci of bestLine) {
+      try {
+        const move = buildMoveFromUci(uci, replayBoard)
+        if (!move) {
+          translated.push(uci)
+          break
+        }
+        translated.push(moveToNotation(replayBoard, move))
+        replayBoard = applyMove(replayBoard, move.from, move.to).newBoard
+      } catch {
+        translated.push(uci)
+        break
+      }
+    }
+
+    return translated
+  }, [bestLine, board, buildMoveFromUci])
 
   const moveRecords = useMemo(
     () => moveHistory.slice(0, currentMoveIndex + 1),
@@ -607,19 +656,25 @@ export function useGame({
     gameStatusReason,
     evaluation,
     bestLine,
+    bestLineNotation,
     analysisDepth,
     moveRecords,
     currentMoveIndex,
     hintThinking,
     aiThinking,
-    canUndo: currentMoveIndex >= 0,
-    canRedo: currentMoveIndex < moveHistory.length - 1,
+    connectionState,
+    connected,
+    engineAvailable,
+    engineStatusMessage,
+    canUndo: currentMoveIndex >= 0 && !aiThinking && !hintThinking,
+    canRedo: currentMoveIndex < moveHistory.length - 1 && !aiThinking && !hintThinking,
     canRequestHint,
     canStepAi,
     handleCellClick,
     undo,
     redo,
     flip,
+    cancelSelection,
     jumpToMove,
     requestHint,
     nextAiMove,

@@ -113,7 +113,10 @@ export default function EndgameBoardEditor({
         hintMove={null}
         inCheck={null}
         flipped={false}
+        aiThinking={false}
+        thinkingText=""
         onCellClick={handleCellClick}
+        onCancelSelection={() => undefined}
       />
     </div>
   )

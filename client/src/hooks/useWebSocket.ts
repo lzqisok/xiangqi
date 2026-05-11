@@ -1,9 +1,10 @@
 import { useRef, useEffect, useCallback, useState } from 'react'
-import { WSMessage } from '../types'
+import { ConnectionState, WSMessage } from '../types'
 
 export function useWebSocket(onMessage: (msg: WSMessage) => void) {
   const wsRef = useRef<WebSocket | null>(null)
   const [connected, setConnected] = useState(false)
+  const [connectionState, setConnectionState] = useState<ConnectionState>('connecting')
   const onMessageRef = useRef(onMessage)
   onMessageRef.current = onMessage
   const intentionalClose = useRef(false)
@@ -17,10 +18,12 @@ export function useWebSocket(onMessage: (msg: WSMessage) => void) {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.hostname
+    setConnectionState('connecting')
     const ws = new WebSocket(`${protocol}//${host}:3001/ws`)
 
     ws.onopen = () => {
       setConnected(true)
+      setConnectionState('connected')
     }
 
     ws.onmessage = (event) => {
@@ -34,6 +37,7 @@ export function useWebSocket(onMessage: (msg: WSMessage) => void) {
 
     ws.onclose = () => {
       setConnected(false)
+      setConnectionState('disconnected')
       if (!intentionalClose.current) {
         reconnectTimer.current = setTimeout(connect, 2000)
       }
@@ -65,5 +69,5 @@ export function useWebSocket(onMessage: (msg: WSMessage) => void) {
     return false
   }, [])
 
-  return { send, connected }
+  return { send, connected, connectionState }
 }

@@ -12,6 +12,7 @@ const INITIAL_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR
 
 let sharedEngine: PikafishEngine | null = null
 let engineReady = false
+let engineInitPromise: Promise<PikafishEngine | null> | null = null
 let activeAnalysis: { sessionId: string; requestId?: string } | null = null
 
 function makeSessionId(): string {
@@ -24,26 +25,41 @@ function sendError(ws: WebSocket, message: string, requestId?: string) {
   }
 }
 
+function sendEngineStatus(ws: WebSocket, available: boolean, message?: string) {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'engine-status', available, message }))
+  }
+}
+
 async function getEngine(): Promise<PikafishEngine | null> {
   if (sharedEngine && engineReady) return sharedEngine
+  if (engineInitPromise) return engineInitPromise
 
-  if (sharedEngine) {
-    sharedEngine.destroy()
+  engineInitPromise = (async () => {
+    if (sharedEngine) {
+      sharedEngine.destroy()
+    }
+
+    sharedEngine = new PikafishEngine()
+    engineReady = await sharedEngine.init()
+
+    if (!engineReady) {
+      console.warn('Engine not available, running in local-only mode')
+      return null
+    }
+
+    sharedEngine.on('exit', () => {
+      engineReady = false
+    })
+
+    return sharedEngine
+  })()
+
+  try {
+    return await engineInitPromise
+  } finally {
+    engineInitPromise = null
   }
-
-  sharedEngine = new PikafishEngine()
-  engineReady = await sharedEngine.init()
-
-  if (!engineReady) {
-    console.warn('Engine not available, running in local-only mode')
-    return null
-  }
-
-  sharedEngine.on('exit', () => {
-    engineReady = false
-  })
-
-  return sharedEngine
 }
 
 // Pre-init engine on startup
@@ -57,6 +73,14 @@ wss.on('connection', async (ws) => {
   let infoHandler: ((info: unknown) => void) | null = null
   let localAnalysisRequestId: string | undefined
 
+  getEngine()
+    .then(engine => sendEngineStatus(
+      ws,
+      Boolean(engine),
+      engine ? 'Engine ready' : 'Engine not available',
+    ))
+    .catch(() => sendEngineStatus(ws, false, 'Engine not available'))
+
   ws.on('message', async (data) => {
     try {
       const msg = JSON.parse(data.toString())
@@ -64,13 +88,15 @@ wss.on('connection', async (ws) => {
       switch (msg.type) {
         case 'init': {
           currentDifficulty = msg.difficulty || 'medium'
+          sendEngineStatus(ws, Boolean(sharedEngine && engineReady), engineReady ? 'Engine ready' : 'Engine not available')
           break
         }
 
         case 'move': {
           const engine = await getEngine()
           if (!engine) {
-            ws.send(JSON.stringify({ type: 'error', message: 'Engine not available' }))
+            sendEngineStatus(ws, false, 'Engine not available')
+            sendError(ws, 'Engine not available', msg.requestId)
             break
           }
 
@@ -98,9 +124,7 @@ wss.on('connection', async (ws) => {
             }
           } catch (err) {
             console.error('Engine error:', err)
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'error', message: 'Engine error' }))
-            }
+            sendError(ws, 'Engine error', requestId)
           }
           break
         }
@@ -108,7 +132,8 @@ wss.on('connection', async (ws) => {
         case 'hint': {
           const engine = await getEngine()
           if (!engine) {
-            ws.send(JSON.stringify({ type: 'error', message: 'Engine not available' }))
+            sendEngineStatus(ws, false, 'Engine not available')
+            sendError(ws, 'Engine not available', msg.requestId)
             break
           }
 
@@ -135,16 +160,18 @@ wss.on('connection', async (ws) => {
             }
           } catch (err) {
             console.error('Hint engine error:', err)
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'error', message: 'Hint engine error' }))
-            }
+            sendError(ws, 'Hint engine error', requestId)
           }
           break
         }
 
         case 'analyze': {
           const engine = await getEngine()
-          if (!engine) break
+          if (!engine) {
+            sendEngineStatus(ws, false, 'Engine not available')
+            sendError(ws, 'Engine not available', msg.requestId)
+            break
+          }
 
           const fen = msg.fen || INITIAL_FEN
           const moves: string[] = msg.moves || []

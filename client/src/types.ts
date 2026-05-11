@@ -63,6 +63,8 @@ export interface EngineInfo {
   nps: number
 }
 
+export type ConnectionState = 'connecting' | 'connected' | 'disconnected'
+
 export type WSMessage =
   | { type: 'init'; difficulty: Difficulty }
   | { type: 'move'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty }
@@ -71,4 +73,5 @@ export type WSMessage =
   | { type: 'stop'; requestId?: string }
   | { type: 'bestmove'; requestId?: string; move: string; ponder?: string; elapsedMs?: number; requestKind?: 'move' | 'hint' }
   | { type: 'info'; requestId?: string; data: EngineInfo }
+  | { type: 'engine-status'; available: boolean; message?: string }
   | { type: 'error'; requestId?: string; message: string }

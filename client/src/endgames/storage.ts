@@ -11,6 +11,7 @@ function isValidEndgame(value: unknown): value is EndgameDefinition {
     typeof item.name === 'string' &&
     typeof item.fen === 'string' &&
     (item.description === undefined || typeof item.description === 'string') &&
+    (item.tags === undefined || (Array.isArray(item.tags) && item.tags.every(tag => typeof tag === 'string'))) &&
     item.source === 'custom'
   )
 }
@@ -37,7 +38,7 @@ export function saveCustomEndgames(endgames: EndgameDefinition[]) {
 export function upsertCustomEndgame(endgame: EndgameDefinition): EndgameDefinition[] {
   const current = loadCustomEndgames()
   const next = current.filter(item => item.id !== endgame.id)
-  next.unshift({ ...endgame, source: 'custom' })
+  next.unshift({ ...endgame, tags: normalizeTags(endgame.tags), source: 'custom' })
   saveCustomEndgames(next)
   return next
 }
@@ -73,4 +74,45 @@ export function toggleFavoriteEndgame(id: string): string[] {
     : [id, ...current]
   saveFavoriteEndgameIds(next)
   return next
+}
+
+export function normalizeTags(tags: string[] | undefined): string[] {
+  return Array.from(new Set((tags || []).map(tag => tag.trim()).filter(Boolean))).slice(0, 8)
+}
+
+export function parseTags(value: string): string[] {
+  return normalizeTags(value.split(/[,\s，、]+/))
+}
+
+export function exportCustomEndgamesJson(): string {
+  return JSON.stringify({
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    endgames: loadCustomEndgames(),
+  }, null, 2)
+}
+
+export function importCustomEndgamesJson(raw: string): EndgameDefinition[] {
+  const parsed = JSON.parse(raw) as unknown
+  const candidates = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object' && Array.isArray((parsed as { endgames?: unknown }).endgames)
+      ? (parsed as { endgames: unknown[] }).endgames
+      : []
+
+  const imported = candidates
+    .filter(isValidEndgame)
+    .map(item => ({ ...item, id: item.id || `custom-${Date.now()}`, tags: normalizeTags(item.tags), source: 'custom' as const }))
+
+  if (imported.length === 0) {
+    return loadCustomEndgames()
+  }
+
+  const current = loadCustomEndgames()
+  const merged = [
+    ...imported,
+    ...current.filter(item => !imported.some(importedItem => importedItem.id === item.id)),
+  ]
+  saveCustomEndgames(merged)
+  return merged
 }

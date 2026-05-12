@@ -11,6 +11,8 @@ interface Props {
   onEdit: (endgame: EndgameDefinition) => void
   onDuplicate: (endgame: EndgameDefinition) => void
   onToggleFavorite: (id: string) => void
+  onImportJson: (file: File) => void
+  onExportJson: () => void
   onBack: () => void
 }
 
@@ -26,6 +28,8 @@ export default function EndgameLibrary({
   onEdit,
   onDuplicate,
   onToggleFavorite,
+  onImportJson,
+  onExportJson,
   onBack,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(builtinEndgames[0]?.id ?? customEndgames[0]?.id ?? null)
@@ -51,7 +55,8 @@ export default function EndgameLibrary({
         !keyword ||
         item.name.toLowerCase().includes(keyword) ||
         item.fen.toLowerCase().includes(keyword) ||
-        item.description?.toLowerCase().includes(keyword)
+        item.description?.toLowerCase().includes(keyword) ||
+        item.tags?.some(tag => tag.toLowerCase().includes(keyword))
       return matchesFilter && matchesQuery
     })
   }, [allEndgames, query, filter, favoriteIds])
@@ -74,7 +79,22 @@ export default function EndgameLibrary({
 
         <div className="endgame-library-actions">
           <button onClick={onBack}>返回</button>
-          <button onClick={onCreate}>新建残局</button>
+          <div className="endgame-library-action-group">
+            <button onClick={onCreate}>新建残局</button>
+            <button onClick={onExportJson} disabled={customEndgames.length === 0}>导出 JSON</button>
+            <label className="endgame-import-btn">
+              导入 JSON
+              <input
+                type="file"
+                accept="application/json,.json"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) onImportJson(file)
+                  e.currentTarget.value = ''
+                }}
+              />
+            </label>
+          </div>
         </div>
 
         <div className="endgame-library-toolbar">
@@ -116,6 +136,11 @@ export default function EndgameLibrary({
                 </div>
               </div>
               {item.description && <p>{item.description}</p>}
+              {item.tags && item.tags.length > 0 && (
+                <div className="endgame-tags">
+                  {item.tags.map(tag => <span key={tag}>{tag}</span>)}
+                </div>
+              )}
               <div className="endgame-fen-preview">{item.fen}</div>
               {item.source === 'custom' && (
                 <div className="endgame-card-actions">

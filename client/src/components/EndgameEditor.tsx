@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 import EndgameBoardEditor from './EndgameBoardEditor'
 import { validateFenPosition } from '../engine/validation'
+import { parseTags } from '../endgames/storage'
 
 interface Props {
   initialName?: string
   initialDescription?: string
   initialFen?: string
-  onSave: (payload: { name: string; description: string; fen: string }) => void
+  initialTags?: string[]
+  onSave: (payload: { name: string; description: string; fen: string; tags: string[] }) => void
   onCancel: () => void
 }
 
@@ -19,11 +21,13 @@ export default function EndgameEditor({
   initialName = '',
   initialDescription = '',
   initialFen = '4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1',
+  initialTags = [],
   onSave,
   onCancel,
 }: Props) {
   const [name, setName] = useState(initialName)
   const [description, setDescription] = useState(initialDescription)
+  const [tags, setTags] = useState(initialTags.join('，'))
   const [fen, setFen] = useState(initialFen)
 
   const error = useMemo(() => {
@@ -60,6 +64,16 @@ export default function EndgameEditor({
         </div>
 
         <div className="option-group">
+          <label>残局标签</label>
+          <input
+            className="endgame-input"
+            value={tags}
+            onChange={e => setTags(e.target.value)}
+            placeholder="例如：车炮兵、三步杀、守和"
+          />
+        </div>
+
+        <div className="option-group">
           <label>可视化摆子</label>
           <EndgameBoardEditor fen={fen} onChange={setFen} />
         </div>
@@ -82,7 +96,12 @@ export default function EndgameEditor({
           <button
             className="start-btn"
             disabled={Boolean(error)}
-            onClick={() => onSave({ name: name.trim(), description: description.trim(), fen: fen.trim() })}
+            onClick={() => onSave({
+              name: name.trim(),
+              description: description.trim(),
+              fen: fen.trim(),
+              tags: parseTags(tags),
+            })}
           >
             保存残局
           </button>

@@ -2,6 +2,7 @@ import express from 'express'
 import { createServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
 import { PikafishEngine } from './engine.js'
+import { parseClientMessage } from './protocol.js'
 import { validateFenPosition } from './validation.js'
 
 const app = express()
@@ -83,7 +84,12 @@ wss.on('connection', async (ws) => {
 
   ws.on('message', async (data) => {
     try {
-      const msg = JSON.parse(data.toString())
+      const parsed = parseClientMessage(data.toString())
+      if (!parsed.ok) {
+        sendError(ws, parsed.error, parsed.requestId)
+        return
+      }
+      const msg = parsed.message
 
       switch (msg.type) {
         case 'init': {

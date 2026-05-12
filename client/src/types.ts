@@ -47,6 +47,7 @@ export interface EndgameDefinition {
   name: string
   fen: string
   description?: string
+  tags?: string[]
   source: EndgameSource
 }
 
@@ -61,6 +62,12 @@ export interface EngineInfo {
   pv: string[]
   nodes: number
   nps: number
+}
+
+export interface AnalysisPoint {
+  moveIndex: number
+  evaluation: number
+  depth: number
 }
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected'

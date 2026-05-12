@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { isStaleEngineResponse, parseClientMessage } from './protocol.js'
+
+const VALID_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
+
+test('parseClientMessage accepts valid move requests', () => {
+  const result = parseClientMessage(JSON.stringify({
+    type: 'move',
+    requestId: 'move-1',
+    fen: VALID_FEN,
+    moves: ['h2e2'],
+    difficulty: 'medium',
+  }))
+
+  assert.equal(result.ok, true)
+  if (result.ok) {
+    assert.equal(result.message.requestId, 'move-1')
+    assert.deepEqual(result.message.moves, ['h2e2'])
+  }
+})
+
+test('parseClientMessage rejects invalid JSON, missing requestId, and bad FEN', () => {
+  assert.deepEqual(parseClientMessage('{'), { ok: false, error: 'Message must be valid JSON' })
+
+  const missingRequest = parseClientMessage(JSON.stringify({ type: 'hint', fen: VALID_FEN }))
+  assert.equal(missingRequest.ok, false)
+  if (!missingRequest.ok) assert.equal(missingRequest.error, 'requestId is required')
+
+  const badFen = parseClientMessage(JSON.stringify({ type: 'analyze', requestId: 'a1', fen: 'bad fen' }))
+  assert.equal(badFen.ok, false)
+  if (!badFen.ok) assert.equal(badFen.requestId, 'a1')
+})
+
+test('isStaleEngineResponse guards request id, kind, and move history', () => {
+  const pending = { id: 'move-1', kind: 'move' as const, movesKey: 'h2e2' }
+
+  assert.equal(isStaleEngineResponse(pending, { requestId: 'move-1', requestKind: 'move' }, 'h2e2'), false)
+  assert.equal(isStaleEngineResponse(pending, { requestId: 'move-2', requestKind: 'move' }, 'h2e2'), true)
+  assert.equal(isStaleEngineResponse(pending, { requestId: 'move-1', requestKind: 'hint' }, 'h2e2'), true)
+  assert.equal(isStaleEngineResponse(pending, { requestId: 'move-1', requestKind: 'move' }, 'h2e2 h9g7'), true)
+  assert.equal(isStaleEngineResponse(null, { requestId: 'move-1', requestKind: 'move' }, 'h2e2'), true)
+})

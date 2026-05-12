@@ -9,7 +9,7 @@
     "dev:client": "pnpm --filter client dev",
     "dev:server": "pnpm --filter server dev",
     "build": "pnpm --filter client build && pnpm --filter server build",
-    "test": "pnpm --filter client test"
+    "test": "pnpm --filter client test && pnpm --filter server test"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

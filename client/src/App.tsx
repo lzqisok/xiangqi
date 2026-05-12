@@ -3,11 +3,21 @@ import Board from './components/Board'
 import GamePanel from './components/GamePanel'
 import MoveHistory from './components/MoveHistory'
 import AnalysisBar from './components/AnalysisBar'
+import AnalysisCurve from './components/AnalysisCurve'
 import EndgameLibrary from './components/EndgameLibrary'
 import EndgameEditor from './components/EndgameEditor'
 import { useGame } from './hooks/useGame'
 import { BUILTIN_ENDGAMES } from './endgames/builtin'
-import { deleteCustomEndgame, loadCustomEndgames, loadFavoriteEndgameIds, toggleFavoriteEndgame, upsertCustomEndgame } from './endgames/storage'
+import {
+  deleteCustomEndgame,
+  exportCustomEndgamesJson,
+  importCustomEndgamesJson,
+  loadCustomEndgames,
+  loadFavoriteEndgameIds,
+  normalizeTags,
+  toggleFavoriteEndgame,
+  upsertCustomEndgame,
+} from './endgames/storage'
 import { loadRecentFenPositions, RecentFenPosition, saveRecentFenPosition } from './fen/storage'
 import { validateFenPosition } from './engine/validation'
 import { EndgameDefinition, EndgameStartConfig, GameMode, Difficulty, MoveRecord, PlayerSide } from './types'
@@ -27,11 +37,12 @@ export default function App() {
   const [editingEndgame, setEditingEndgame] = useState(false)
   const [aiAutoPlaying, setAiAutoPlaying] = useState(false)
   const [aiAutoDelay, setAiAutoDelay] = useState(900)
-  const [editorDraft, setEditorDraft] = useState<{ id: string | null; name: string; description: string; fen: string }>({
+  const [editorDraft, setEditorDraft] = useState<{ id: string | null; name: string; description: string; fen: string; tags: string[] }>({
     id: null,
     name: '',
     description: '',
     fen: '',
+    tags: [],
   })
   const [endgameConfig, setEndgameConfig] = useState<EndgameStartConfig>({
     red: { type: 'human' },
@@ -88,19 +99,21 @@ export default function App() {
         initialName={editorDraft.name}
         initialDescription={editorDraft.description}
         initialFen={editorDraft.fen}
+        initialTags={editorDraft.tags}
         onCancel={() => setEditingEndgame(false)}
-        onSave={({ name, description, fen }) => {
+        onSave={({ name, description, fen, tags }) => {
           const saved = upsertCustomEndgame({
             id: editorDraft.id || `custom-${Date.now()}`,
             name,
             description,
             fen,
+            tags: normalizeTags(tags),
             source: 'custom',
           })
           setCustomEndgames(saved)
           setEditingEndgame(false)
           if (gameMode === 'endgame' && !selectedEndgame) {
-            setEditorDraft({ id: null, name: '', description: '', fen: '' })
+            setEditorDraft({ id: null, name: '', description: '', fen: '', tags: [] })
           }
         }}
       />
@@ -118,7 +131,7 @@ export default function App() {
           setEditingEndgame(false)
         }}
         onCreate={() => {
-          setEditorDraft({ id: null, name: '', description: '', fen: '' })
+          setEditorDraft({ id: null, name: '', description: '', fen: '', tags: [] })
           setEditingEndgame(true)
         }}
         onDelete={(id) => setCustomEndgames(deleteCustomEndgame(id))}
@@ -128,6 +141,7 @@ export default function App() {
             name: endgame.name,
             description: endgame.description || '',
             fen: endgame.fen,
+            tags: endgame.tags || [],
           })
           setEditingEndgame(true)
         }}
@@ -141,6 +155,12 @@ export default function App() {
           setCustomEndgames(saved)
         }}
         onToggleFavorite={(id) => setFavoriteEndgameIds(toggleFavoriteEndgame(id))}
+        onExportJson={() => downloadJson('xiangqi-custom-endgames.json', exportCustomEndgamesJson())}
+        onImportJson={(file) => {
+          file.text()
+            .then(text => setCustomEndgames(importCustomEndgamesJson(text)))
+            .catch(() => undefined)
+        }}
         onStart={(endgame, config) => {
           setSelectedEndgame(endgame)
           setEndgameConfig(config)
@@ -224,6 +244,7 @@ export default function App() {
                   ? `基于残局「${selectedEndgame.name}」另存`
                   : '从当前局面保存',
                 fen: game.getCurrentFen(),
+                tags: gameMode === 'endgame' && selectedEndgame ? selectedEndgame.tags || [] : [],
               })
               setEditingEndgame(true)
             }}
@@ -242,6 +263,7 @@ export default function App() {
             currentIndex={game.currentMoveIndex}
             onJumpTo={game.jumpToMove}
           />
+          {showAnalysis && <AnalysisCurve points={game.analysisPoints} />}
         </div>
       </div>
 
@@ -290,6 +312,16 @@ function formatMoveRecords(records: MoveRecord[]): string {
     lines.push(`${moveNum}. ${redMove}${blackMove ? ` ${blackMove}` : ''}`.trim())
   }
   return lines.join('\n')
+}
+
+function downloadJson(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 function FenDialog({ mode, fen, recentPositions, onClose, onLoad }: {

@@ -1,13 +1,14 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Board, Position, Move, MoveRecord, PieceColor,
-  GameMode, Difficulty, PlayerSide, GameStatus, GameStatusReason, WSMessage, PlayerConfig,
+  GameMode, Difficulty, PlayerSide, GameStatus, GameStatusReason, WSMessage, PlayerConfig, AnalysisPoint,
 } from '../types'
 import { parseFen, boardToFen, applyMove, INITIAL_FEN, findKing } from '../engine/board'
 import { getLegalMoves, isInCheck, getGameStatusDetail } from '../engine/rules'
 import { moveToNotation, moveToUci, uciToMove } from '../engine/notation'
 import { validateFenPosition } from '../engine/validation'
 import { useWebSocket } from './useWebSocket'
+import { getRedoTargetIndex, getUndoTargetIndex, shouldAutoRequestAiMove } from './gameFlow'
 import { playMoveSound, playCaptureSound, playCheckSound, playGameOverSound } from '../audio'
 
 interface UseGameOptions {
@@ -101,6 +102,7 @@ export function useGame({
   const [evaluation, setEvaluation] = useState<number | null>(null)
   const [bestLine, setBestLine] = useState<string[]>([])
   const [analysisDepth, setAnalysisDepth] = useState(0)
+  const [analysisPoints, setAnalysisPoints] = useState<AnalysisPoint[]>([])
   const [aiThinking, setAiThinking] = useState(false)
   const [hintThinking, setHintThinking] = useState(false)
   const [hintMove, setHintMove] = useState<Move | null>(null)
@@ -221,6 +223,15 @@ export function useGame({
       setEvaluation(redPerspectiveScore)
       setBestLine(msg.data.pv)
       setAnalysisDepth(msg.data.depth)
+      setAnalysisPoints(prev => {
+        const point = {
+          moveIndex: currentMoveIndexRef.current,
+          evaluation: redPerspectiveScore,
+          depth: msg.data.depth,
+        }
+        return [...prev.filter(item => item.moveIndex !== point.moveIndex), point]
+          .sort((a, b) => a.moveIndex - b.moveIndex)
+      })
     } else if (msg.type === 'engine-status') {
       setEngineAvailable(msg.available)
       setEngineStatusMessage(msg.message || (msg.available ? 'Engine ready' : 'Engine not available'))
@@ -280,6 +291,7 @@ export function useGame({
     setEvaluation(null)
     setBestLine([])
     setAnalysisDepth(0)
+    setAnalysisPoints([])
     setFlipped(
       gameMode === 'human-vs-ai'
         ? playerSide === 'black'
@@ -337,11 +349,13 @@ export function useGame({
 
   // Trigger AI move
   useEffect(() => {
-    if (gameStatus !== 'playing') return
-    if (aiThinking) return
-    if (gameMode === 'ai-vs-ai') return
-    if (currentPlayerConfig.type !== 'ai') return
-    if (!connected) return
+    if (!shouldAutoRequestAiMove({
+      gameStatus,
+      aiThinking,
+      gameMode,
+      currentPlayer: currentPlayerConfig,
+      connected,
+    })) return
 
     setAiThinking(true)
     const requestId = makeRequestId('move')
@@ -438,11 +452,7 @@ export function useGame({
 
   const undo = useCallback(() => {
     if (currentMoveIndex < 0) return
-    const singleAiSide =
-      (players.red.type === 'ai' && players.black.type === 'human') ||
-      (players.red.type === 'human' && players.black.type === 'ai')
-    const undoCount = gameMode === 'human-vs-ai' || (gameMode === 'endgame' && singleAiSide) ? 2 : 1
-    const targetIndex = Math.max(-1, currentMoveIndex - undoCount)
+    const targetIndex = getUndoTargetIndex(currentMoveIndex, gameMode, players)
 
     if (targetIndex < 0) {
       const { board: initBoard, turn } = parseFen(resolvedInitialFen)
@@ -475,11 +485,7 @@ export function useGame({
 
   const redo = useCallback(() => {
     if (currentMoveIndex >= moveHistory.length - 1) return
-    const singleAiSide =
-      (players.red.type === 'ai' && players.black.type === 'human') ||
-      (players.red.type === 'human' && players.black.type === 'ai')
-    const redoCount = gameMode === 'human-vs-ai' || (gameMode === 'endgame' && singleAiSide) ? 2 : 1
-    const targetIndex = Math.min(moveHistory.length - 1, currentMoveIndex + redoCount)
+    const targetIndex = getRedoTargetIndex(currentMoveIndex, moveHistory.length, gameMode, players)
 
     const record = moveHistory[targetIndex]
     const { board: nextBoard, turn } = parseFen(record.fen)
@@ -553,6 +559,7 @@ export function useGame({
       setEvaluation(null)
       setBestLine([])
       setAnalysisDepth(0)
+      setAnalysisPoints([])
       pendingRequestRef.current = null
       return true
     } catch {
@@ -658,6 +665,7 @@ export function useGame({
     bestLine,
     bestLineNotation,
     analysisDepth,
+    analysisPoints,
     moveRecords,
     currentMoveIndex,
     hintThinking,

@@ -469,6 +469,60 @@ body {
   color: rgba(255, 255, 255, 0.58);
 }
 
+.analysis-curve {
+  background: var(--bg-card);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.analysis-curve-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.analysis-curve-header span:first-child {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.analysis-curve svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.analysis-curve-frame {
+  fill: rgba(255, 255, 255, 0.025);
+  stroke: rgba(255, 255, 255, 0.08);
+}
+
+.analysis-curve-zero {
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-dasharray: 4 4;
+}
+
+.analysis-curve-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.analysis-curve circle.red-point {
+  fill: #f06a58;
+}
+
+.analysis-curve circle.black-point {
+  fill: #b7cabd;
+}
+
 /* Start Screen */
 .start-screen {
   display: flex;
@@ -588,6 +642,7 @@ body {
 }
 
 .endgame-library-actions button,
+.endgame-import-btn,
 .endgame-copy-btn,
 .endgame-edit-btn,
 .endgame-delete-btn {
@@ -596,6 +651,29 @@ body {
   border-radius: 8px;
   background: var(--btn-bg);
   color: var(--text-primary);
+  cursor: pointer;
+}
+
+.endgame-library-action-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.endgame-import-btn {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  font-size: 13px;
+}
+
+.endgame-import-btn input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
   cursor: pointer;
 }
 
@@ -673,6 +751,21 @@ body {
 
 .endgame-source.custom {
   color: #8dd0b3;
+}
+
+.endgame-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 9px;
+}
+
+.endgame-tags span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(61, 155, 115, 0.13);
+  color: #8dd0b3;
+  font-size: 11px;
 }
 
 .endgame-fen-preview {

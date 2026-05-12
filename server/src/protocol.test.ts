@@ -20,6 +20,36 @@ test('parseClientMessage accepts valid move requests', () => {
   }
 })
 
+test('parseClientMessage accepts candidate requests with bounded count', () => {
+  const result = parseClientMessage(JSON.stringify({
+    type: 'candidates',
+    requestId: 'c1',
+    fen: VALID_FEN,
+    moves: [],
+    count: 3,
+  }))
+
+  assert.equal(result.ok, true)
+  if (result.ok) assert.equal(result.message.count, 3)
+
+  const bad = parseClientMessage(JSON.stringify({
+    type: 'candidates',
+    requestId: 'c2',
+    fen: VALID_FEN,
+    count: 9,
+  }))
+  assert.equal(bad.ok, false)
+
+  const fractional = parseClientMessage(JSON.stringify({
+    type: 'candidates',
+    requestId: 'c3',
+    fen: VALID_FEN,
+    count: 1.5,
+  }))
+  assert.equal(fractional.ok, false)
+  if (!fractional.ok) assert.equal(fractional.error, 'count must be an integer between 1 and 5')
+})
+
 test('parseClientMessage rejects invalid JSON, missing requestId, and bad FEN', () => {
   assert.deepEqual(parseClientMessage('{'), { ok: false, error: 'Message must be valid JSON' })
 

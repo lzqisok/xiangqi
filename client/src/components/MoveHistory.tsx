@@ -5,6 +5,8 @@ interface Props {
   moves: MoveRecord[]
   currentIndex: number
   onJumpTo: (index: number) => void
+  onToggleMark: (index: number) => void
+  onUpdateNote: (index: number, note: string) => void
 }
 
 function formatElapsedMs(elapsedMs: number): string {
@@ -12,7 +14,7 @@ function formatElapsedMs(elapsedMs: number): string {
   return `${(elapsedMs / 1000).toFixed(1)}s`
 }
 
-export default function MoveHistory({ moves, currentIndex, onJumpTo }: Props) {
+export default function MoveHistory({ moves, currentIndex, onJumpTo, onToggleMark, onUpdateNote }: Props) {
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -45,6 +47,28 @@ export default function MoveHistory({ moves, currentIndex, onJumpTo }: Props) {
               <span className={`move-text ${isRed ? 'red' : 'black'}`}>
                 {record.notation}
               </span>
+              {record.note && <span className="move-note" title={record.note}>注</span>}
+              <button
+                className={`move-mark ${record.marked ? 'active' : ''}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleMark(i)
+                }}
+                title={record.marked ? '取消标记' : '标记关键局面'}
+              >
+                {record.marked ? '★' : '☆'}
+              </button>
+              <button
+                className="move-note-btn"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const note = window.prompt('备注', record.note || '')
+                  if (note !== null) onUpdateNote(i, note)
+                }}
+                title="编辑备注"
+              >
+                记
+              </button>
               {record.elapsedMs !== undefined && record.source?.startsWith('ai-') && (
                 <span className="move-meta">{formatElapsedMs(record.elapsedMs)}</span>
               )}

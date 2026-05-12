@@ -2,13 +2,17 @@ import { useMemo, useState } from 'react'
 import EndgameBoardEditor from './EndgameBoardEditor'
 import { validateFenPosition } from '../engine/validation'
 import { parseTags } from '../endgames/storage'
+import { EndgameTarget } from '../types'
 
 interface Props {
   initialName?: string
   initialDescription?: string
   initialFen?: string
   initialTags?: string[]
-  onSave: (payload: { name: string; description: string; fen: string; tags: string[] }) => void
+  initialTarget?: EndgameTarget
+  initialMaxMoves?: number
+  initialSolution?: string[]
+  onSave: (payload: { name: string; description: string; fen: string; tags: string[]; target?: EndgameTarget; maxMoves?: number; solution: string[] }) => void
   onCancel: () => void
 }
 
@@ -22,12 +26,18 @@ export default function EndgameEditor({
   initialDescription = '',
   initialFen = '4k4/9/9/9/9/9/9/9/9/4K4 w - - 0 1',
   initialTags = [],
+  initialTarget,
+  initialMaxMoves,
+  initialSolution = [],
   onSave,
   onCancel,
 }: Props) {
   const [name, setName] = useState(initialName)
   const [description, setDescription] = useState(initialDescription)
   const [tags, setTags] = useState(initialTags.join('，'))
+  const [target, setTarget] = useState<EndgameTarget | ''>(initialTarget || '')
+  const [maxMoves, setMaxMoves] = useState(initialMaxMoves ? String(initialMaxMoves) : '')
+  const [solution, setSolution] = useState(initialSolution.join(' '))
   const [fen, setFen] = useState(initialFen)
 
   const error = useMemo(() => {
@@ -74,6 +84,48 @@ export default function EndgameEditor({
         </div>
 
         <div className="option-group">
+          <label>训练目标</label>
+          <div className="btn-group">
+            {[
+              ['', '无'],
+              ['red-win', '红胜'],
+              ['black-win', '黑胜'],
+              ['draw', '守和'],
+              ['survive', '坚持'],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                className={target === value ? 'active' : ''}
+                onClick={() => setTarget(value as EndgameTarget | '')}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="option-group">
+          <label>目标步数</label>
+          <input
+            className="endgame-input"
+            value={maxMoves}
+            onChange={e => setMaxMoves(e.target.value.replace(/[^\d]/g, ''))}
+            placeholder="可选，例如 6"
+          />
+        </div>
+
+        <div className="option-group">
+          <label>标准解法</label>
+          <textarea
+            className="endgame-textarea fen-field"
+            value={solution}
+            onChange={e => setSolution(e.target.value)}
+            placeholder="可选，输入 UCI 走法，如 h2e2 h9g7"
+            rows={2}
+          />
+        </div>
+
+        <div className="option-group">
           <label>可视化摆子</label>
           <EndgameBoardEditor fen={fen} onChange={setFen} />
         </div>
@@ -101,6 +153,9 @@ export default function EndgameEditor({
               description: description.trim(),
               fen: fen.trim(),
               tags: parseTags(tags),
+              target: target || undefined,
+              maxMoves: maxMoves ? Number(maxMoves) : undefined,
+              solution: solution.split(/[\s,，、]+/).map(item => item.trim()).filter(Boolean),
             })}
           >
             保存残局

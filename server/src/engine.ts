@@ -13,6 +13,14 @@ export interface EngineInfo {
   pv: string[]
   nodes: number
   nps: number
+  multipv?: number
+}
+
+export interface EngineCandidate {
+  move: string
+  score: number
+  depth: number
+  pv: string[]
 }
 
 type Difficulty = 'easy' | 'medium' | 'hard' | 'master'
@@ -120,6 +128,10 @@ export class PikafishEngine extends EventEmitter {
     return this.enqueue(() => this.getBestMoveLocked(fen, moves, difficulty))
   }
 
+  async getCandidates(fen: string, moves: string[], difficulty: Difficulty, count: number): Promise<EngineCandidate[]> {
+    return this.enqueue(() => this.getCandidatesLocked(fen, moves, difficulty, count))
+  }
+
   private async getBestMoveLocked(fen: string, moves: string[], difficulty: Difficulty): Promise<string | null> {
     if (!this.ready || !this.process) {
       console.error('Engine not ready, attempting reinit...')
@@ -161,6 +173,60 @@ export class PikafishEngine extends EventEmitter {
 
   async analyze(fen: string, moves: string[]): Promise<void> {
     return this.enqueue(() => this.analyzeLocked(fen, moves))
+  }
+
+  private async getCandidatesLocked(fen: string, moves: string[], difficulty: Difficulty, count: number): Promise<EngineCandidate[]> {
+    if (!this.ready || !this.process) {
+      const ok = await this.init()
+      if (!ok) return []
+    }
+
+    let infoHandler: ((info: EngineInfo) => void) | null = null
+    try {
+      await this.stopSearchIfNeeded()
+      const depth = Math.min(16, DEPTH_MAP[difficulty])
+      const candidateCount = Math.max(1, Math.min(5, count))
+      const candidates = new Map<number, EngineCandidate>()
+      infoHandler = (info: EngineInfo) => {
+        const multipv = info.multipv || 1
+        const move = info.pv[0]
+        if (!move) return
+        const prev = candidates.get(multipv)
+        if (!prev || info.depth >= prev.depth) {
+          candidates.set(multipv, { move, score: info.score, depth: info.depth, pv: info.pv })
+        }
+      }
+
+      this.on('info', infoHandler)
+      this.send(`setoption name MultiPV value ${candidateCount}`)
+      this.send('isready')
+      await this.waitFor('readyok', 5000)
+
+      let posCmd = `position fen ${toEngineFen(fen)}`
+      if (moves.length > 0) {
+        posCmd += ` moves ${moves.join(' ')}`
+      }
+      this.send(posCmd)
+      this.searching = true
+      this.send(`go depth ${depth}`)
+      await this.waitFor('bestmove', 60000)
+      this.searching = false
+
+      return Array.from(candidates.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([, candidate]) => candidate)
+        .slice(0, candidateCount)
+    } catch (err) {
+      console.error('getCandidates error:', err)
+      this.ready = false
+      this.searching = false
+      return []
+    } finally {
+      if (infoHandler) {
+        this.removeListener('info', infoHandler)
+      }
+      this.send('setoption name MultiPV value 1')
+    }
   }
 
   private async analyzeLocked(fen: string, moves: string[]): Promise<void> {
@@ -206,7 +272,7 @@ export class PikafishEngine extends EventEmitter {
 
   private parseInfo(line: string): EngineInfo | null {
     const parts = line.split(' ')
-    let depth = 0, score = 0, nodes = 0, nps = 0
+    let depth = 0, score = 0, nodes = 0, nps = 0, multipv = 1
     const pv: string[] = []
     let isMate = false
 
@@ -226,6 +292,7 @@ export class PikafishEngine extends EventEmitter {
           break
         case 'nodes': nodes = parseInt(parts[++i]) || 0; break
         case 'nps': nps = parseInt(parts[++i]) || 0; break
+        case 'multipv': multipv = parseInt(parts[++i]) || 1; break
         case 'pv':
           for (let j = i + 1; j < parts.length; j++) {
             if (parts[j].match(/^[a-i][0-9][a-i][0-9]$/)) {
@@ -239,7 +306,7 @@ export class PikafishEngine extends EventEmitter {
     }
 
     if (depth === 0) return null
-    return { depth, score, pv, nodes, nps }
+    return { depth, score, pv, nodes, nps, multipv }
   }
 
   private waitFor(keyword: string, timeout = 10000): Promise<string> {

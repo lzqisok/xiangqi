@@ -12,6 +12,9 @@ function isValidEndgame(value: unknown): value is EndgameDefinition {
     typeof item.fen === 'string' &&
     (item.description === undefined || typeof item.description === 'string') &&
     (item.tags === undefined || (Array.isArray(item.tags) && item.tags.every(tag => typeof tag === 'string'))) &&
+    (item.target === undefined || ['red-win', 'black-win', 'draw', 'survive'].includes(String(item.target))) &&
+    (item.maxMoves === undefined || typeof item.maxMoves === 'number') &&
+    (item.solution === undefined || (Array.isArray(item.solution) && item.solution.every(move => typeof move === 'string'))) &&
     item.source === 'custom'
   )
 }
@@ -38,7 +41,7 @@ export function saveCustomEndgames(endgames: EndgameDefinition[]) {
 export function upsertCustomEndgame(endgame: EndgameDefinition): EndgameDefinition[] {
   const current = loadCustomEndgames()
   const next = current.filter(item => item.id !== endgame.id)
-  next.unshift({ ...endgame, tags: normalizeTags(endgame.tags), source: 'custom' })
+  next.unshift({ ...endgame, tags: normalizeTags(endgame.tags), solution: normalizeSolution(endgame.solution), source: 'custom' })
   saveCustomEndgames(next)
   return next
 }
@@ -84,6 +87,10 @@ export function parseTags(value: string): string[] {
   return normalizeTags(value.split(/[,\s，、]+/))
 }
 
+export function normalizeSolution(solution: string[] | undefined): string[] {
+  return (solution || []).map(move => move.trim()).filter(move => /^[a-i][0-9][a-i][0-9]$/.test(move))
+}
+
 export function exportCustomEndgamesJson(): string {
   return JSON.stringify({
     version: 1,
@@ -102,7 +109,7 @@ export function importCustomEndgamesJson(raw: string): EndgameDefinition[] {
 
   const imported = candidates
     .filter(isValidEndgame)
-    .map(item => ({ ...item, id: item.id || `custom-${Date.now()}`, tags: normalizeTags(item.tags), source: 'custom' as const }))
+    .map(item => ({ ...item, id: item.id || `custom-${Date.now()}`, tags: normalizeTags(item.tags), solution: normalizeSolution(item.solution), source: 'custom' as const }))
 
   if (imported.length === 0) {
     return loadCustomEndgames()

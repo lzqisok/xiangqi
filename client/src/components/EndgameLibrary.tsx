@@ -18,6 +18,13 @@ interface Props {
 
 const DEFAULT_PLAYER_CONFIG: PlayerConfig = { type: 'human' }
 
+const TARGET_LABELS: Record<string, string> = {
+  'red-win': '红胜',
+  'black-win': '黑胜',
+  draw: '守和',
+  survive: '坚持',
+}
+
 export default function EndgameLibrary({
   builtinEndgames,
   customEndgames,
@@ -139,6 +146,13 @@ export default function EndgameLibrary({
               {item.tags && item.tags.length > 0 && (
                 <div className="endgame-tags">
                   {item.tags.map(tag => <span key={tag}>{tag}</span>)}
+                </div>
+              )}
+              {(item.target || item.solution?.length) && (
+                <div className="endgame-tags">
+                  {item.target && <span>{TARGET_LABELS[item.target]}</span>}
+                  {item.maxMoves && <span>{item.maxMoves} 手目标</span>}
+                  {item.solution?.length ? <span>解法 {item.solution.length} 手</span> : null}
                 </div>
               )}
               <div className="endgame-fen-preview">{item.fen}</div>

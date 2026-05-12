@@ -26,9 +26,11 @@ export interface MoveRecord {
   fen: string
   elapsedMs?: number
   source?: 'human' | 'ai-red' | 'ai-black'
+  marked?: boolean
+  note?: string
 }
 
-export type GameMode = 'human-vs-ai' | 'human-vs-human' | 'ai-vs-ai' | 'endgame'
+export type GameMode = 'human-vs-ai' | 'human-vs-human' | 'ai-vs-ai' | 'endgame' | 'study'
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'master'
 export type PlayerSide = 'red' | 'black'
 export type GameStatus = 'playing' | 'red-wins' | 'black-wins' | 'draw'
@@ -48,8 +50,13 @@ export interface EndgameDefinition {
   fen: string
   description?: string
   tags?: string[]
+  target?: EndgameTarget
+  maxMoves?: number
+  solution?: string[]
   source: EndgameSource
 }
+
+export type EndgameTarget = 'red-win' | 'black-win' | 'draw' | 'survive'
 
 export interface EndgameStartConfig {
   red: PlayerConfig
@@ -70,6 +77,26 @@ export interface AnalysisPoint {
   depth: number
 }
 
+export interface MoveCandidate {
+  move: string
+  notation?: string
+  score: number
+  depth: number
+  pv: string[]
+}
+
+export interface StudyPosition {
+  id: string
+  name: string
+  description?: string
+  initialFen: string
+  moves: MoveRecord[]
+  currentMoveIndex: number
+  analysisPoints: AnalysisPoint[]
+  createdAt: number
+  updatedAt: number
+}
+
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected'
 
 export type WSMessage =
@@ -77,6 +104,7 @@ export type WSMessage =
   | { type: 'move'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty }
   | { type: 'hint'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty }
   | { type: 'analyze'; requestId: string; fen: string; moves: string[] }
+  | { type: 'candidates'; requestId?: string; fen?: string; moves?: string[]; difficulty?: Difficulty; count?: number; candidates?: MoveCandidate[] }
   | { type: 'stop'; requestId?: string }
   | { type: 'bestmove'; requestId?: string; move: string; ponder?: string; elapsedMs?: number; requestKind?: 'move' | 'hint' }
   | { type: 'info'; requestId?: string; data: EngineInfo }

@@ -73,6 +73,38 @@ wss.on('connection', async (ws) => {
   let currentDifficulty: 'easy' | 'medium' | 'hard' | 'master' = 'medium'
   let infoHandler: ((info: unknown) => void) | null = null
   let localAnalysisRequestId: string | undefined
+  let localAnalysisFen = INITIAL_FEN
+  let localAnalysisMoves: string[] = []
+
+  const attachAnalysisHandler = (engine: PikafishEngine) => {
+    if (infoHandler) {
+      engine.removeListener('info', infoHandler)
+    }
+    infoHandler = (info) => {
+      if (
+        activeAnalysis?.sessionId === sessionId &&
+        activeAnalysis.requestId === localAnalysisRequestId &&
+        ws.readyState === WebSocket.OPEN
+      ) {
+        ws.send(JSON.stringify({ type: 'info', requestId: localAnalysisRequestId, data: info }))
+      }
+    }
+    engine.on('info', infoHandler)
+  }
+
+  const detachAnalysisHandler = (engine: PikafishEngine) => {
+    if (infoHandler) {
+      engine.removeListener('info', infoHandler)
+      infoHandler = null
+    }
+  }
+
+  const shouldResumeLocalAnalysis = () => (
+    Boolean(localAnalysisRequestId) &&
+    activeAnalysis?.sessionId === sessionId &&
+    activeAnalysis.requestId === localAnalysisRequestId &&
+    ws.readyState === WebSocket.OPEN
+  )
 
   getEngine()
     .then(engine => sendEngineStatus(
@@ -171,6 +203,48 @@ wss.on('connection', async (ws) => {
           break
         }
 
+        case 'candidates': {
+          const engine = await getEngine()
+          if (!engine) {
+            sendEngineStatus(ws, false, 'Engine not available')
+            sendError(ws, 'Engine not available', msg.requestId)
+            break
+          }
+
+          const requestId = msg.requestId
+          const fen = msg.fen || INITIAL_FEN
+          const moves: string[] = msg.moves || []
+          const validation = validateFenPosition(fen)
+          if (!validation.ok) {
+            sendError(ws, validation.errors[0] || 'Invalid position', requestId)
+            break
+          }
+
+          const resumeAnalysis = shouldResumeLocalAnalysis()
+          if (resumeAnalysis) {
+            detachAnalysisHandler(engine)
+          }
+          try {
+            const candidates = await engine.getCandidates(fen, moves, msg.difficulty || currentDifficulty, msg.count || 3)
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'candidates', requestId, candidates }))
+            }
+          } catch (err) {
+            console.error('Candidate engine error:', err)
+            sendError(ws, 'Candidate engine error', requestId)
+          } finally {
+            if (resumeAnalysis && shouldResumeLocalAnalysis()) {
+              try {
+                attachAnalysisHandler(engine)
+                await engine.analyze(localAnalysisFen, localAnalysisMoves)
+              } catch (err) {
+                console.error('Resume analysis error:', err)
+              }
+            }
+          }
+          break
+        }
+
         case 'analyze': {
           const engine = await getEngine()
           if (!engine) {
@@ -187,21 +261,11 @@ wss.on('connection', async (ws) => {
             break
           }
 
-          if (infoHandler) {
-            engine.removeListener('info', infoHandler)
-          }
           localAnalysisRequestId = msg.requestId
+          localAnalysisFen = fen
+          localAnalysisMoves = moves
           activeAnalysis = { sessionId, requestId: msg.requestId }
-          infoHandler = (info) => {
-            if (
-              activeAnalysis?.sessionId === sessionId &&
-              activeAnalysis.requestId === localAnalysisRequestId &&
-              ws.readyState === WebSocket.OPEN
-            ) {
-              ws.send(JSON.stringify({ type: 'info', requestId: localAnalysisRequestId, data: info }))
-            }
-          }
-          engine.on('info', infoHandler)
+          attachAnalysisHandler(engine)
 
           engine.stopAnalysis()
           await engine.analyze(fen, moves)
@@ -209,9 +273,8 @@ wss.on('connection', async (ws) => {
         }
 
         case 'stop': {
-          if (infoHandler && sharedEngine) {
-            sharedEngine.removeListener('info', infoHandler)
-            infoHandler = null
+          if (sharedEngine) {
+            detachAnalysisHandler(sharedEngine)
           }
           const stopsOwnAnalysis =
             activeAnalysis?.sessionId === sessionId &&
@@ -233,9 +296,8 @@ wss.on('connection', async (ws) => {
 
   ws.on('close', () => {
     console.log('Client disconnected')
-    if (infoHandler && sharedEngine) {
-      sharedEngine.removeListener('info', infoHandler)
-      infoHandler = null
+    if (sharedEngine) {
+      detachAnalysisHandler(sharedEngine)
     }
     if (activeAnalysis?.sessionId === sessionId) {
       activeAnalysis = null

@@ -6,6 +6,8 @@ import AnalysisBar from './components/AnalysisBar'
 import AnalysisCurve from './components/AnalysisCurve'
 import EndgameLibrary from './components/EndgameLibrary'
 import EndgameEditor from './components/EndgameEditor'
+import CandidateList from './components/CandidateList'
+import StudyLibrary from './components/StudyLibrary'
 import { useGame } from './hooks/useGame'
 import { BUILTIN_ENDGAMES } from './endgames/builtin'
 import {
@@ -19,8 +21,21 @@ import {
   upsertCustomEndgame,
 } from './endgames/storage'
 import { loadRecentFenPositions, RecentFenPosition, saveRecentFenPosition } from './fen/storage'
+import { deleteStudyPosition, loadStudyPositions, saveStudyPosition } from './studies/storage'
 import { validateFenPosition } from './engine/validation'
-import { EndgameDefinition, EndgameStartConfig, GameMode, Difficulty, MoveRecord, PlayerSide } from './types'
+import { moveToUci } from './engine/notation'
+import { EndgameDefinition, EndgameStartConfig, EndgameTarget, GameMode, Difficulty, MoveRecord, PlayerSide, StudyPosition } from './types'
+
+type EndgameDraft = {
+  id: string | null
+  name: string
+  description: string
+  fen: string
+  tags: string[]
+  target?: EndgameTarget
+  maxMoves?: number
+  solution: string[]
+}
 
 export default function App() {
   const [gameMode, setGameMode] = useState<GameMode | null>(null)
@@ -34,15 +49,18 @@ export default function App() {
   const [customEndgames, setCustomEndgames] = useState<EndgameDefinition[]>([])
   const [favoriteEndgameIds, setFavoriteEndgameIds] = useState<string[]>([])
   const [recentFenPositions, setRecentFenPositions] = useState<RecentFenPosition[]>([])
+  const [studies, setStudies] = useState<StudyPosition[]>([])
+  const [selectedStudy, setSelectedStudy] = useState<StudyPosition | null>(null)
   const [editingEndgame, setEditingEndgame] = useState(false)
   const [aiAutoPlaying, setAiAutoPlaying] = useState(false)
   const [aiAutoDelay, setAiAutoDelay] = useState(900)
-  const [editorDraft, setEditorDraft] = useState<{ id: string | null; name: string; description: string; fen: string; tags: string[] }>({
+  const [editorDraft, setEditorDraft] = useState<EndgameDraft>({
     id: null,
     name: '',
     description: '',
     fen: '',
     tags: [],
+    solution: [],
   })
   const [endgameConfig, setEndgameConfig] = useState<EndgameStartConfig>({
     red: { type: 'human' },
@@ -53,6 +71,7 @@ export default function App() {
     setCustomEndgames(loadCustomEndgames())
     setFavoriteEndgameIds(loadFavoriteEndgameIds())
     setRecentFenPositions(loadRecentFenPositions())
+    setStudies(loadStudyPositions())
   }, [])
 
   const game = useGame({
@@ -62,10 +81,15 @@ export default function App() {
     aiRedDifficulty,
     aiBlackDifficulty,
     analysisEnabled: showAnalysis,
-    initialFen: selectedEndgame?.fen,
+    initialFen: gameMode === 'study' ? selectedStudy?.initialFen : selectedEndgame?.fen,
+    initialMoveRecords: gameMode === 'study' ? selectedStudy?.moves : undefined,
+    initialCurrentMoveIndex: gameMode === 'study' ? selectedStudy?.currentMoveIndex : undefined,
+    initialAnalysisPoints: gameMode === 'study' ? selectedStudy?.analysisPoints : undefined,
     redPlayerConfig: gameMode === 'endgame' ? endgameConfig.red : undefined,
     blackPlayerConfig: gameMode === 'endgame' ? endgameConfig.black : undefined,
   })
+
+  const trainingFeedback = getEndgameTrainingFeedback(selectedEndgame, game.moveRecords, game.gameStatus)
 
   useEffect(() => {
     if (gameMode !== 'ai-vs-ai' || game.gameStatus !== 'playing') {
@@ -89,6 +113,7 @@ export default function App() {
       setAiRedDifficulty(redDiff)
       setAiBlackDifficulty(blackDiff)
       setSelectedEndgame(null)
+      setSelectedStudy(null)
       setEditingEndgame(false)
     }} />
   }
@@ -100,20 +125,26 @@ export default function App() {
         initialDescription={editorDraft.description}
         initialFen={editorDraft.fen}
         initialTags={editorDraft.tags}
+        initialTarget={editorDraft.target}
+        initialMaxMoves={editorDraft.maxMoves}
+        initialSolution={editorDraft.solution}
         onCancel={() => setEditingEndgame(false)}
-        onSave={({ name, description, fen, tags }) => {
+        onSave={({ name, description, fen, tags, target, maxMoves, solution }) => {
           const saved = upsertCustomEndgame({
             id: editorDraft.id || `custom-${Date.now()}`,
             name,
             description,
             fen,
             tags: normalizeTags(tags),
+            target,
+            maxMoves,
+            solution,
             source: 'custom',
           })
           setCustomEndgames(saved)
           setEditingEndgame(false)
           if (gameMode === 'endgame' && !selectedEndgame) {
-            setEditorDraft({ id: null, name: '', description: '', fen: '', tags: [] })
+            setEditorDraft({ id: null, name: '', description: '', fen: '', tags: [], solution: [] })
           }
         }}
       />
@@ -131,7 +162,7 @@ export default function App() {
           setEditingEndgame(false)
         }}
         onCreate={() => {
-          setEditorDraft({ id: null, name: '', description: '', fen: '', tags: [] })
+          setEditorDraft({ id: null, name: '', description: '', fen: '', tags: [], solution: [] })
           setEditingEndgame(true)
         }}
         onDelete={(id) => setCustomEndgames(deleteCustomEndgame(id))}
@@ -142,6 +173,9 @@ export default function App() {
             description: endgame.description || '',
             fen: endgame.fen,
             tags: endgame.tags || [],
+            target: endgame.target,
+            maxMoves: endgame.maxMoves,
+            solution: endgame.solution || [],
           })
           setEditingEndgame(true)
         }}
@@ -164,6 +198,19 @@ export default function App() {
         onStart={(endgame, config) => {
           setSelectedEndgame(endgame)
           setEndgameConfig(config)
+        }}
+      />
+    )
+  }
+
+  if (gameMode === 'study' && !selectedStudy) {
+    return (
+      <StudyLibrary
+        studies={studies}
+        onBack={() => setGameMode(null)}
+        onStart={(study) => setSelectedStudy(study)}
+        onDelete={(id) => {
+          setStudies(deleteStudyPosition(id))
         }}
       />
     )
@@ -208,7 +255,8 @@ export default function App() {
             gameStatusReason={game.gameStatusReason}
             flipped={game.flipped}
             showAnalysis={showAnalysis}
-            scenarioName={gameMode === 'endgame' ? selectedEndgame?.name ?? null : null}
+            scenarioName={gameMode === 'endgame' ? selectedEndgame?.name ?? null : gameMode === 'study' ? selectedStudy?.name ?? null : null}
+            trainingFeedback={trainingFeedback}
             aiThinking={game.aiThinking}
             connectionState={game.connectionState}
             engineAvailable={game.engineAvailable}
@@ -220,6 +268,8 @@ export default function App() {
               if (gameMode === 'endgame') {
                 setSelectedEndgame(null)
                 setEditingEndgame(false)
+              } else if (gameMode === 'study') {
+                setSelectedStudy(null)
               } else {
                 setGameMode(null)
               }
@@ -245,8 +295,28 @@ export default function App() {
                   : '从当前局面保存',
                 fen: game.getCurrentFen(),
                 tags: gameMode === 'endgame' && selectedEndgame ? selectedEndgame.tags || [] : [],
+                target: gameMode === 'endgame' ? selectedEndgame?.target : undefined,
+                maxMoves: gameMode === 'endgame' ? selectedEndgame?.maxMoves : undefined,
+                solution: gameMode === 'endgame' ? selectedEndgame?.solution || [] : [],
               })
               setEditingEndgame(true)
+            }}
+            onSaveStudy={() => {
+              const defaultName = selectedStudy?.name || scenarioNameFromState(gameMode, selectedEndgame).replace('-副本', '') || '研究局面'
+              const name = window.prompt('研究名称', defaultName)
+              if (!name?.trim()) return
+              const description = window.prompt('研究说明', selectedStudy?.description || '') || ''
+              const saved = saveStudyPosition({
+                id: selectedStudy?.id,
+                name: name.trim(),
+                description: description.trim() || undefined,
+                initialFen: game.initialFen,
+                moves: game.moveRecords,
+                currentMoveIndex: game.currentMoveIndex,
+                analysisPoints: game.analysisPoints,
+              })
+              setStudies(saved)
+              setSelectedStudy(saved.find(item => item.name === name.trim()) || saved[0] || null)
             }}
             onHint={game.requestHint}
             onNextAiMove={game.nextAiMove}
@@ -262,6 +332,14 @@ export default function App() {
             moves={game.moveRecords}
             currentIndex={game.currentMoveIndex}
             onJumpTo={game.jumpToMove}
+            onToggleMark={game.toggleMoveMark}
+            onUpdateNote={game.updateMoveNote}
+          />
+          <CandidateList
+            candidates={game.moveCandidates}
+            thinking={game.candidateThinking}
+            onRequest={game.requestCandidates}
+            canRequest={game.canRequestCandidates}
           />
           {showAnalysis && <AnalysisCurve points={game.analysisPoints} />}
         </div>
@@ -299,6 +377,34 @@ function scenarioNameFromState(gameMode: GameMode, selectedEndgame: EndgameDefin
     return `${selectedEndgame.name}-副本`
   }
   return '自定义残局'
+}
+
+function getEndgameTrainingFeedback(endgame: EndgameDefinition | null, records: MoveRecord[], status: string): string {
+  if (!endgame) return ''
+
+  const solution = endgame.solution || []
+  if (solution.length > 0 && records.length > 0) {
+    const played = records.map(record => moveToUci(record.move.from, record.move.to))
+    const firstMismatch = played.findIndex((uci, index) => solution[index] && solution[index] !== uci)
+    if (firstMismatch >= 0) {
+      return `已偏离标准解法：第 ${firstMismatch + 1} 手建议 ${solution[firstMismatch]}。`
+    }
+    if (played.length >= solution.length) {
+      return '标准解法已完成。'
+    }
+    return `标准解法进度：${played.length}/${solution.length}。`
+  }
+
+  if (endgame.target === 'red-win' && status === 'red-wins') return '目标完成：红方胜。'
+  if (endgame.target === 'black-win' && status === 'black-wins') return '目标完成：黑方胜。'
+  if (endgame.target === 'draw' && status === 'draw') return '目标完成：守和成功。'
+  if (endgame.target === 'survive' && endgame.maxMoves && records.length >= endgame.maxMoves && status === 'playing') {
+    return `目标完成：已坚持 ${endgame.maxMoves} 手。`
+  }
+  if ((endgame.target === 'red-win' || endgame.target === 'black-win') && endgame.maxMoves && records.length >= endgame.maxMoves && status === 'playing') {
+    return `已到目标步数：${endgame.maxMoves} 手内尚未完成目标。`
+  }
+  return ''
 }
 
 function formatMoveRecords(records: MoveRecord[]): string {
@@ -442,6 +548,10 @@ function StartScreen({ onStart }: {
               className={mode === 'endgame' ? 'active' : ''}
               onClick={() => setMode('endgame')}
             >残局模式</button>
+            <button
+              className={mode === 'study' ? 'active' : ''}
+              onClick={() => setMode('study')}
+            >研究局面</button>
           </div>
         </div>
 

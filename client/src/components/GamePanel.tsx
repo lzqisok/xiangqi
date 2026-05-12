@@ -13,6 +13,7 @@ interface Props {
   flipped: boolean
   showAnalysis: boolean
   scenarioName: string | null
+  trainingFeedback: string
   aiThinking: boolean
   connectionState: ConnectionState
   engineAvailable: boolean | null
@@ -29,6 +30,7 @@ interface Props {
   onCopyMoveText: () => void
   onSaveRecentFen: () => void
   onSaveAsEndgame: () => void
+  onSaveStudy: () => void
   onHint: () => void
   onNextAiMove: () => void
   onToggleAiAutoPlay: () => void
@@ -78,6 +80,7 @@ export default function GamePanel({
   currentTurn, gameMode, difficulty, aiRedDifficulty, aiBlackDifficulty, redPlayerConfig, blackPlayerConfig, gameStatus, gameStatusReason,
   showAnalysis,
   scenarioName,
+  trainingFeedback,
   aiThinking,
   connectionState,
   engineAvailable,
@@ -85,13 +88,13 @@ export default function GamePanel({
   aiAutoPlaying,
   aiAutoDelay,
   onNewGame, onUndo, onRedo, onFlip, onToggleAnalysis,
-  onExportFen, onImportFen, onCopyMoveText, onSaveRecentFen, onSaveAsEndgame,
+  onExportFen, onImportFen, onCopyMoveText, onSaveRecentFen, onSaveAsEndgame, onSaveStudy,
   onHint, onNextAiMove, onToggleAiAutoPlay, onAiAutoDelayChange,
   canUndo, canRedo, canRequestHint, canStepAi, hintThinking,
 }: Props) {
   const isAiVsAi = gameMode === 'ai-vs-ai'
   const isHumanVsAi = gameMode === 'human-vs-ai'
-  const modeText = isHumanVsAi ? '人机对弈' : isAiVsAi ? 'AI 对战' : gameMode === 'endgame' ? '残局模式' : '双人对弈'
+  const modeText = isHumanVsAi ? '人机对弈' : isAiVsAi ? 'AI 对战' : gameMode === 'endgame' ? '残局模式' : gameMode === 'study' ? '研究局面' : '双人对弈'
 
   return (
     <div className="game-panel">
@@ -116,6 +119,7 @@ export default function GamePanel({
         )}
       </div>
       {scenarioName && <div className="scenario-name">{scenarioName}</div>}
+      {trainingFeedback && <div className="training-feedback">{trainingFeedback}</div>}
 
       <div className={`engine-status ${connectionState} ${engineAvailable === false ? 'engine-offline' : ''}`}>
         <span className="engine-status-dot" />
@@ -173,6 +177,7 @@ export default function GamePanel({
           <button onClick={onExportFen}>导出 FEN</button>
           <button onClick={onImportFen}>导入 FEN</button>
           <button onClick={onSaveRecentFen}>保存局面</button>
+          <button onClick={onSaveStudy}>保存研究</button>
           <button onClick={onCopyMoveText}>复制棋谱</button>
           <button onClick={onSaveAsEndgame}>另存残局</button>
           <button className="new-game" onClick={onNewGame}>新游戏</button>

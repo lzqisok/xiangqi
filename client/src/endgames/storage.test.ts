@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { normalizeTags, parseTags } from './storage'
+import { normalizeSolution, normalizeTags, parseTags } from './storage'
 
 test('normalizeTags trims, deduplicates, and caps tags', () => {
   assert.deepEqual(
@@ -11,4 +11,8 @@ test('normalizeTags trims, deduplicates, and caps tags', () => {
 
 test('parseTags supports Chinese and ASCII separators', () => {
   assert.deepEqual(parseTags('杀法，守和, 车炮兵、三步杀'), ['杀法', '守和', '车炮兵', '三步杀'])
+})
+
+test('normalizeSolution keeps only UCI moves', () => {
+  assert.deepEqual(normalizeSolution([' h2e2 ', 'bad', 'h9g7', 'a10a9']), ['h2e2', 'h9g7'])
 })

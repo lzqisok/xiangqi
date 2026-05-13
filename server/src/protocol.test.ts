@@ -62,6 +62,21 @@ test('parseClientMessage rejects invalid JSON, missing requestId, and bad FEN', 
   if (!badFen.ok) assert.equal(badFen.requestId, 'a1')
 })
 
+test('parseClientMessage rejects empty requestId and malformed UCI moves', () => {
+  const emptyRequestId = parseClientMessage(JSON.stringify({ type: 'move', requestId: '', fen: VALID_FEN, moves: [] }))
+  assert.equal(emptyRequestId.ok, false)
+  if (!emptyRequestId.ok) assert.equal(emptyRequestId.error, 'requestId must be a non-empty string')
+
+  const badMoves = parseClientMessage(JSON.stringify({
+    type: 'move',
+    requestId: 'move-bad',
+    fen: VALID_FEN,
+    moves: ['h2e2', 'bad'],
+  }))
+  assert.equal(badMoves.ok, false)
+  if (!badMoves.ok) assert.equal(badMoves.error, 'moves must be an array of UCI strings')
+})
+
 test('isStaleEngineResponse guards request id, kind, and move history', () => {
   const pending = { id: 'move-1', kind: 'move' as const, movesKey: 'h2e2' }
 

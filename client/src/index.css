@@ -223,6 +223,17 @@ body {
   line-height: 1.45;
 }
 
+.training-hint {
+  margin: 0 0 12px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: rgba(61, 155, 115, 0.12);
+  border: 1px solid rgba(61, 155, 115, 0.28);
+  color: #8dd0b3;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .engine-status {
   display: flex;
   align-items: center;

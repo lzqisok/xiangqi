@@ -16,6 +16,7 @@ export type ProtocolValidation =
   | { ok: false; requestId?: string; error: string }
 
 const DIFFICULTIES = new Set(['easy', 'medium', 'hard', 'master'])
+const UCI_MOVE_RE = /^[a-i][0-9][a-i][0-9]$/
 
 export function parseClientMessage(raw: string): ProtocolValidation {
   let parsed: unknown
@@ -39,15 +40,15 @@ export function parseClientMessage(raw: string): ProtocolValidation {
     return { ok: false, requestId, error: `Unsupported message type: ${msg.type}` }
   }
 
-  if (msg.requestId !== undefined && typeof msg.requestId !== 'string') {
-    return { ok: false, error: 'requestId must be a string' }
+  if (msg.requestId !== undefined && (typeof msg.requestId !== 'string' || msg.requestId.trim() === '')) {
+    return { ok: false, error: 'requestId must be a non-empty string' }
   }
 
   if (msg.difficulty !== undefined && (typeof msg.difficulty !== 'string' || !DIFFICULTIES.has(msg.difficulty))) {
     return { ok: false, requestId, error: 'difficulty is invalid' }
   }
 
-  if (msg.moves !== undefined && (!Array.isArray(msg.moves) || !msg.moves.every(item => typeof item === 'string'))) {
+  if (msg.moves !== undefined && (!Array.isArray(msg.moves) || !msg.moves.every(item => typeof item === 'string' && UCI_MOVE_RE.test(item)))) {
     return { ok: false, requestId, error: 'moves must be an array of UCI strings' }
   }
 

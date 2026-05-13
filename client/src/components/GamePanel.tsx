@@ -14,6 +14,8 @@ interface Props {
   showAnalysis: boolean
   scenarioName: string | null
   trainingFeedback: string
+  trainingHint: string
+  canRequestTrainingHint: boolean
   aiThinking: boolean
   connectionState: ConnectionState
   engineAvailable: boolean | null
@@ -31,6 +33,8 @@ interface Props {
   onSaveRecentFen: () => void
   onSaveAsEndgame: () => void
   onSaveStudy: () => void
+  onExportImage: () => void
+  onTrainingHint: () => void
   onHint: () => void
   onNextAiMove: () => void
   onToggleAiAutoPlay: () => void
@@ -81,6 +85,8 @@ export default function GamePanel({
   showAnalysis,
   scenarioName,
   trainingFeedback,
+  trainingHint,
+  canRequestTrainingHint,
   aiThinking,
   connectionState,
   engineAvailable,
@@ -88,7 +94,7 @@ export default function GamePanel({
   aiAutoPlaying,
   aiAutoDelay,
   onNewGame, onUndo, onRedo, onFlip, onToggleAnalysis,
-  onExportFen, onImportFen, onCopyMoveText, onSaveRecentFen, onSaveAsEndgame, onSaveStudy,
+  onExportFen, onImportFen, onCopyMoveText, onSaveRecentFen, onSaveAsEndgame, onSaveStudy, onExportImage, onTrainingHint,
   onHint, onNextAiMove, onToggleAiAutoPlay, onAiAutoDelayChange,
   canUndo, canRedo, canRequestHint, canStepAi, hintThinking,
 }: Props) {
@@ -120,6 +126,7 @@ export default function GamePanel({
       </div>
       {scenarioName && <div className="scenario-name">{scenarioName}</div>}
       {trainingFeedback && <div className="training-feedback">{trainingFeedback}</div>}
+      {trainingHint && <div className="training-hint">{trainingHint}</div>}
 
       <div className={`engine-status ${connectionState} ${engineAvailable === false ? 'engine-offline' : ''}`}>
         <span className="engine-status-dot" />
@@ -134,6 +141,11 @@ export default function GamePanel({
           {!isAiVsAi && (
             <button className="primary-action accent-action" onClick={onHint} disabled={!canRequestHint} title="请求引擎给出当前方建议">
               {hintThinking ? '提示中...' : '提示'}
+            </button>
+          )}
+          {gameMode === 'endgame' && (
+            <button className="primary-action" onClick={onTrainingHint} disabled={!canRequestTrainingHint} title="按标准解法逐层提示">
+              训练提示
             </button>
           )}
           {isAiVsAi && (
@@ -178,6 +190,7 @@ export default function GamePanel({
           <button onClick={onImportFen}>导入 FEN</button>
           <button onClick={onSaveRecentFen}>保存局面</button>
           <button onClick={onSaveStudy}>保存研究</button>
+          <button onClick={onExportImage}>导出图片</button>
           <button onClick={onCopyMoveText}>复制棋谱</button>
           <button onClick={onSaveAsEndgame}>另存残局</button>
           <button className="new-game" onClick={onNewGame}>新游戏</button>

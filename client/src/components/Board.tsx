@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react'
+import { forwardRef, useImperativeHandle, useRef, useEffect, useCallback } from 'react'
 import { Board as BoardType, Position, Move, GameStatus, GameStatusReason } from '../types'
 import { ROWS, COLS } from '../engine/board'
 
@@ -16,6 +16,10 @@ interface Props {
   thinkingText: string
   onCellClick: (pos: Position) => void
   onCancelSelection: () => void
+}
+
+export interface BoardHandle {
+  exportPng: () => string | null
 }
 
 const CELL_SIZE = 64
@@ -46,7 +50,7 @@ function formatGameOverText(status: Exclude<GameStatus, 'playing'>, reason?: Gam
   return reason && reasonText[reason] ? `${winner} ${reasonText[reason]}` : winner
 }
 
-export default function Board({
+const Board = forwardRef<BoardHandle, Props>(function Board({
   board,
   gameStatus,
   gameStatusReason,
@@ -60,7 +64,7 @@ export default function Board({
   thinkingText,
   onCellClick,
   onCancelSelection,
-}: Props) {
+}, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const longPressHandledRef = useRef(false)
@@ -77,6 +81,10 @@ export default function Board({
     const c = flipped ? COLS - 1 - col : col
     return [PADDING + c * CELL_SIZE, PADDING + r * CELL_SIZE]
   }, [flipped])
+
+  useImperativeHandle(ref, () => ({
+    exportPng: () => canvasRef.current?.toDataURL('image/png') || null,
+  }), [])
 
   const draw = useCallback((ctx: CanvasRenderingContext2D) => {
     const dpr = window.devicePixelRatio || 1
@@ -310,7 +318,9 @@ export default function Board({
       )}
     </div>
   )
-}
+})
+
+export default Board
 
 function drawPiece(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, char: string) {
   // Shadow

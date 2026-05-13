@@ -24,11 +24,18 @@ export default function CandidateList({ candidates, thinking, onRequest, canRequ
         <div className="candidate-empty">{thinking ? '正在计算候选走法' : '暂无候选走法'}</div>
       ) : (
         candidates.map((candidate, index) => (
-          <div className="candidate-row" key={`${candidate.move}-${index}`}>
-            <span className="candidate-rank">{index + 1}</span>
-            <strong>{candidate.notation || candidate.move}</strong>
-            <span>{formatScore(candidate.score)}</span>
-            <small>D{candidate.depth}</small>
+          <div className="candidate-item" key={`${candidate.move}-${index}`}>
+            <div className="candidate-row">
+              <span className="candidate-rank">{index + 1}</span>
+              <strong>{candidate.notation || candidate.move}</strong>
+              <span>{formatScore(candidate.score)}</span>
+              <small>D{candidate.depth}</small>
+            </div>
+            {candidate.pvNotation && candidate.pvNotation.length > 1 && (
+              <div className="candidate-pv">
+                {candidate.pvNotation.slice(1).join('  ')}
+              </div>
+            )}
           </div>
         ))
       )}

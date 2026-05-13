@@ -80,6 +80,7 @@ export interface AnalysisPoint {
 export interface MoveCandidate {
   move: string
   notation?: string
+  pvNotation?: string[]
   score: number
   depth: number
   pv: string[]

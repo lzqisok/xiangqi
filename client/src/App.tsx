@@ -21,7 +21,7 @@ import {
   upsertCustomEndgame,
 } from './endgames/storage'
 import { loadRecentFenPositions, RecentFenPosition, saveRecentFenPosition } from './fen/storage'
-import { deleteStudyPosition, loadStudyPositions, saveStudyPosition } from './studies/storage'
+import { deleteStudyPosition, exportStudyPositionsJson, importStudyPositionsJson, loadStudyPositions, saveStudyPosition } from './studies/storage'
 import { validateFenPosition } from './engine/validation'
 import { moveToUci } from './engine/notation'
 import { EndgameDefinition, EndgameStartConfig, EndgameTarget, GameMode, Difficulty, MoveRecord, PlayerSide, StudyPosition } from './types'
@@ -211,6 +211,12 @@ export default function App() {
         onStart={(study) => setSelectedStudy(study)}
         onDelete={(id) => {
           setStudies(deleteStudyPosition(id))
+        }}
+        onExportJson={() => downloadJson('xiangqi-study-positions.json', exportStudyPositionsJson())}
+        onImportJson={(file) => {
+          file.text()
+            .then(text => setStudies(importStudyPositionsJson(text)))
+            .catch(() => undefined)
         }}
       />
     )

@@ -151,6 +151,28 @@ export function useGame({
     }
   }, [])
 
+  const translatePv = useCallback((pv: string[], currentBoard: Board): string[] => {
+    let replayBoard = currentBoard
+    const translated: string[] = []
+
+    for (const uci of pv) {
+      try {
+        const move = buildMoveFromUci(uci, replayBoard)
+        if (!move) {
+          translated.push(uci)
+          break
+        }
+        translated.push(moveToNotation(replayBoard, move))
+        replayBoard = applyMove(replayBoard, move.from, move.to).newBoard
+      } catch {
+        translated.push(uci)
+        break
+      }
+    }
+
+    return translated
+  }, [buildMoveFromUci])
+
   const handleWsMessage = useCallback((msg: WSMessage) => {
     if (msg.type === 'bestmove') {
       const pending = pendingRequestRef.current
@@ -263,6 +285,7 @@ export function useGame({
           ...candidate,
           score: turnRef.current === 'red' ? candidate.score : -candidate.score,
           notation: move ? moveToNotation(currentBoard, move) : candidate.move,
+          pvNotation: translatePv(candidate.pv, currentBoard),
         }
       }))
       setCandidateThinking(false)
@@ -278,7 +301,7 @@ export function useGame({
       setHintThinking(false)
       setCandidateThinking(false)
     }
-  }, [buildMoveFromUci])
+  }, [buildMoveFromUci, translatePv])
 
   const { send, connected, connectionState } = useWebSocket(handleWsMessage)
 
@@ -721,26 +744,8 @@ export function useGame({
     !aiThinking
 
   const bestLineNotation = useMemo(() => {
-    let replayBoard = board
-    const translated: string[] = []
-
-    for (const uci of bestLine) {
-      try {
-        const move = buildMoveFromUci(uci, replayBoard)
-        if (!move) {
-          translated.push(uci)
-          break
-        }
-        translated.push(moveToNotation(replayBoard, move))
-        replayBoard = applyMove(replayBoard, move.from, move.to).newBoard
-      } catch {
-        translated.push(uci)
-        break
-      }
-    }
-
-    return translated
-  }, [bestLine, board, buildMoveFromUci])
+    return translatePv(bestLine, board)
+  }, [bestLine, board, translatePv])
 
   const moveRecords = useMemo(
     () => moveHistory.slice(0, currentMoveIndex + 1),

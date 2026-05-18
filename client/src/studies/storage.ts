@@ -84,7 +84,51 @@ export function saveStudyPosition(study: Omit<StudyPosition, 'id' | 'createdAt' 
 }
 
 export function deleteStudyPosition(id: string): StudyPosition[] {
-  const next = loadStudyPositions().filter(item => item.id !== id)
+  return deleteStudyPositions([id])
+}
+
+export function deleteStudyPositions(ids: string[]): StudyPosition[] {
+  const selected = new Set(ids)
+  const next = loadStudyPositions().filter(item => !selected.has(item.id))
+  saveStudyPositions(next)
+  return next
+}
+
+export function renameStudyPosition(id: string, name: string): StudyPosition[] {
+  const trimmed = name.trim()
+  const current = loadStudyPositions()
+  if (!trimmed) return current
+
+  const next = current.map(study => study.id === id ? { ...study, name: trimmed, updatedAt: Date.now() } : study)
+  saveStudyPositions(next)
+  return next
+}
+
+export function duplicateStudyPosition(id: string): StudyPosition[] {
+  const current = loadStudyPositions()
+  const source = current.find(study => study.id === id)
+  if (!source) return current
+
+  const now = Date.now()
+  const copy: StudyPosition = {
+    ...source,
+    id: `study-${now}-${Math.random().toString(36).slice(2)}`,
+    name: `${source.name} 副本`,
+    moves: source.moves.map(move => ({
+      ...move,
+      move: {
+        ...move.move,
+        from: { ...move.move.from },
+        to: { ...move.move.to },
+        piece: { ...move.move.piece },
+        captured: move.move.captured ? { ...move.move.captured } : undefined,
+      },
+    })),
+    analysisPoints: source.analysisPoints.map(point => ({ ...point })),
+    createdAt: now,
+    updatedAt: now,
+  }
+  const next = [copy, ...current]
   saveStudyPositions(next)
   return next
 }

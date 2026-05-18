@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { StudyPosition } from '../types'
 
 interface Props {
@@ -6,6 +6,9 @@ interface Props {
   onBack: () => void
   onStart: (study: StudyPosition) => void
   onDelete: (id: string) => void
+  onDeleteMany: (ids: string[]) => void
+  onRename: (id: string, name: string) => void
+  onDuplicate: (id: string) => void
   onExportJson: () => void
   onImportJson: (file: File) => void
 }
@@ -26,9 +29,10 @@ function includesKeyword(value: unknown, keyword: string): boolean {
   return typeof value === 'string' && value.toLowerCase().includes(keyword)
 }
 
-export default function StudyLibrary({ studies, onBack, onStart, onDelete, onExportJson, onImportJson }: Props) {
+export default function StudyLibrary({ studies, onBack, onStart, onDelete, onDeleteMany, onRename, onDuplicate, onExportJson, onImportJson }: Props) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<'all' | 'marked' | 'notes' | 'recent'>('all')
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
 
   const visibleStudies = useMemo(() => {
     const keyword = query.trim().toLowerCase()
@@ -52,6 +56,47 @@ export default function StudyLibrary({ studies, onBack, onStart, onDelete, onExp
       })
       .sort((a, b) => filter === 'recent' ? b.updatedAt - a.updatedAt : 0)
   }, [filter, query, studies])
+
+  const visibleIds = visibleStudies.map(study => study.id)
+  const visibleSelectedCount = visibleIds.filter(id => selectedIds.includes(id)).length
+  const singleSelectedStudy = selectedIds.length === 1 ? studies.find(study => study.id === selectedIds[0]) : null
+
+  useEffect(() => {
+    const validIds = new Set(studies.map(study => study.id))
+    setSelectedIds(prev => prev.filter(id => validIds.has(id)))
+  }, [studies])
+
+  function toggleSelected(id: string) {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id])
+  }
+
+  function toggleVisibleSelected() {
+    if (visibleIds.length === 0) return
+    if (visibleSelectedCount === visibleIds.length) {
+      setSelectedIds(prev => prev.filter(id => !visibleIds.includes(id)))
+      return
+    }
+    setSelectedIds(prev => Array.from(new Set([...prev, ...visibleIds])))
+  }
+
+  function deleteSelected() {
+    if (selectedIds.length === 0) return
+    onDeleteMany(selectedIds)
+    setSelectedIds([])
+  }
+
+  function renameSelected() {
+    if (!singleSelectedStudy) return
+    const name = window.prompt('研究名称', singleSelectedStudy.name)
+    if (!name?.trim()) return
+    onRename(singleSelectedStudy.id, name)
+  }
+
+  function duplicateSelected() {
+    if (!singleSelectedStudy) return
+    onDuplicate(singleSelectedStudy.id)
+    setSelectedIds([])
+  }
 
   return (
     <div className="start-screen">
@@ -91,11 +136,35 @@ export default function StudyLibrary({ studies, onBack, onStart, onDelete, onExp
             <button className={filter === 'notes' ? 'active' : ''} onClick={() => setFilter('notes')}>有备注</button>
             <button className={filter === 'recent' ? 'active' : ''} onClick={() => setFilter('recent')}>最近</button>
           </div>
+          {studies.length > 0 && (
+            <div className="study-bulk-toolbar">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={visibleIds.length > 0 && visibleSelectedCount === visibleIds.length}
+                  onChange={toggleVisibleSelected}
+                />
+                选择当前列表
+              </label>
+              <span>已选 {selectedIds.length}</span>
+              <button onClick={renameSelected} disabled={selectedIds.length !== 1}>重命名</button>
+              <button onClick={duplicateSelected} disabled={selectedIds.length !== 1}>复制</button>
+              <button className="endgame-delete-btn" onClick={deleteSelected} disabled={selectedIds.length === 0}>批量删除</button>
+            </div>
+          )}
         </div>
 
         <div className="study-list">
           {visibleStudies.map(study => (
             <div key={study.id} className="study-card">
+              <label className="study-select">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(study.id)}
+                  onChange={() => toggleSelected(study.id)}
+                  aria-label={`选择 ${study.name}`}
+                />
+              </label>
               <div>
                 <strong>{study.name}</strong>
                 {study.description && <p>{study.description}</p>}
@@ -107,6 +176,7 @@ export default function StudyLibrary({ studies, onBack, onStart, onDelete, onExp
               </div>
               <div className="study-card-actions">
                 <button onClick={() => onStart(study)}>打开</button>
+                <button onClick={() => onDuplicate(study.id)}>复制</button>
                 <button className="endgame-delete-btn" onClick={() => onDelete(study.id)}>删除</button>
               </div>
             </div>

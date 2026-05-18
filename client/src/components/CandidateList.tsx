@@ -5,6 +5,8 @@ interface Props {
   thinking: boolean
   onRequest: () => void
   canRequest: boolean
+  autoRefresh: boolean
+  onAutoRefreshChange: (enabled: boolean) => void
 }
 
 function formatScore(score: number): string {
@@ -13,13 +15,21 @@ function formatScore(score: number): string {
   return `${score > 0 ? '红' : '黑'} +${(Math.abs(score) / 100).toFixed(1)}`
 }
 
-export default function CandidateList({ candidates, thinking, onRequest, canRequest }: Props) {
+export default function CandidateList({ candidates, thinking, onRequest, canRequest, autoRefresh, onAutoRefreshChange }: Props) {
   return (
     <div className="candidate-list">
       <div className="candidate-header">
         <h3>候选走法</h3>
         <button onClick={onRequest} disabled={!canRequest}>{thinking ? '计算中...' : '刷新'}</button>
       </div>
+      <label className="candidate-auto-refresh">
+        <input
+          type="checkbox"
+          checked={autoRefresh}
+          onChange={e => onAutoRefreshChange(e.target.checked)}
+        />
+        自动刷新
+      </label>
       {candidates.length === 0 ? (
         <div className="candidate-empty">{thinking ? '正在计算候选走法' : '暂无候选走法'}</div>
       ) : (

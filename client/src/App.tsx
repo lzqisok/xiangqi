@@ -21,8 +21,18 @@ import {
   upsertCustomEndgame,
 } from './endgames/storage'
 import { loadRecentFenPositions, RecentFenPosition, saveRecentFenPosition } from './fen/storage'
-import { deleteStudyPosition, exportStudyPositionsJson, importStudyPositionsJson, loadStudyPositions, saveStudyPosition } from './studies/storage'
+import {
+  deleteStudyPosition,
+  deleteStudyPositions,
+  duplicateStudyPosition,
+  exportStudyPositionsJson,
+  importStudyPositionsJson,
+  loadStudyPositions,
+  renameStudyPosition,
+  saveStudyPosition,
+} from './studies/storage'
 import { validateFenPosition } from './engine/validation'
+import { getNaturalLimitReminder } from './engine/naturalLimit'
 import { getPieceDisplayName, moveToNotation, moveToUci, uciToMove } from './engine/notation'
 import { Board as BoardState, EndgameDefinition, EndgameStartConfig, EndgameTarget, GameMode, Difficulty, MoveRecord, PlayerSide, StudyPosition } from './types'
 
@@ -55,7 +65,9 @@ export default function App() {
   const [editingEndgame, setEditingEndgame] = useState(false)
   const [aiAutoPlaying, setAiAutoPlaying] = useState(false)
   const [aiAutoDelay, setAiAutoDelay] = useState(900)
+  const [candidateAutoRefresh, setCandidateAutoRefresh] = useState(false)
   const [trainingHintLevel, setTrainingHintLevel] = useState(0)
+  const candidateAutoRequestRef = useRef<string | null>(null)
   const [editorDraft, setEditorDraft] = useState<EndgameDraft>({
     id: null,
     name: '',
@@ -93,6 +105,8 @@ export default function App() {
 
   const trainingFeedback = getEndgameTrainingFeedback(selectedEndgame, game.moveRecords, game.gameStatus, game.evaluation)
   const trainingHint = getEndgameTrainingHint(selectedEndgame, game.moveRecords, game.board, trainingHintLevel)
+  const naturalLimitReminder = getNaturalLimitReminder(game.moveRecords)
+  const candidateAutoPositionKey = game.moveRecords[game.currentMoveIndex]?.fen || game.initialFen
   const canRequestTrainingHint = Boolean(selectedEndgame?.solution?.length) && game.gameStatus === 'playing'
 
   useEffect(() => {
@@ -112,6 +126,19 @@ export default function App() {
     }, aiAutoDelay)
     return () => clearTimeout(timer)
   }, [aiAutoDelay, aiAutoPlaying, gameMode, game.canStepAi, game.nextAiMove])
+
+  useEffect(() => {
+    if (!candidateAutoRefresh || !game.canRequestCandidates) return
+    if (candidateAutoRequestRef.current === candidateAutoPositionKey) return
+    candidateAutoRequestRef.current = candidateAutoPositionKey
+    game.requestCandidates()
+  }, [candidateAutoPositionKey, candidateAutoRefresh, game.canRequestCandidates, game.requestCandidates])
+
+  useEffect(() => {
+    if (!candidateAutoRefresh) {
+      candidateAutoRequestRef.current = null
+    }
+  }, [candidateAutoRefresh])
 
   if (!gameMode) {
     return <StartScreen onStart={(mode, diff, side, redDiff, blackDiff) => {
@@ -220,6 +247,15 @@ export default function App() {
         onDelete={(id) => {
           setStudies(deleteStudyPosition(id))
         }}
+        onDeleteMany={(ids) => {
+          setStudies(deleteStudyPositions(ids))
+        }}
+        onRename={(id, name) => {
+          setStudies(renameStudyPosition(id, name))
+        }}
+        onDuplicate={(id) => {
+          setStudies(duplicateStudyPosition(id))
+        }}
         onExportJson={() => downloadJson('xiangqi-study-positions.json', exportStudyPositionsJson())}
         onImportJson={(file) => {
           file.text()
@@ -282,6 +318,7 @@ export default function App() {
             scenarioName={gameMode === 'endgame' ? selectedEndgame?.name ?? null : gameMode === 'study' ? selectedStudy?.name ?? null : null}
             trainingFeedback={trainingFeedback}
             trainingHint={trainingHint}
+            naturalLimitReminder={naturalLimitReminder}
             canRequestTrainingHint={canRequestTrainingHint}
             aiThinking={game.aiThinking}
             connectionState={game.connectionState}
@@ -366,6 +403,8 @@ export default function App() {
             thinking={game.candidateThinking}
             onRequest={game.requestCandidates}
             canRequest={game.canRequestCandidates}
+            autoRefresh={candidateAutoRefresh}
+            onAutoRefreshChange={setCandidateAutoRefresh}
           />
           {showAnalysis && <AnalysisCurve points={game.analysisPoints} />}
         </div>

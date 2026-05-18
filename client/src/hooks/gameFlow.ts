@@ -1,10 +1,29 @@
-import { GameMode, GameStatus, PlayerConfig } from '../types'
+import { GameMode, GameStatus, GameStatusReason, PieceColor, PlayerConfig } from '../types'
+
+type ManualGameStatusDetail = {
+  status: GameStatus
+  reason: GameStatusReason
+}
 
 export function hasSingleAiSide(players: { red: PlayerConfig; black: PlayerConfig }): boolean {
   return (
     (players.red.type === 'ai' && players.black.type === 'human') ||
     (players.red.type === 'human' && players.black.type === 'ai')
   )
+}
+
+export function getManualDrawStatus(): ManualGameStatusDetail {
+  return {
+    status: 'draw',
+    reason: 'manual',
+  }
+}
+
+export function getResignationStatus(color: PieceColor): ManualGameStatusDetail {
+  return {
+    status: color === 'red' ? 'black-wins' : 'red-wins',
+    reason: 'resignation',
+  }
 }
 
 export function getHistoryStepSize(gameMode: GameMode | null, players: { red: PlayerConfig; black: PlayerConfig }): number {

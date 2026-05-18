@@ -34,7 +34,7 @@ export type GameMode = 'human-vs-ai' | 'human-vs-human' | 'ai-vs-ai' | 'endgame'
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'master'
 export type PlayerSide = 'red' | 'black'
 export type GameStatus = 'playing' | 'red-wins' | 'black-wins' | 'draw'
-export type GameStatusReason = 'checkmate' | 'stalemate' | 'illegal-position' | 'manual'
+export type GameStatusReason = 'checkmate' | 'stalemate' | 'illegal-position' | 'manual' | 'resignation'
 export type PlayerType = 'human' | 'ai'
 
 export interface PlayerConfig {

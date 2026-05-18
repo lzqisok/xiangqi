@@ -38,6 +38,8 @@ interface Props {
   onTrainingHint: () => void
   onHint: () => void
   onNextAiMove: () => void
+  onDeclareDraw: () => void
+  onResign: () => void
   onToggleAiAutoPlay: () => void
   onAiAutoDelayChange: (delay: number) => void
   canUndo: boolean
@@ -64,6 +66,7 @@ function formatStatus(status: GameStatus, reason?: GameStatusReason): string {
     stalemate: '困毙',
     'illegal-position': '非法局面',
     manual: '手动结束',
+    resignation: '认输',
   }
   return reason ? `${winner}（${reasonText[reason]}）` : `${winner}！`
 }
@@ -97,11 +100,13 @@ export default function GamePanel({
   aiAutoDelay,
   onNewGame, onUndo, onRedo, onFlip, onToggleAnalysis,
   onExportFen, onImportFen, onCopyMoveText, onSaveRecentFen, onSaveAsEndgame, onSaveStudy, onExportImage, onTrainingHint,
-  onHint, onNextAiMove, onToggleAiAutoPlay, onAiAutoDelayChange,
+  onHint, onNextAiMove, onDeclareDraw, onResign, onToggleAiAutoPlay, onAiAutoDelayChange,
   canUndo, canRedo, canRequestHint, canStepAi, hintThinking,
 }: Props) {
   const isAiVsAi = gameMode === 'ai-vs-ai'
   const isHumanVsAi = gameMode === 'human-vs-ai'
+  const canManualEnd = gameStatus === 'playing' && !aiThinking && !hintThinking
+  const canDeclareDraw = canManualEnd && gameMode === 'human-vs-human'
   const modeText = isHumanVsAi ? '人机对弈' : isAiVsAi ? 'AI 对战' : gameMode === 'endgame' ? '残局模式' : gameMode === 'study' ? '研究局面' : '双人对弈'
 
   return (
@@ -196,6 +201,8 @@ export default function GamePanel({
           <button onClick={onExportImage}>导出图片</button>
           <button onClick={onCopyMoveText}>复制棋谱</button>
           <button onClick={onSaveAsEndgame}>另存残局</button>
+          {gameMode === 'human-vs-human' && <button onClick={onDeclareDraw} disabled={!canDeclareDraw}>和棋</button>}
+          {!isAiVsAi && <button className="new-game" onClick={onResign} disabled={!canManualEnd}>认输</button>}
           <button className="new-game" onClick={onNewGame}>新游戏</button>
         </div>
       </div>

@@ -46,6 +46,8 @@ function formatGameOverText(status: Exclude<GameStatus, 'playing'>, reason?: Gam
     checkmate: '将死',
     stalemate: '困毙',
     'illegal-position': '非法局面',
+    manual: '手动结束',
+    resignation: '认输',
   }
   return reason && reasonText[reason] ? `${winner} ${reasonText[reason]}` : winner
 }

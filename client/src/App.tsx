@@ -390,6 +390,8 @@ export default function App() {
             }}
             onHint={game.requestHint}
             onNextAiMove={game.nextAiMove}
+            onDeclareDraw={game.declareDraw}
+            onResign={game.resign}
             onToggleAiAutoPlay={() => setAiAutoPlaying(value => !value)}
             onAiAutoDelayChange={setAiAutoDelay}
             canUndo={game.canUndo}

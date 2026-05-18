@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getRedoTargetIndex, getUndoTargetIndex, shouldAutoRequestAiMove } from './gameFlow'
+import { getManualDrawStatus, getRedoTargetIndex, getResignationStatus, getUndoTargetIndex, shouldAutoRequestAiMove } from './gameFlow'
 
 const human = { type: 'human' as const }
 const ai = { type: 'ai' as const, difficulty: 'medium' as const }
@@ -50,4 +50,19 @@ test('AI move auto trigger excludes ai-vs-ai and blocked states', () => {
     currentPlayer: ai,
     connected: true,
   }), false)
+})
+
+test('manual draw and resignation produce manual game-over states', () => {
+  assert.deepEqual(getManualDrawStatus(), {
+    status: 'draw',
+    reason: 'manual',
+  })
+  assert.deepEqual(getResignationStatus('red'), {
+    status: 'black-wins',
+    reason: 'resignation',
+  })
+  assert.deepEqual(getResignationStatus('black'), {
+    status: 'red-wins',
+    reason: 'resignation',
+  })
 })

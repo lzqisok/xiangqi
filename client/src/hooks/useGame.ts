@@ -8,7 +8,7 @@ import { getLegalMoves, isInCheck, getGameStatusDetail } from '../engine/rules'
 import { moveToNotation, moveToUci, uciToMove } from '../engine/notation'
 import { validateFenPosition } from '../engine/validation'
 import { useWebSocket } from './useWebSocket'
-import { getRedoTargetIndex, getUndoTargetIndex, shouldAutoRequestAiMove } from './gameFlow'
+import { getManualDrawStatus, getRedoTargetIndex, getResignationStatus, getUndoTargetIndex, shouldAutoRequestAiMove } from './gameFlow'
 import { playMoveSound, playCaptureSound, playCheckSound, playGameOverSound } from '../audio'
 
 interface UseGameOptions {
@@ -727,6 +727,34 @@ export function useGame({
     }
   }, [gameMode, connected, gameStatus, aiThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, engineBaseFen])
 
+  const stopActiveRequests = useCallback(() => {
+    setAiThinking(false)
+    setHintThinking(false)
+    setCandidateThinking(false)
+    setHintMove(null)
+    setMoveCandidates([])
+    pendingRequestRef.current = null
+    candidateRequestRef.current = null
+  }, [])
+
+  const declareDraw = useCallback(() => {
+    if (gameStatus !== 'playing') return
+    const statusDetail = getManualDrawStatus()
+    setGameStatus(statusDetail.status)
+    setGameStatusReason(statusDetail.reason)
+    stopActiveRequests()
+    playGameOverSound()
+  }, [gameStatus, stopActiveRequests])
+
+  const resign = useCallback(() => {
+    if (gameStatus !== 'playing') return
+    const statusDetail = getResignationStatus(currentTurn)
+    setGameStatus(statusDetail.status)
+    setGameStatusReason(statusDetail.reason)
+    stopActiveRequests()
+    playGameOverSound()
+  }, [currentTurn, gameStatus, stopActiveRequests])
+
   const canRequestHint =
     connected &&
     engineAvailable !== false &&
@@ -794,6 +822,8 @@ export function useGame({
     requestHint,
     requestCandidates,
     nextAiMove,
+    declareDraw,
+    resign,
     getCurrentFen,
     initialFen: engineBaseFen,
     loadFen,

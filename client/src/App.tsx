@@ -233,6 +233,15 @@ export default function App() {
   return (
     <div className="app">
       <div className="game-container">
+        <div className="left-panel">
+          <MoveHistory
+            moves={game.moveRecords}
+            currentIndex={game.currentMoveIndex}
+            onJumpTo={game.jumpToMove}
+            onToggleMark={game.toggleMoveMark}
+            onUpdateNote={game.updateMoveNote}
+          />
+        </div>
         {showAnalysis && (
           <AnalysisBar
             evaluation={game.evaluation}
@@ -351,13 +360,6 @@ export default function App() {
             canRequestHint={game.canRequestHint}
             canStepAi={game.canStepAi}
             hintThinking={game.hintThinking}
-          />
-          <MoveHistory
-            moves={game.moveRecords}
-            currentIndex={game.currentMoveIndex}
-            onJumpTo={game.jumpToMove}
-            onToggleMark={game.toggleMoveMark}
-            onUpdateNote={game.updateMoveNote}
           />
           <CandidateList
             candidates={game.moveCandidates}

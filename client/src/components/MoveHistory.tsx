@@ -18,9 +18,19 @@ export default function MoveHistory({ moves, currentIndex, onJumpTo, onToggleMar
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (listRef.current) {
-      const activeEl = listRef.current.querySelector('.move-row.active')
-      activeEl?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    const listEl = listRef.current
+    const activeEl = listEl?.querySelector<HTMLElement>('.move-row.active')
+    if (!listEl || !activeEl) return
+
+    const activeTop = activeEl.offsetTop
+    const activeBottom = activeTop + activeEl.offsetHeight
+    const visibleTop = listEl.scrollTop
+    const visibleBottom = visibleTop + listEl.clientHeight
+
+    if (activeTop < visibleTop) {
+      listEl.scrollTop = activeTop
+    } else if (activeBottom > visibleBottom) {
+      listEl.scrollTop = activeBottom - listEl.clientHeight
     }
   }, [currentIndex])
 

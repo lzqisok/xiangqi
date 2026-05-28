@@ -70,3 +70,12 @@ export function shouldAutoRequestAiMove({
     connected
   )
 }
+
+export function sendStopForActiveEngineRequests(
+  connected: boolean,
+  send: (message: { type: 'stop' }) => boolean,
+): void {
+  if (connected) {
+    send({ type: 'stop' })
+  }
+}

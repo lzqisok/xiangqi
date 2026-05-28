@@ -1,4 +1,4 @@
-import { validateFenPosition } from './validation.js'
+import { validateFenPosition, validateMoveSequence } from './validation.js'
 
 export type RequestKind = 'move' | 'hint' | 'analyze' | 'candidates' | 'stop' | 'init'
 
@@ -52,6 +52,10 @@ export function parseClientMessage(raw: string): ProtocolValidation {
     return { ok: false, requestId, error: 'moves must be an array of UCI strings' }
   }
 
+  if (Array.isArray(msg.moves) && msg.moves.length > 0 && typeof msg.fen !== 'string') {
+    return { ok: false, requestId, error: 'fen is required when moves are provided' }
+  }
+
   if (msg.count !== undefined && (typeof msg.count !== 'number' || !Number.isInteger(msg.count) || msg.count < 1 || msg.count > 5)) {
     return { ok: false, requestId, error: 'count must be an integer between 1 and 5' }
   }
@@ -67,6 +71,18 @@ export function parseClientMessage(raw: string): ProtocolValidation {
     const validation = validateFenPosition(msg.fen)
     if (!validation.ok) {
       return { ok: false, requestId, error: validation.errors[0] || 'Invalid position' }
+    }
+  }
+
+  if (
+    typeof msg.fen === 'string' &&
+    Array.isArray(msg.moves) &&
+    msg.moves.length > 0 &&
+    msg.moves.every(item => typeof item === 'string')
+  ) {
+    const validation = validateMoveSequence(msg.fen, msg.moves)
+    if (!validation.ok) {
+      return { ok: false, requestId, error: validation.errors[0] || 'Illegal move sequence' }
     }
   }
 

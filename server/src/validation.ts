@@ -3,6 +3,7 @@ type PieceType = 'k' | 'a' | 'b' | 'n' | 'r' | 'c' | 'p'
 
 type Piece = { type: PieceType; color: PieceColor }
 type Board = (Piece | null)[][]
+type Position = { row: number; col: number }
 
 const ROWS = 10
 const COLS = 9
@@ -31,7 +32,43 @@ const MAX_COUNTS: Record<PieceColor, Record<PieceType, number>> = {
 
 export function validateFenPosition(fen: string): { ok: boolean; errors: string[] } {
   try {
-    const board = parseFenBoard(fen)
+    const { board } = parseFen(fen)
+    return validateBoardPosition(board)
+  } catch {
+    return { ok: false, errors: ['Invalid FEN'] }
+  }
+}
+
+export function validateMoveSequence(fen: string, moves: string[]): { ok: boolean; errors: string[] } {
+  try {
+    let { board, turn } = parseFen(fen)
+
+    for (let index = 0; index < moves.length; index++) {
+      const move = moves[index]
+      const from = uciToPos(move.slice(0, 2))
+      const to = uciToPos(move.slice(2, 4))
+      const piece = board[from.row]?.[from.col]
+
+      if (!piece || piece.color !== turn) {
+        return { ok: false, errors: [`Illegal move at ${index + 1}: ${move}`] }
+      }
+
+      const legalMoves = getLegalMoves(board, from)
+      if (!legalMoves.some(target => target.row === to.row && target.col === to.col)) {
+        return { ok: false, errors: [`Illegal move at ${index + 1}: ${move}`] }
+      }
+
+      board = applyMove(board, from, to)
+      turn = turn === 'red' ? 'black' : 'red'
+    }
+
+    return { ok: true, errors: [] }
+  } catch {
+    return { ok: false, errors: ['Invalid move sequence'] }
+  }
+}
+
+function validateBoardPosition(board: Board): { ok: boolean; errors: string[] } {
     const errors: string[] = []
     const counts: Record<PieceColor, Record<PieceType, number>> = {
       red: { k: 0, a: 0, b: 0, n: 0, r: 0, c: 0, p: 0 },
@@ -65,21 +102,18 @@ export function validateFenPosition(fen: string): { ok: boolean; errors: string[
       }
     }
 
-    if (kingsFace(board)) errors.push('Kings cannot face each other')
-    return { ok: errors.length === 0, errors }
-  } catch {
-    return { ok: false, errors: ['Invalid FEN'] }
-  }
+  if (kingsFace(board)) errors.push('Kings cannot face each other')
+  return { ok: errors.length === 0, errors }
 }
 
-function parseFenBoard(fen: string): Board {
+function parseFen(fen: string): { board: Board; turn: PieceColor } {
   const parts = fen.trim().split(/\s+/)
   const rows = parts[0]?.split('/') ?? []
   if (rows.length !== ROWS || (parts[1] !== 'w' && parts[1] !== 'b')) {
     throw new Error('Invalid FEN')
   }
 
-  return rows.map(rowText => {
+  const board = rows.map(rowText => {
     const row: (Piece | null)[] = []
     for (const ch of rowText) {
       if (ch >= '1' && ch <= '9') {
@@ -93,6 +127,7 @@ function parseFenBoard(fen: string): Board {
     if (row.length !== COLS) throw new Error('Invalid row width')
     return row
   })
+  return { board, turn: parts[1] === 'w' ? 'red' : 'black' }
 }
 
 function isInPalace(row: number, col: number, color: PieceColor): boolean {
@@ -118,4 +153,191 @@ function kingsFace(board: Board): boolean {
     if (board[row][redKing.col]) return false
   }
   return true
+}
+
+function inBounds(row: number, col: number): boolean {
+  return row >= 0 && row < ROWS && col >= 0 && col < COLS
+}
+
+function isOwnPiece(board: Board, row: number, col: number, color: PieceColor): boolean {
+  return board[row][col]?.color === color
+}
+
+function uciToPos(uci: string): Position {
+  return {
+    row: 9 - Number(uci[1]),
+    col: uci.charCodeAt(0) - 'a'.charCodeAt(0),
+  }
+}
+
+function applyMove(board: Board, from: Position, to: Position): Board {
+  const next = board.map(row => row.map(piece => piece ? { ...piece } : null))
+  next[to.row][to.col] = next[from.row][from.col]
+  next[from.row][from.col] = null
+  return next
+}
+
+function getPseudoMoves(board: Board, pos: Position): Position[] {
+  const piece = board[pos.row]?.[pos.col]
+  if (!piece) return []
+
+  const moves: Position[] = []
+  const { row, col } = pos
+  const color = piece.color
+  const isRed = color === 'red'
+
+  switch (piece.type) {
+    case 'k': {
+      const palaceRows = isRed ? [7, 8, 9] : [0, 1, 2]
+      const palaceCols = [3, 4, 5]
+      for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+        const nr = row + dr
+        const nc = col + dc
+        if (palaceRows.includes(nr) && palaceCols.includes(nc) && !isOwnPiece(board, nr, nc, color)) {
+          moves.push({ row: nr, col: nc })
+        }
+      }
+
+      const opponent = findKing(board, isRed ? 'black' : 'red')
+      if (opponent?.col === col && !hasPieceBetween(board, row, opponent.row, col)) {
+        moves.push({ row: opponent.row, col: opponent.col })
+      }
+      break
+    }
+
+    case 'a': {
+      const palaceRows = isRed ? [7, 8, 9] : [0, 1, 2]
+      const palaceCols = [3, 4, 5]
+      for (const [dr, dc] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const nr = row + dr
+        const nc = col + dc
+        if (palaceRows.includes(nr) && palaceCols.includes(nc) && !isOwnPiece(board, nr, nc, color)) {
+          moves.push({ row: nr, col: nc })
+        }
+      }
+      break
+    }
+
+    case 'b': {
+      const homeSide = isRed ? (r: number) => r >= 5 : (r: number) => r <= 4
+      for (const [dr, dc] of [[2, 2], [2, -2], [-2, 2], [-2, -2]]) {
+        const nr = row + dr
+        const nc = col + dc
+        const br = row + dr / 2
+        const bc = col + dc / 2
+        if (inBounds(nr, nc) && homeSide(nr) && !board[br][bc] && !isOwnPiece(board, nr, nc, color)) {
+          moves.push({ row: nr, col: nc })
+        }
+      }
+      break
+    }
+
+    case 'n': {
+      const jumps: [number, number, number, number][] = [
+        [-2, -1, -1, 0], [-2, 1, -1, 0],
+        [2, -1, 1, 0], [2, 1, 1, 0],
+        [-1, -2, 0, -1], [-1, 2, 0, 1],
+        [1, -2, 0, -1], [1, 2, 0, 1],
+      ]
+      for (const [dr, dc, br, bc] of jumps) {
+        const nr = row + dr
+        const nc = col + dc
+        if (inBounds(nr, nc) && !board[row + br][col + bc] && !isOwnPiece(board, nr, nc, color)) {
+          moves.push({ row: nr, col: nc })
+        }
+      }
+      break
+    }
+
+    case 'r': {
+      addSlidingMoves(board, moves, row, col, color, false)
+      break
+    }
+
+    case 'c': {
+      addSlidingMoves(board, moves, row, col, color, true)
+      break
+    }
+
+    case 'p': {
+      const forward = isRed ? -1 : 1
+      const nr = row + forward
+      if (inBounds(nr, col) && !isOwnPiece(board, nr, col, color)) {
+        moves.push({ row: nr, col })
+      }
+      const crossedRiver = isRed ? row <= 4 : row >= 5
+      if (crossedRiver) {
+        for (const dc of [-1, 1]) {
+          const nc = col + dc
+          if (inBounds(row, nc) && !isOwnPiece(board, row, nc, color)) {
+            moves.push({ row, col: nc })
+          }
+        }
+      }
+      break
+    }
+  }
+
+  return moves
+}
+
+function addSlidingMoves(board: Board, moves: Position[], row: number, col: number, color: PieceColor, cannon: boolean): void {
+  for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+    let nr = row + dr
+    let nc = col + dc
+    let jumped = false
+    while (inBounds(nr, nc)) {
+      const target = board[nr][nc]
+      if (!target) {
+        if (!jumped) moves.push({ row: nr, col: nc })
+      } else if (!cannon) {
+        if (target.color !== color) moves.push({ row: nr, col: nc })
+        break
+      } else if (!jumped) {
+        jumped = true
+      } else {
+        if (target.color !== color) moves.push({ row: nr, col: nc })
+        break
+      }
+      nr += dr
+      nc += dc
+    }
+  }
+}
+
+function getLegalMoves(board: Board, pos: Position): Position[] {
+  const piece = board[pos.row]?.[pos.col]
+  if (!piece) return []
+
+  return getPseudoMoves(board, pos).filter(to => {
+    const next = applyMove(board, pos, to)
+    return !isInCheck(next, piece.color)
+  })
+}
+
+function isInCheck(board: Board, color: PieceColor): boolean {
+  const king = findKing(board, color)
+  if (!king) return true
+  const opponent = color === 'red' ? 'black' : 'red'
+
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      const piece = board[row][col]
+      if (piece?.color !== opponent) continue
+      if (getPseudoMoves(board, { row, col }).some(pos => pos.row === king.row && pos.col === king.col)) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+function hasPieceBetween(board: Board, firstRow: number, secondRow: number, col: number): boolean {
+  const minRow = Math.min(firstRow, secondRow)
+  const maxRow = Math.max(firstRow, secondRow)
+  for (let row = minRow + 1; row < maxRow; row++) {
+    if (board[row][col]) return true
+  }
+  return false
 }

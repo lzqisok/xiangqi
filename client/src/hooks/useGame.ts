@@ -8,7 +8,7 @@ import { getLegalMoves, isInCheck, getGameStatusDetail } from '../engine/rules'
 import { moveToNotation, moveToUci, uciToMove } from '../engine/notation'
 import { validateFenPosition } from '../engine/validation'
 import { useWebSocket } from './useWebSocket'
-import { getManualDrawStatus, getRedoTargetIndex, getResignationStatus, getUndoTargetIndex, shouldAutoRequestAiMove } from './gameFlow'
+import { getManualDrawStatus, getRedoTargetIndex, getResignationStatus, getUndoTargetIndex, sendStopForActiveEngineRequests, shouldAutoRequestAiMove } from './gameFlow'
 import { playMoveSound, playCaptureSound, playCheckSound, playGameOverSound } from '../audio'
 
 interface UseGameOptions {
@@ -527,6 +527,17 @@ export function useGame({
     return null
   })()
 
+  const stopActiveRequests = useCallback(() => {
+    sendStopForActiveEngineRequests(connected, send)
+    setAiThinking(false)
+    setHintThinking(false)
+    setCandidateThinking(false)
+    setHintMove(null)
+    setMoveCandidates([])
+    pendingRequestRef.current = null
+    candidateRequestRef.current = null
+  }, [connected, send])
+
   const undo = useCallback(() => {
     if (currentMoveIndex < 0) return
     const targetIndex = getUndoTargetIndex(currentMoveIndex, gameMode, players)
@@ -554,14 +565,8 @@ export function useGame({
     setUciMoves(uciListFromRecords(moveHistory.slice(0, targetIndex + 1)))
     setSelectedPos(null)
     setLegalMoves([])
-    setAiThinking(false)
-    setHintThinking(false)
-    setHintMove(null)
-    setMoveCandidates([])
-    setCandidateThinking(false)
-    pendingRequestRef.current = null
-    candidateRequestRef.current = null
-  }, [currentMoveIndex, moveHistory, gameMode, players, resolvedInitialFen])
+    stopActiveRequests()
+  }, [currentMoveIndex, moveHistory, gameMode, players, resolvedInitialFen, stopActiveRequests])
 
   const redo = useCallback(() => {
     if (currentMoveIndex >= moveHistory.length - 1) return
@@ -576,16 +581,12 @@ export function useGame({
     setUciMoves(uciListFromRecords(moveHistory.slice(0, targetIndex + 1)))
     setSelectedPos(null)
     setLegalMoves([])
-    setHintMove(null)
-    setMoveCandidates([])
-    setCandidateThinking(false)
-    pendingRequestRef.current = null
-    candidateRequestRef.current = null
+    stopActiveRequests()
 
     const statusDetail = getGameStatusDetail(nextBoard, turn)
     setGameStatus(statusDetail.status)
     setGameStatusReason(statusDetail.reason)
-  }, [currentMoveIndex, moveHistory, gameMode, players])
+  }, [currentMoveIndex, moveHistory, gameMode, players, stopActiveRequests])
 
   const flip = useCallback(() => {
     setFlipped(f => !f)
@@ -615,15 +616,11 @@ export function useGame({
     setUciMoves(uciListFromRecords(moveHistory.slice(0, index + 1)))
     setSelectedPos(null)
     setLegalMoves([])
-    setHintMove(null)
-    setMoveCandidates([])
-    setCandidateThinking(false)
-    pendingRequestRef.current = null
-    candidateRequestRef.current = null
+    stopActiveRequests()
     const statusDetail = getGameStatusDetail(targetBoard, turn)
     setGameStatus(statusDetail.status)
     setGameStatusReason(statusDetail.reason)
-  }, [moveHistory])
+  }, [moveHistory, stopActiveRequests])
 
   const getCurrentFen = useCallback(() => {
     return boardToFen(board, currentTurn, Math.floor((currentMoveIndex + 2) / 2))
@@ -654,15 +651,12 @@ export function useGame({
       setBestLine([])
       setAnalysisDepth(0)
       setAnalysisPoints([])
-      setMoveCandidates([])
-      setCandidateThinking(false)
-      pendingRequestRef.current = null
-      candidateRequestRef.current = null
+      stopActiveRequests()
       return true
     } catch {
       return false
     }
-  }, [])
+  }, [stopActiveRequests])
 
   const requestHint = useCallback(() => {
     if (!connected || gameStatus !== 'playing' || aiThinking || hintThinking || candidateThinking) return
@@ -726,16 +720,6 @@ export function useGame({
       setAiThinking(false)
     }
   }, [gameMode, connected, gameStatus, aiThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, engineBaseFen])
-
-  const stopActiveRequests = useCallback(() => {
-    setAiThinking(false)
-    setHintThinking(false)
-    setCandidateThinking(false)
-    setHintMove(null)
-    setMoveCandidates([])
-    pendingRequestRef.current = null
-    candidateRequestRef.current = null
-  }, [])
 
   const declareDraw = useCallback(() => {
     if (gameStatus !== 'playing') return

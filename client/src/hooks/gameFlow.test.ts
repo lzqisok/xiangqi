@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getManualDrawStatus, getRedoTargetIndex, getResignationStatus, getUndoTargetIndex, shouldAutoRequestAiMove } from './gameFlow'
+import { getManualDrawStatus, getRedoTargetIndex, getResignationStatus, getUndoTargetIndex, sendStopForActiveEngineRequests, shouldAutoRequestAiMove } from './gameFlow'
 
 const human = { type: 'human' as const }
 const ai = { type: 'ai' as const, difficulty: 'medium' as const }
@@ -65,4 +65,37 @@ test('manual draw and resignation produce manual game-over states', () => {
     status: 'red-wins',
     reason: 'resignation',
   })
+})
+
+test('local request cleanup sends stop only when websocket is connected', () => {
+  const sent: unknown[] = []
+  const send = (message: unknown) => {
+    sent.push(message)
+    return true
+  }
+
+  sendStopForActiveEngineRequests(true, send)
+  sendStopForActiveEngineRequests(false, send)
+
+  assert.deepEqual(sent, [{ type: 'stop' }])
+})
+
+test('local request cleanup can be reused by every board reset path', () => {
+  const sent: unknown[] = []
+  const send = (message: unknown) => {
+    sent.push(message)
+    return true
+  }
+
+  for (const _ of ['undo', 'redo', 'jump', 'load-fen', 'manual-end']) {
+    sendStopForActiveEngineRequests(true, send)
+  }
+
+  assert.deepEqual(sent, [
+    { type: 'stop' },
+    { type: 'stop' },
+    { type: 'stop' },
+    { type: 'stop' },
+    { type: 'stop' },
+  ])
 })

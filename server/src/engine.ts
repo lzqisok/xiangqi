@@ -246,6 +246,11 @@ export class PikafishEngine extends EventEmitter {
     void this.enqueue(() => this.stopSearchIfNeeded())
   }
 
+  interruptSearch() {
+    if (!this.ready || !this.process || !this.searching) return
+    this.send('stop')
+  }
+
   private send(cmd: string) {
     if (this.process?.stdin?.writable) {
       this.process.stdin.write(cmd + '\n')

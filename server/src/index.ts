@@ -75,6 +75,7 @@ wss.on('connection', async (ws) => {
   let localAnalysisRequestId: string | undefined
   let localAnalysisFen = INITIAL_FEN
   let localAnalysisMoves: string[] = []
+  let requestGeneration = 0
 
   const attachAnalysisHandler = (engine: PikafishEngine) => {
     if (infoHandler) {
@@ -149,9 +150,10 @@ wss.on('connection', async (ws) => {
           }
 
           try {
+            const generation = requestGeneration
             const startedAt = Date.now()
             const bestMove = await engine.getBestMove(fen, moves, requestDifficulty)
-            if (bestMove && ws.readyState === WebSocket.OPEN) {
+            if (bestMove && generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({
                 type: 'bestmove',
                 requestId,
@@ -185,9 +187,10 @@ wss.on('connection', async (ws) => {
           }
 
           try {
+            const generation = requestGeneration
             const startedAt = Date.now()
             const bestMove = await engine.getBestMove(fen, moves, msg.difficulty || 'master')
-            if (bestMove && ws.readyState === WebSocket.OPEN) {
+            if (bestMove && generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({
                 type: 'bestmove',
                 requestId,
@@ -225,8 +228,9 @@ wss.on('connection', async (ws) => {
             detachAnalysisHandler(engine)
           }
           try {
+            const generation = requestGeneration
             const candidates = await engine.getCandidates(fen, moves, msg.difficulty || currentDifficulty, msg.count || 3)
-            if (ws.readyState === WebSocket.OPEN) {
+            if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'candidates', requestId, candidates }))
             }
           } catch (err) {
@@ -273,6 +277,7 @@ wss.on('connection', async (ws) => {
         }
 
         case 'stop': {
+          requestGeneration++
           if (sharedEngine) {
             detachAnalysisHandler(sharedEngine)
           }
@@ -283,8 +288,8 @@ wss.on('connection', async (ws) => {
             activeAnalysis = null
             localAnalysisRequestId = undefined
           }
-          if (sharedEngine && engineReady && stopsOwnAnalysis) {
-            sharedEngine.stopAnalysis()
+          if (sharedEngine && engineReady) {
+            sharedEngine.interruptSearch()
           }
           break
         }

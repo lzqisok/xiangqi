@@ -77,6 +77,35 @@ test('parseClientMessage rejects empty requestId and malformed UCI moves', () =>
   if (!badMoves.ok) assert.equal(badMoves.error, 'moves must be an array of UCI strings')
 })
 
+test('parseClientMessage rejects UCI move lists that cannot legally replay from FEN', () => {
+  const ownPieceCapture = parseClientMessage(JSON.stringify({
+    type: 'move',
+    requestId: 'move-illegal',
+    fen: VALID_FEN,
+    moves: ['a0b0'],
+  }))
+
+  assert.equal(ownPieceCapture.ok, false)
+  if (!ownPieceCapture.ok) {
+    assert.equal(ownPieceCapture.requestId, 'move-illegal')
+    assert.match(ownPieceCapture.error, /Illegal move/)
+  }
+})
+
+test('parseClientMessage rejects move lists without a FEN replay base', () => {
+  const missingFen = parseClientMessage(JSON.stringify({
+    type: 'move',
+    requestId: 'move-no-fen',
+    moves: ['h2e2'],
+  }))
+
+  assert.equal(missingFen.ok, false)
+  if (!missingFen.ok) {
+    assert.equal(missingFen.requestId, 'move-no-fen')
+    assert.equal(missingFen.error, 'fen is required when moves are provided')
+  }
+})
+
 test('isStaleEngineResponse guards request id, kind, and move history', () => {
   const pending = { id: 'move-1', kind: 'move' as const, movesKey: 'h2e2' }
 

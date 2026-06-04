@@ -15,6 +15,7 @@ interface Props {
   scenarioName: string | null
   trainingFeedback: string
   trainingHint: string
+  trainingHintHistory: string
   naturalLimitReminder: string
   canRequestTrainingHint: boolean
   aiThinking: boolean
@@ -90,6 +91,7 @@ export default function GamePanel({
   scenarioName,
   trainingFeedback,
   trainingHint,
+  trainingHintHistory,
   naturalLimitReminder,
   canRequestTrainingHint,
   aiThinking,
@@ -134,6 +136,7 @@ export default function GamePanel({
       {scenarioName && <div className="scenario-name">{scenarioName}</div>}
       {trainingFeedback && <div className="training-feedback">{trainingFeedback}</div>}
       {trainingHint && <div className="training-hint">{trainingHint}</div>}
+      {trainingHintHistory && <div className="training-hint-history">{trainingHintHistory}</div>}
       {naturalLimitReminder && <div className="natural-limit-reminder">{naturalLimitReminder}</div>}
 
       <div className={`engine-status ${connectionState} ${engineAvailable === false ? 'engine-offline' : ''}`}>

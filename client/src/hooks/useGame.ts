@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Board, Position, Move, MoveRecord, PieceColor,
-  GameMode, Difficulty, PlayerSide, GameStatus, GameStatusReason, WSMessage, PlayerConfig, AnalysisPoint, MoveCandidate,
+  GameMode, Difficulty, PlayerSide, GameStatus, GameStatusReason, WSMessage, PlayerConfig, AnalysisPoint, MoveCandidate, EngineSearchLimit,
 } from '../types'
 import { parseFen, boardToFen, applyMove, INITIAL_FEN, findKing } from '../engine/board'
 import { getLegalMoves, isInCheck, getGameStatusDetail } from '../engine/rules'
@@ -17,6 +17,9 @@ interface UseGameOptions {
   playerSide: PlayerSide
   aiRedDifficulty: Difficulty
   aiBlackDifficulty: Difficulty
+  candidateCount?: number
+  hintDifficulty?: Difficulty
+  searchLimit?: EngineSearchLimit
   analysisEnabled?: boolean
   initialFen?: string
   initialMoveRecords?: MoveRecord[]
@@ -84,6 +87,9 @@ export function useGame({
   playerSide,
   aiRedDifficulty,
   aiBlackDifficulty,
+  candidateCount = 3,
+  hintDifficulty = 'master',
+  searchLimit,
   analysisEnabled = false,
   initialFen,
   initialMoveRecords,
@@ -411,6 +417,7 @@ export function useGame({
       requestId,
       fen: engineBaseFen,
       moves: uciMoves,
+      ...searchLimit,
     })
 
     return () => {
@@ -419,7 +426,7 @@ export function useGame({
         analysisRequestRef.current = null
       }
     }
-  }, [analysisEnabled, connected, engineBaseFen, gameMode, send, uciMoves])
+  }, [analysisEnabled, connected, engineBaseFen, gameMode, send, uciMoves, searchLimit])
 
   // Trigger AI move
   useEffect(() => {
@@ -445,13 +452,14 @@ export function useGame({
       fen: engineBaseFen,
       moves: uciMoves,
       difficulty: currentPlayerConfig.difficulty || difficulty,
+      ...searchLimit,
     })
     if (!sent) {
       pendingRequestRef.current = null
       candidateRequestRef.current = null
       setAiThinking(false)
     }
-  }, [gameStatus, aiThinking, gameMode, currentPlayerConfig, connected, send, engineBaseFen, uciMoves, difficulty])
+  }, [gameStatus, aiThinking, gameMode, currentPlayerConfig, connected, send, engineBaseFen, uciMoves, difficulty, searchLimit])
 
   const handleCellClick = useCallback((pos: Position) => {
     if (gameStatus !== 'playing') return
@@ -671,12 +679,12 @@ export function useGame({
       fen: engineBaseFen,
       movesKey: uciMoves.join(' '),
     }
-    const sent = send({ type: 'hint', requestId, fen: engineBaseFen, moves: uciMoves, difficulty: 'master' })
+    const sent = send({ type: 'hint', requestId, fen: engineBaseFen, moves: uciMoves, difficulty: hintDifficulty, ...searchLimit })
     if (!sent) {
       pendingRequestRef.current = null
       setHintThinking(false)
     }
-  }, [connected, gameStatus, aiThinking, hintThinking, candidateThinking, currentPlayerConfig, send, uciMoves, engineBaseFen])
+  }, [connected, gameStatus, aiThinking, hintThinking, candidateThinking, currentPlayerConfig, send, uciMoves, engineBaseFen, hintDifficulty, searchLimit])
 
   const requestCandidates = useCallback(() => {
     if (!connected || gameStatus !== 'playing' || aiThinking || hintThinking || candidateThinking) return
@@ -691,13 +699,14 @@ export function useGame({
       fen: engineBaseFen,
       moves: uciMoves,
       difficulty: currentPlayerConfig.difficulty || difficulty,
-      count: 3,
+      count: candidateCount,
+      ...searchLimit,
     })
     if (!sent) {
       candidateRequestRef.current = null
       setCandidateThinking(false)
     }
-  }, [connected, gameStatus, aiThinking, hintThinking, candidateThinking, send, engineBaseFen, uciMoves, currentPlayerConfig, difficulty])
+  }, [connected, gameStatus, aiThinking, hintThinking, candidateThinking, send, engineBaseFen, uciMoves, currentPlayerConfig, difficulty, candidateCount, searchLimit])
 
   const nextAiMove = useCallback(() => {
     if (gameMode !== 'ai-vs-ai') return
@@ -713,13 +722,13 @@ export function useGame({
       fen: engineBaseFen,
       movesKey: uciMoves.join(' '),
     }
-    const sent = send({ type: 'move', requestId, fen: engineBaseFen, moves: uciMoves, difficulty: difficultyForTurn })
+    const sent = send({ type: 'move', requestId, fen: engineBaseFen, moves: uciMoves, difficulty: difficultyForTurn, ...searchLimit })
     if (!sent) {
       pendingRequestRef.current = null
       candidateRequestRef.current = null
       setAiThinking(false)
     }
-  }, [gameMode, connected, gameStatus, aiThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, engineBaseFen])
+  }, [gameMode, connected, gameStatus, aiThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, engineBaseFen, searchLimit])
 
   const declareDraw = useCallback(() => {
     if (gameStatus !== 'playing') return

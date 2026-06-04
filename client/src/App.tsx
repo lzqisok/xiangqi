@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Board, { BoardHandle } from './components/Board'
 import GamePanel from './components/GamePanel'
 import MoveHistory from './components/MoveHistory'
@@ -33,8 +33,10 @@ import {
 } from './studies/storage'
 import { validateFenPosition } from './engine/validation'
 import { getNaturalLimitReminder } from './engine/naturalLimit'
-import { getPieceDisplayName, moveToNotation, moveToUci, uciToMove } from './engine/notation'
-import { Board as BoardState, EndgameDefinition, EndgameStartConfig, EndgameTarget, GameMode, Difficulty, MoveRecord, PlayerSide, StudyPosition } from './types'
+import { EngineSettings, loadEngineSettings, saveEngineSettings } from './engineSettings'
+import { buildBoardExportMetadata, createAnnotatedBoardPng } from './export/boardImage'
+import { formatTrainingHintHistory, getEndgameTrainingFeedback, getEndgameTrainingHint, recordTrainingHintLevel, TrainingHintHistoryEntry } from './training/hints'
+import { EndgameDefinition, EndgameStartConfig, EndgameTarget, GameMode, Difficulty, MoveRecord, PlayerSide, StudyPosition } from './types'
 
 type EndgameDraft = {
   id: string | null
@@ -66,7 +68,9 @@ export default function App() {
   const [aiAutoPlaying, setAiAutoPlaying] = useState(false)
   const [aiAutoDelay, setAiAutoDelay] = useState(900)
   const [candidateAutoRefresh, setCandidateAutoRefresh] = useState(false)
+  const [engineSettings, setEngineSettings] = useState<EngineSettings>(() => loadEngineSettings())
   const [trainingHintLevel, setTrainingHintLevel] = useState(0)
+  const [trainingHintHistory, setTrainingHintHistory] = useState<TrainingHintHistoryEntry[]>([])
   const candidateAutoRequestRef = useRef<string | null>(null)
   const [editorDraft, setEditorDraft] = useState<EndgameDraft>({
     id: null,
@@ -80,6 +84,11 @@ export default function App() {
     red: { type: 'human' },
     black: { type: 'ai', difficulty: 'medium' },
   })
+  const searchLimit = useMemo(() => ({
+    searchMode: engineSettings.searchMode,
+    searchDepth: engineSettings.searchDepth,
+    searchTimeMs: engineSettings.searchTimeMs,
+  }), [engineSettings.searchDepth, engineSettings.searchMode, engineSettings.searchTimeMs])
 
   useEffect(() => {
     setCustomEndgames(loadCustomEndgames())
@@ -94,6 +103,9 @@ export default function App() {
     playerSide,
     aiRedDifficulty,
     aiBlackDifficulty,
+    candidateCount: engineSettings.candidateCount,
+    hintDifficulty: engineSettings.hintDifficulty,
+    searchLimit,
     analysisEnabled: showAnalysis,
     initialFen: gameMode === 'study' ? selectedStudy?.initialFen : selectedEndgame?.fen,
     initialMoveRecords: gameMode === 'study' ? selectedStudy?.moves : undefined,
@@ -105,6 +117,7 @@ export default function App() {
 
   const trainingFeedback = getEndgameTrainingFeedback(selectedEndgame, game.moveRecords, game.gameStatus, game.evaluation)
   const trainingHint = getEndgameTrainingHint(selectedEndgame, game.moveRecords, game.board, trainingHintLevel)
+  const trainingHintHistoryText = formatTrainingHintHistory(trainingHintHistory)
   const naturalLimitReminder = getNaturalLimitReminder(game.moveRecords)
   const candidateAutoPositionKey = game.moveRecords[game.currentMoveIndex]?.fen || game.initialFen
   const canRequestTrainingHint = Boolean(selectedEndgame?.solution?.length) && game.gameStatus === 'playing'
@@ -112,6 +125,10 @@ export default function App() {
   useEffect(() => {
     setTrainingHintLevel(0)
   }, [game.currentMoveIndex, selectedEndgame?.id])
+
+  useEffect(() => {
+    setTrainingHintHistory([])
+  }, [selectedEndgame?.id])
 
   useEffect(() => {
     if (gameMode !== 'ai-vs-ai' || game.gameStatus !== 'playing') {
@@ -130,9 +147,12 @@ export default function App() {
   useEffect(() => {
     if (!candidateAutoRefresh || !game.canRequestCandidates) return
     if (candidateAutoRequestRef.current === candidateAutoPositionKey) return
-    candidateAutoRequestRef.current = candidateAutoPositionKey
-    game.requestCandidates()
-  }, [candidateAutoPositionKey, candidateAutoRefresh, game.canRequestCandidates, game.requestCandidates])
+    const timer = setTimeout(() => {
+      candidateAutoRequestRef.current = candidateAutoPositionKey
+      game.requestCandidates()
+    }, engineSettings.candidateAutoRefreshDelay)
+    return () => clearTimeout(timer)
+  }, [candidateAutoPositionKey, candidateAutoRefresh, engineSettings.candidateAutoRefreshDelay, game.canRequestCandidates, game.requestCandidates])
 
   useEffect(() => {
     if (!candidateAutoRefresh) {
@@ -318,6 +338,7 @@ export default function App() {
             scenarioName={gameMode === 'endgame' ? selectedEndgame?.name ?? null : gameMode === 'study' ? selectedStudy?.name ?? null : null}
             trainingFeedback={trainingFeedback}
             trainingHint={trainingHint}
+            trainingHintHistory={trainingHintHistoryText}
             naturalLimitReminder={naturalLimitReminder}
             canRequestTrainingHint={canRequestTrainingHint}
             aiThinking={game.aiThinking}
@@ -381,12 +402,24 @@ export default function App() {
               setStudies(saved)
               setSelectedStudy(saved.find(item => item.name === name.trim()) || saved[0] || null)
             }}
-            onExportImage={() => {
+            onExportImage={async () => {
               const dataUrl = boardRef.current?.exportPng()
-              if (dataUrl) downloadDataUrl('xiangqi-board.png', dataUrl)
+              if (dataUrl) {
+                const metadata = buildBoardExportMetadata({
+                  fen: game.getCurrentFen(),
+                  currentTurn: game.currentTurn,
+                  scenarioName: gameMode === 'endgame' ? selectedEndgame?.name ?? null : gameMode === 'study' ? selectedStudy?.name ?? null : null,
+                  gameMode,
+                })
+                const annotated = await createAnnotatedBoardPng(dataUrl, metadata)
+                downloadDataUrl(metadata.filename, annotated)
+              }
             }}
             onTrainingHint={() => {
-              setTrainingHintLevel(level => Math.min(3, level + 1))
+              const nextLevel = Math.min(3, trainingHintLevel + 1)
+              const hint = getEndgameTrainingHint(selectedEndgame, game.moveRecords, game.board, nextLevel)
+              setTrainingHintLevel(nextLevel)
+              setTrainingHintHistory(history => recordTrainingHintLevel(history, game.currentMoveIndex, nextLevel, hint, game.getCurrentFen()))
             }}
             onHint={game.requestHint}
             onNextAiMove={game.nextAiMove}
@@ -407,6 +440,30 @@ export default function App() {
             canRequest={game.canRequestCandidates}
             autoRefresh={candidateAutoRefresh}
             onAutoRefreshChange={setCandidateAutoRefresh}
+            candidateCount={engineSettings.candidateCount}
+            onCandidateCountChange={(candidateCount) => {
+              setEngineSettings(current => saveEngineSettings({ ...current, candidateCount }))
+            }}
+            autoRefreshDelay={engineSettings.candidateAutoRefreshDelay}
+            onAutoRefreshDelayChange={(candidateAutoRefreshDelay) => {
+              setEngineSettings(current => saveEngineSettings({ ...current, candidateAutoRefreshDelay }))
+            }}
+            hintDifficulty={engineSettings.hintDifficulty}
+            onHintDifficultyChange={(hintDifficulty) => {
+              setEngineSettings(current => saveEngineSettings({ ...current, hintDifficulty }))
+            }}
+            searchMode={engineSettings.searchMode}
+            onSearchModeChange={(searchMode) => {
+              setEngineSettings(current => saveEngineSettings({ ...current, searchMode }))
+            }}
+            searchDepth={engineSettings.searchDepth}
+            onSearchDepthChange={(searchDepth) => {
+              setEngineSettings(current => saveEngineSettings({ ...current, searchDepth }))
+            }}
+            searchTimeMs={engineSettings.searchTimeMs}
+            onSearchTimeMsChange={(searchTimeMs) => {
+              setEngineSettings(current => saveEngineSettings({ ...current, searchTimeMs }))
+            }}
           />
           {showAnalysis && <AnalysisCurve points={game.analysisPoints} />}
         </div>
@@ -444,78 +501,6 @@ function scenarioNameFromState(gameMode: GameMode, selectedEndgame: EndgameDefin
     return `${selectedEndgame.name}-副本`
   }
   return '自定义残局'
-}
-
-function getEndgameTrainingFeedback(endgame: EndgameDefinition | null, records: MoveRecord[], status: string, evaluation: number | null): string {
-  if (!endgame) return ''
-
-  const solution = endgame.solution || []
-  if (solution.length > 0 && records.length > 0) {
-    const played = records.map(record => moveToUci(record.move.from, record.move.to))
-    const firstMismatch = played.findIndex((uci, index) => solution[index] && solution[index] !== uci)
-    if (firstMismatch >= 0) {
-      return `已偏离标准解法：第 ${firstMismatch + 1} 手建议 ${solution[firstMismatch]}。${formatDeviationSeverity(endgame, evaluation)}`
-    }
-    if (played.length >= solution.length) {
-      return '标准解法已完成。'
-    }
-    return `标准解法进度：${played.length}/${solution.length}。`
-  }
-
-  if (endgame.target === 'red-win' && status === 'red-wins') return '目标完成：红方胜。'
-  if (endgame.target === 'black-win' && status === 'black-wins') return '目标完成：黑方胜。'
-  if (endgame.target === 'draw' && status === 'draw') return '目标完成：守和成功。'
-  if (endgame.target === 'survive' && endgame.maxMoves && records.length >= endgame.maxMoves && status === 'playing') {
-    return `目标完成：已坚持 ${endgame.maxMoves} 手。`
-  }
-  if ((endgame.target === 'red-win' || endgame.target === 'black-win') && endgame.maxMoves && records.length >= endgame.maxMoves && status === 'playing') {
-    return `已到目标步数：${endgame.maxMoves} 手内尚未完成目标。`
-  }
-  return ''
-}
-
-function formatDeviationSeverity(endgame: EndgameDefinition, evaluation: number | null): string {
-  if (evaluation === null) return '可结合候选走法继续判断是否仍可挽回。'
-  if (endgame.target === 'red-win') {
-    if (evaluation >= 180) return '当前评估仍偏红方，可继续寻找胜法。'
-    if (evaluation <= -120) return '当前评估已明显转差，建议回看标准解法。'
-    return '当前评估接近均势，仍可继续但胜势不明确。'
-  }
-  if (endgame.target === 'black-win') {
-    if (evaluation <= -180) return '当前评估仍偏黑方，可继续寻找胜法。'
-    if (evaluation >= 120) return '当前评估已明显转差，建议回看标准解法。'
-    return '当前评估接近均势，仍可继续但胜势不明确。'
-  }
-  if (endgame.target === 'draw' || endgame.target === 'survive') {
-    return Math.abs(evaluation) <= 180
-      ? '当前评估仍接近均势，守和目标仍可继续。'
-      : '当前评估已偏离均势，建议谨慎回看关键分支。'
-  }
-  return '可结合候选走法继续判断是否仍可挽回。'
-}
-
-function getEndgameTrainingHint(
-  endgame: EndgameDefinition | null,
-  records: MoveRecord[],
-  board: BoardState,
-  level: number,
-): string {
-  if (!endgame?.solution?.length || level <= 0) return ''
-  const nextUci = endgame.solution[records.length]
-  if (!nextUci) return '标准解法已走完。'
-
-  try {
-    const { from, to } = uciToMove(nextUci)
-    const piece = board[from.row]?.[from.col]
-    if (!piece) return `完整提示：${nextUci}`
-    const move = { from, to, piece, captured: board[to.row]?.[to.col] || undefined }
-    const pieceName = getPieceDisplayName(piece)
-    if (level === 1) return `方向提示：下一手重点关注${piece.color === 'red' ? '红方' : '黑方'}${pieceName}的主动走法。`
-    if (level === 2) return `棋子提示：建议动子是${pieceName}。`
-    return `完整提示：${moveToNotation(board, move)}。`
-  } catch {
-    return `完整提示：${nextUci}`
-  }
 }
 
 function formatMoveRecords(records: MoveRecord[]): string {

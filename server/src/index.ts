@@ -1,7 +1,7 @@
 import express from 'express'
 import { createServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
-import { PikafishEngine } from './engine.js'
+import { PikafishEngine, EngineSearchLimit } from './engine.js'
 import { parseClientMessage } from './protocol.js'
 import { validateFenPosition } from './validation.js'
 
@@ -10,6 +10,19 @@ const server = createServer(app)
 const wss = new WebSocketServer({ server, path: '/ws' })
 
 const INITIAL_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
+
+function getSearchLimit(msg: {
+  searchMode?: EngineSearchLimit['searchMode']
+  searchDepth?: number
+  searchTimeMs?: number
+}): EngineSearchLimit | undefined {
+  if (!msg.searchMode) return undefined
+  return {
+    searchMode: msg.searchMode,
+    searchDepth: msg.searchDepth,
+    searchTimeMs: msg.searchTimeMs,
+  }
+}
 
 let sharedEngine: PikafishEngine | null = null
 let engineReady = false
@@ -75,6 +88,7 @@ wss.on('connection', async (ws) => {
   let localAnalysisRequestId: string | undefined
   let localAnalysisFen = INITIAL_FEN
   let localAnalysisMoves: string[] = []
+  let localAnalysisLimit: EngineSearchLimit | undefined
   let requestGeneration = 0
 
   const attachAnalysisHandler = (engine: PikafishEngine) => {
@@ -152,7 +166,7 @@ wss.on('connection', async (ws) => {
           try {
             const generation = requestGeneration
             const startedAt = Date.now()
-            const bestMove = await engine.getBestMove(fen, moves, requestDifficulty)
+            const bestMove = await engine.getBestMove(fen, moves, requestDifficulty, getSearchLimit(msg))
             if (bestMove && generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({
                 type: 'bestmove',
@@ -189,7 +203,7 @@ wss.on('connection', async (ws) => {
           try {
             const generation = requestGeneration
             const startedAt = Date.now()
-            const bestMove = await engine.getBestMove(fen, moves, msg.difficulty || 'master')
+            const bestMove = await engine.getBestMove(fen, moves, msg.difficulty || 'master', getSearchLimit(msg))
             if (bestMove && generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({
                 type: 'bestmove',
@@ -229,7 +243,7 @@ wss.on('connection', async (ws) => {
           }
           try {
             const generation = requestGeneration
-            const candidates = await engine.getCandidates(fen, moves, msg.difficulty || currentDifficulty, msg.count || 3)
+            const candidates = await engine.getCandidates(fen, moves, msg.difficulty || currentDifficulty, msg.count || 3, getSearchLimit(msg))
             if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'candidates', requestId, candidates }))
             }
@@ -240,7 +254,7 @@ wss.on('connection', async (ws) => {
             if (resumeAnalysis && shouldResumeLocalAnalysis()) {
               try {
                 attachAnalysisHandler(engine)
-                await engine.analyze(localAnalysisFen, localAnalysisMoves)
+                await engine.analyze(localAnalysisFen, localAnalysisMoves, localAnalysisLimit)
               } catch (err) {
                 console.error('Resume analysis error:', err)
               }
@@ -268,11 +282,12 @@ wss.on('connection', async (ws) => {
           localAnalysisRequestId = msg.requestId
           localAnalysisFen = fen
           localAnalysisMoves = moves
+          localAnalysisLimit = getSearchLimit(msg)
           activeAnalysis = { sessionId, requestId: msg.requestId }
           attachAnalysisHandler(engine)
 
           engine.stopAnalysis()
-          await engine.analyze(fen, moves)
+          await engine.analyze(fen, moves, localAnalysisLimit)
           break
         }
 
@@ -287,6 +302,7 @@ wss.on('connection', async (ws) => {
           if (stopsOwnAnalysis) {
             activeAnalysis = null
             localAnalysisRequestId = undefined
+            localAnalysisLimit = undefined
           }
           if (sharedEngine && engineReady) {
             sharedEngine.interruptSearch()

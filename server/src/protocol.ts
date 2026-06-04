@@ -9,6 +9,9 @@ export interface EngineRequest {
   moves?: string[]
   difficulty?: 'easy' | 'medium' | 'hard' | 'master'
   count?: number
+  searchMode?: 'depth' | 'time'
+  searchDepth?: number
+  searchTimeMs?: number
 }
 
 export type ProtocolValidation =
@@ -16,6 +19,7 @@ export type ProtocolValidation =
   | { ok: false; requestId?: string; error: string }
 
 const DIFFICULTIES = new Set(['easy', 'medium', 'hard', 'master'])
+const SEARCH_MODES = new Set(['depth', 'time'])
 const UCI_MOVE_RE = /^[a-i][0-9][a-i][0-9]$/
 
 export function parseClientMessage(raw: string): ProtocolValidation {
@@ -60,6 +64,18 @@ export function parseClientMessage(raw: string): ProtocolValidation {
     return { ok: false, requestId, error: 'count must be an integer between 1 and 5' }
   }
 
+  if (msg.searchMode !== undefined && (typeof msg.searchMode !== 'string' || !SEARCH_MODES.has(msg.searchMode))) {
+    return { ok: false, requestId, error: 'searchMode is invalid' }
+  }
+
+  if (msg.searchDepth !== undefined && (typeof msg.searchDepth !== 'number' || !Number.isInteger(msg.searchDepth) || msg.searchDepth < 4 || msg.searchDepth > 30)) {
+    return { ok: false, requestId, error: 'searchDepth must be an integer between 4 and 30' }
+  }
+
+  if (msg.searchTimeMs !== undefined && (typeof msg.searchTimeMs !== 'number' || !Number.isInteger(msg.searchTimeMs) || msg.searchTimeMs < 500 || msg.searchTimeMs > 10000)) {
+    return { ok: false, requestId, error: 'searchTimeMs must be an integer between 500 and 10000' }
+  }
+
   if ((msg.type === 'move' || msg.type === 'hint' || msg.type === 'analyze' || msg.type === 'candidates') && typeof msg.requestId !== 'string') {
     return { ok: false, error: 'requestId is required' }
   }
@@ -95,6 +111,9 @@ export function parseClientMessage(raw: string): ProtocolValidation {
       moves: Array.isArray(msg.moves) ? msg.moves : undefined,
       difficulty: typeof msg.difficulty === 'string' ? msg.difficulty as EngineRequest['difficulty'] : undefined,
       count: typeof msg.count === 'number' ? msg.count : undefined,
+      searchMode: typeof msg.searchMode === 'string' ? msg.searchMode as EngineRequest['searchMode'] : undefined,
+      searchDepth: typeof msg.searchDepth === 'number' ? msg.searchDepth : undefined,
+      searchTimeMs: typeof msg.searchTimeMs === 'number' ? msg.searchTimeMs : undefined,
     },
   }
 }

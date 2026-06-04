@@ -25,11 +25,27 @@ export interface EngineCandidate {
 
 type Difficulty = 'easy' | 'medium' | 'hard' | 'master'
 
+export interface EngineSearchLimit {
+  searchMode?: 'depth' | 'time'
+  searchDepth?: number
+  searchTimeMs?: number
+}
+
 const DEPTH_MAP: Record<Difficulty, number> = {
   easy: 8,
   medium: 14,
   hard: 20,
   master: 26,
+}
+
+export function buildGoCommand(defaultDepth: number, limit?: EngineSearchLimit): string {
+  if (limit?.searchMode === 'time' && typeof limit.searchTimeMs === 'number') {
+    return `go movetime ${limit.searchTimeMs}`
+  }
+  if (limit?.searchMode === 'depth' && typeof limit.searchDepth === 'number') {
+    return `go depth ${limit.searchDepth}`
+  }
+  return `go depth ${defaultDepth}`
 }
 
 function toEngineFen(fen: string): string {
@@ -124,15 +140,15 @@ export class PikafishEngine extends EventEmitter {
     }
   }
 
-  async getBestMove(fen: string, moves: string[], difficulty: Difficulty): Promise<string | null> {
-    return this.enqueue(() => this.getBestMoveLocked(fen, moves, difficulty))
+  async getBestMove(fen: string, moves: string[], difficulty: Difficulty, limit?: EngineSearchLimit): Promise<string | null> {
+    return this.enqueue(() => this.getBestMoveLocked(fen, moves, difficulty, limit))
   }
 
-  async getCandidates(fen: string, moves: string[], difficulty: Difficulty, count: number): Promise<EngineCandidate[]> {
-    return this.enqueue(() => this.getCandidatesLocked(fen, moves, difficulty, count))
+  async getCandidates(fen: string, moves: string[], difficulty: Difficulty, count: number, limit?: EngineSearchLimit): Promise<EngineCandidate[]> {
+    return this.enqueue(() => this.getCandidatesLocked(fen, moves, difficulty, count, limit))
   }
 
-  private async getBestMoveLocked(fen: string, moves: string[], difficulty: Difficulty): Promise<string | null> {
+  private async getBestMoveLocked(fen: string, moves: string[], difficulty: Difficulty, limit?: EngineSearchLimit): Promise<string | null> {
     if (!this.ready || !this.process) {
       console.error('Engine not ready, attempting reinit...')
       const ok = await this.init()
@@ -152,7 +168,7 @@ export class PikafishEngine extends EventEmitter {
       this.send(posCmd)
 
       this.searching = true
-      this.send(`go depth ${depth}`)
+      this.send(buildGoCommand(depth, limit))
 
       const result = await this.waitFor('bestmove', 60000)
       this.searching = false
@@ -171,11 +187,11 @@ export class PikafishEngine extends EventEmitter {
     return null
   }
 
-  async analyze(fen: string, moves: string[]): Promise<void> {
-    return this.enqueue(() => this.analyzeLocked(fen, moves))
+  async analyze(fen: string, moves: string[], limit?: EngineSearchLimit): Promise<void> {
+    return this.enqueue(() => this.analyzeLocked(fen, moves, limit))
   }
 
-  private async getCandidatesLocked(fen: string, moves: string[], difficulty: Difficulty, count: number): Promise<EngineCandidate[]> {
+  private async getCandidatesLocked(fen: string, moves: string[], difficulty: Difficulty, count: number, limit?: EngineSearchLimit): Promise<EngineCandidate[]> {
     if (!this.ready || !this.process) {
       const ok = await this.init()
       if (!ok) return []
@@ -208,7 +224,7 @@ export class PikafishEngine extends EventEmitter {
       }
       this.send(posCmd)
       this.searching = true
-      this.send(`go depth ${depth}`)
+      this.send(buildGoCommand(depth, limit))
       await this.waitFor('bestmove', 60000)
       this.searching = false
 
@@ -229,7 +245,7 @@ export class PikafishEngine extends EventEmitter {
     }
   }
 
-  private async analyzeLocked(fen: string, moves: string[]): Promise<void> {
+  private async analyzeLocked(fen: string, moves: string[], limit?: EngineSearchLimit): Promise<void> {
     if (!this.ready || !this.process) return
 
     await this.stopSearchIfNeeded()
@@ -239,7 +255,11 @@ export class PikafishEngine extends EventEmitter {
     }
     this.send(posCmd)
     this.searching = true
-    this.send('go infinite')
+    if (limit?.searchMode) {
+      this.send(buildGoCommand(DEPTH_MAP.master, limit))
+    } else {
+      this.send('go infinite')
+    }
   }
 
   stopAnalysis() {

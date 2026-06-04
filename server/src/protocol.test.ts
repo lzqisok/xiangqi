@@ -11,12 +11,18 @@ test('parseClientMessage accepts valid move requests', () => {
     fen: VALID_FEN,
     moves: ['h2e2'],
     difficulty: 'medium',
+    searchMode: 'depth',
+    searchDepth: 18,
+    searchTimeMs: 2500,
   }))
 
   assert.equal(result.ok, true)
   if (result.ok) {
     assert.equal(result.message.requestId, 'move-1')
     assert.deepEqual(result.message.moves, ['h2e2'])
+    assert.equal(result.message.searchMode, 'depth')
+    assert.equal(result.message.searchDepth, 18)
+    assert.equal(result.message.searchTimeMs, 2500)
   }
 })
 
@@ -60,6 +66,35 @@ test('parseClientMessage rejects invalid JSON, missing requestId, and bad FEN', 
   const badFen = parseClientMessage(JSON.stringify({ type: 'analyze', requestId: 'a1', fen: 'bad fen' }))
   assert.equal(badFen.ok, false)
   if (!badFen.ok) assert.equal(badFen.requestId, 'a1')
+})
+
+test('parseClientMessage rejects invalid search limits', () => {
+  const badMode = parseClientMessage(JSON.stringify({
+    type: 'hint',
+    requestId: 'hint-bad-mode',
+    fen: VALID_FEN,
+    searchMode: 'nodes',
+  }))
+  assert.equal(badMode.ok, false)
+  if (!badMode.ok) assert.equal(badMode.error, 'searchMode is invalid')
+
+  const badDepth = parseClientMessage(JSON.stringify({
+    type: 'move',
+    requestId: 'move-bad-depth',
+    fen: VALID_FEN,
+    searchDepth: 40,
+  }))
+  assert.equal(badDepth.ok, false)
+  if (!badDepth.ok) assert.equal(badDepth.error, 'searchDepth must be an integer between 4 and 30')
+
+  const badTime = parseClientMessage(JSON.stringify({
+    type: 'candidates',
+    requestId: 'candidate-bad-time',
+    fen: VALID_FEN,
+    searchTimeMs: 20000,
+  }))
+  assert.equal(badTime.ok, false)
+  if (!badTime.ok) assert.equal(badTime.error, 'searchTimeMs must be an integer between 500 and 10000')
 })
 
 test('parseClientMessage rejects empty requestId and malformed UCI moves', () => {

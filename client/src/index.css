@@ -244,6 +244,17 @@ body {
   line-height: 1.45;
 }
 
+.training-hint-history {
+  margin: 0 0 12px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: rgba(142, 119, 74, 0.12);
+  border: 1px solid rgba(214, 166, 75, 0.22);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .natural-limit-reminder {
   margin: 0 0 12px;
   padding: 9px 10px;
@@ -516,6 +527,32 @@ body {
   margin-bottom: 10px;
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+.engine-settings-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.engine-settings-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.engine-settings-panel select {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  background: var(--bg-card);
+  color: var(--text-primary);
 }
 
 .candidate-header button,
@@ -1389,6 +1426,9 @@ body {
   .side-panel > * {
     flex: 1;
     min-width: 260px;
+  }
+  .engine-settings-panel {
+    grid-template-columns: 1fr;
   }
   .analysis-bar {
     display: none;

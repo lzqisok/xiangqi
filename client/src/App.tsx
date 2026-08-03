@@ -33,9 +33,11 @@ import {
 } from './studies/storage'
 import { validateFenPosition } from './engine/validation'
 import { getNaturalLimitReminder } from './engine/naturalLimit'
+import { getRepetitionReminder } from './engine/repetition'
 import { EngineSettings, loadEngineSettings, saveEngineSettings } from './engineSettings'
 import { buildBoardExportMetadata, createAnnotatedBoardPng } from './export/boardImage'
 import { formatTrainingHintHistory, getEndgameTrainingFeedback, getEndgameTrainingHint, recordTrainingHintLevel, TrainingHintHistoryEntry } from './training/hints'
+import { createReplayUrl, parseReplayStudyFromSearch } from './share/replayLink'
 import { EndgameDefinition, EndgameStartConfig, EndgameTarget, GameMode, Difficulty, MoveRecord, PlayerSide, StudyPosition } from './types'
 
 type EndgameDraft = {
@@ -50,8 +52,11 @@ type EndgameDraft = {
 }
 
 export default function App() {
+  const [initialReplay] = useState(() => (
+    typeof window === 'undefined' ? null : parseReplayStudyFromSearch(window.location.search)
+  ))
   const boardRef = useRef<BoardHandle>(null)
-  const [gameMode, setGameMode] = useState<GameMode | null>(null)
+  const [gameMode, setGameMode] = useState<GameMode | null>(() => initialReplay?.ok ? 'study' : null)
   const [difficulty, setDifficulty] = useState<Difficulty>('medium')
   const [playerSide, setPlayerSide] = useState<PlayerSide>('red')
   const [aiRedDifficulty, setAiRedDifficulty] = useState<Difficulty>('medium')
@@ -63,10 +68,13 @@ export default function App() {
   const [favoriteEndgameIds, setFavoriteEndgameIds] = useState<string[]>([])
   const [recentFenPositions, setRecentFenPositions] = useState<RecentFenPosition[]>([])
   const [studies, setStudies] = useState<StudyPosition[]>([])
-  const [selectedStudy, setSelectedStudy] = useState<StudyPosition | null>(null)
+  const [selectedStudy, setSelectedStudy] = useState<StudyPosition | null>(() => initialReplay?.ok ? initialReplay.study : null)
   const [editingEndgame, setEditingEndgame] = useState(false)
   const [aiAutoPlaying, setAiAutoPlaying] = useState(false)
   const [aiAutoDelay, setAiAutoDelay] = useState(900)
+  const [studyAutoPlaying, setStudyAutoPlaying] = useState(false)
+  const [studyReplayDelay, setStudyReplayDelay] = useState(900)
+  const [showOnlyAnnotatedMoves, setShowOnlyAnnotatedMoves] = useState(false)
   const [candidateAutoRefresh, setCandidateAutoRefresh] = useState(false)
   const [engineSettings, setEngineSettings] = useState<EngineSettings>(() => loadEngineSettings())
   const [trainingHintLevel, setTrainingHintLevel] = useState(0)
@@ -89,6 +97,10 @@ export default function App() {
     searchDepth: engineSettings.searchDepth,
     searchTimeMs: engineSettings.searchTimeMs,
   }), [engineSettings.searchDepth, engineSettings.searchMode, engineSettings.searchTimeMs])
+  const engineRuntimeOptions = useMemo(() => ({
+    engineThreads: engineSettings.engineThreads,
+    engineHashMb: engineSettings.engineHashMb,
+  }), [engineSettings.engineHashMb, engineSettings.engineThreads])
 
   useEffect(() => {
     setCustomEndgames(loadCustomEndgames())
@@ -96,6 +108,12 @@ export default function App() {
     setRecentFenPositions(loadRecentFenPositions())
     setStudies(loadStudyPositions())
   }, [])
+
+  useEffect(() => {
+    if (initialReplay && !initialReplay.ok) {
+      window.alert(initialReplay.error)
+    }
+  }, [initialReplay])
 
   const game = useGame({
     gameMode,
@@ -106,6 +124,7 @@ export default function App() {
     candidateCount: engineSettings.candidateCount,
     hintDifficulty: engineSettings.hintDifficulty,
     searchLimit,
+    engineRuntimeOptions,
     analysisEnabled: showAnalysis,
     initialFen: gameMode === 'study' ? selectedStudy?.initialFen : selectedEndgame?.fen,
     initialMoveRecords: gameMode === 'study' ? selectedStudy?.moves : undefined,
@@ -119,6 +138,7 @@ export default function App() {
   const trainingHint = getEndgameTrainingHint(selectedEndgame, game.moveRecords, game.board, trainingHintLevel)
   const trainingHintHistoryText = formatTrainingHintHistory(trainingHintHistory)
   const naturalLimitReminder = getNaturalLimitReminder(game.moveRecords)
+  const repetitionReminder = getRepetitionReminder(game.initialFen, game.moveRecords)
   const candidateAutoPositionKey = game.moveRecords[game.currentMoveIndex]?.fen || game.initialFen
   const canRequestTrainingHint = Boolean(selectedEndgame?.solution?.length) && game.gameStatus === 'playing'
 
@@ -137,12 +157,26 @@ export default function App() {
   }, [gameMode, game.gameStatus])
 
   useEffect(() => {
+    if (gameMode !== 'study' || !game.canRedo) {
+      setStudyAutoPlaying(false)
+    }
+  }, [gameMode, game.canRedo])
+
+  useEffect(() => {
     if (!aiAutoPlaying || gameMode !== 'ai-vs-ai' || !game.canStepAi) return
     const timer = setTimeout(() => {
       game.nextAiMove()
     }, aiAutoDelay)
     return () => clearTimeout(timer)
   }, [aiAutoDelay, aiAutoPlaying, gameMode, game.canStepAi, game.nextAiMove])
+
+  useEffect(() => {
+    if (!studyAutoPlaying || gameMode !== 'study' || !game.canRedo) return
+    const timer = setTimeout(() => {
+      game.redo()
+    }, studyReplayDelay)
+    return () => clearTimeout(timer)
+  }, [gameMode, game.canRedo, game.redo, studyAutoPlaying, studyReplayDelay])
 
   useEffect(() => {
     if (!candidateAutoRefresh || !game.canRequestCandidates) return
@@ -291,11 +325,13 @@ export default function App() {
       <div className="game-container">
         <div className="left-panel">
           <MoveHistory
-            moves={game.moveRecords}
+            moves={game.historyRecords}
             currentIndex={game.currentMoveIndex}
             onJumpTo={game.jumpToMove}
             onToggleMark={game.toggleMoveMark}
             onUpdateNote={game.updateMoveNote}
+            showOnlyAnnotated={showOnlyAnnotatedMoves}
+            onShowOnlyAnnotatedChange={setShowOnlyAnnotatedMoves}
           />
         </div>
         {showAnalysis && (
@@ -340,6 +376,7 @@ export default function App() {
             trainingHint={trainingHint}
             trainingHintHistory={trainingHintHistoryText}
             naturalLimitReminder={naturalLimitReminder}
+            repetitionReminder={repetitionReminder}
             canRequestTrainingHint={canRequestTrainingHint}
             aiThinking={game.aiThinking}
             connectionState={game.connectionState}
@@ -347,8 +384,14 @@ export default function App() {
             engineStatusMessage={game.engineStatusMessage}
             aiAutoPlaying={aiAutoPlaying}
             aiAutoDelay={aiAutoDelay}
+            studyAutoPlaying={studyAutoPlaying}
+            studyReplayDelay={studyReplayDelay}
+            canStudyReplay={gameMode === 'study' && game.canRedo}
+            canJumpToPrevMarked={gameMode === 'study' && findPrevMarkedIndex(game.historyRecords, game.currentMoveIndex) !== null}
+            canJumpToNextMarked={gameMode === 'study' && findNextMarkedIndex(game.historyRecords, game.currentMoveIndex) !== null}
             onNewGame={() => {
               setAiAutoPlaying(false)
+              setStudyAutoPlaying(false)
               if (gameMode === 'endgame') {
                 setSelectedEndgame(null)
                 setEditingEndgame(false)
@@ -366,6 +409,9 @@ export default function App() {
             onImportFen={() => setShowFenDialog('import')}
             onCopyMoveText={() => {
               navigator.clipboard.writeText(formatMoveRecords(game.moveRecords))
+            }}
+            onCopyReplayLink={() => {
+              navigator.clipboard.writeText(createReplayUrl(window.location.href, game.initialFen, game.historyRecords, game.currentMoveIndex))
             }}
             onSaveRecentFen={() => {
               setRecentFenPositions(saveRecentFenPosition(game.getCurrentFen(), '手动保存'))
@@ -427,6 +473,16 @@ export default function App() {
             onResign={game.resign}
             onToggleAiAutoPlay={() => setAiAutoPlaying(value => !value)}
             onAiAutoDelayChange={setAiAutoDelay}
+            onToggleStudyAutoPlay={() => setStudyAutoPlaying(value => !value)}
+            onStudyReplayDelayChange={setStudyReplayDelay}
+            onJumpToPrevMarked={() => {
+              const index = findPrevMarkedIndex(game.historyRecords, game.currentMoveIndex)
+              if (index !== null) game.jumpToMove(index)
+            }}
+            onJumpToNextMarked={() => {
+              const index = findNextMarkedIndex(game.historyRecords, game.currentMoveIndex)
+              if (index !== null) game.jumpToMove(index)
+            }}
             canUndo={game.canUndo}
             canRedo={game.canRedo}
             canRequestHint={game.canRequestHint}
@@ -463,6 +519,14 @@ export default function App() {
             searchTimeMs={engineSettings.searchTimeMs}
             onSearchTimeMsChange={(searchTimeMs) => {
               setEngineSettings(current => saveEngineSettings({ ...current, searchTimeMs }))
+            }}
+            engineThreads={engineSettings.engineThreads}
+            onEngineThreadsChange={(engineThreads) => {
+              setEngineSettings(current => saveEngineSettings({ ...current, engineThreads }))
+            }}
+            engineHashMb={engineSettings.engineHashMb}
+            onEngineHashMbChange={(engineHashMb) => {
+              setEngineSettings(current => saveEngineSettings({ ...current, engineHashMb }))
             }}
           />
           {showAnalysis && <AnalysisCurve points={game.analysisPoints} />}
@@ -514,6 +578,20 @@ function formatMoveRecords(records: MoveRecord[]): string {
     lines.push(`${moveNum}. ${redMove}${blackMove ? ` ${blackMove}` : ''}`.trim())
   }
   return lines.join('\n')
+}
+
+function findPrevMarkedIndex(records: MoveRecord[], currentIndex: number): number | null {
+  for (let i = Math.min(currentIndex - 1, records.length - 1); i >= 0; i--) {
+    if (records[i].marked) return i
+  }
+  return null
+}
+
+function findNextMarkedIndex(records: MoveRecord[], currentIndex: number): number | null {
+  for (let i = Math.max(currentIndex + 1, 0); i < records.length; i++) {
+    if (records[i].marked) return i
+  }
+  return null
 }
 
 function downloadJson(filename: string, content: string) {

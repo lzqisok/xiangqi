@@ -31,6 +31,11 @@ export interface EngineSearchLimit {
   searchTimeMs?: number
 }
 
+export interface EngineRuntimeOptions {
+  engineThreads?: 'auto' | number
+  engineHashMb?: number
+}
+
 const DEPTH_MAP: Record<Difficulty, number> = {
   easy: 8,
   medium: 14,
@@ -59,15 +64,27 @@ function getEngineThreads(): number {
   return Math.max(1, Math.min(8, os.cpus().length))
 }
 
+export function normalizeEngineRuntimeOptions(options?: EngineRuntimeOptions): Required<EngineRuntimeOptions> {
+  const engineThreads = options?.engineThreads === 'auto' || options?.engineThreads === undefined
+    ? 'auto'
+    : Math.max(1, Math.min(8, Math.round(options.engineThreads)))
+  const engineHashMb = typeof options?.engineHashMb === 'number' && Number.isFinite(options.engineHashMb)
+    ? Math.max(16, Math.min(512, Math.round(options.engineHashMb)))
+    : 128
+
+  return { engineThreads, engineHashMb }
+}
+
 export class PikafishEngine extends EventEmitter {
   private process: ChildProcess | null = null
   private ready = false
   private buffer = ''
   private threads = 1
+  private runtimeOptions: Required<EngineRuntimeOptions> = normalizeEngineRuntimeOptions()
   private searching = false
   private commandQueue: Promise<void> = Promise.resolve()
 
-  async init(): Promise<boolean> {
+  async init(options?: EngineRuntimeOptions): Promise<boolean> {
     const engineDir = path.resolve(process.cwd(), '../engine')
     const candidates = [
       path.join(engineDir, 'pikafish'),
@@ -99,7 +116,8 @@ export class PikafishEngine extends EventEmitter {
     console.log('Engine dir:', engineDir)
 
     try {
-      this.threads = getEngineThreads()
+      this.runtimeOptions = normalizeEngineRuntimeOptions(options || this.runtimeOptions)
+      this.threads = this.resolveThreadCount(this.runtimeOptions.engineThreads)
       this.process = spawn(enginePath, [], {
         cwd: engineDir,
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -127,7 +145,7 @@ export class PikafishEngine extends EventEmitter {
       this.send('uci')
       await this.waitFor('uciok', 10000)
       this.send(`setoption name Threads value ${this.threads}`)
-      this.send('setoption name Hash value 128')
+      this.send(`setoption name Hash value ${this.runtimeOptions.engineHashMb}`)
       this.send(`setoption name EvalFile value ${nnuePath}`)
       this.send('isready')
       await this.waitFor('readyok', 10000)
@@ -144,14 +162,38 @@ export class PikafishEngine extends EventEmitter {
     return this.enqueue(() => this.getBestMoveLocked(fen, moves, difficulty, limit))
   }
 
+  async applyRuntimeOptions(options?: EngineRuntimeOptions): Promise<void> {
+    return this.enqueue(() => this.applyRuntimeOptionsLocked(options))
+  }
+
   async getCandidates(fen: string, moves: string[], difficulty: Difficulty, count: number, limit?: EngineSearchLimit): Promise<EngineCandidate[]> {
     return this.enqueue(() => this.getCandidatesLocked(fen, moves, difficulty, count, limit))
+  }
+
+  private resolveThreadCount(value: Required<EngineRuntimeOptions>['engineThreads']): number {
+    return value === 'auto' ? getEngineThreads() : value
+  }
+
+  private async applyRuntimeOptionsLocked(options?: EngineRuntimeOptions): Promise<void> {
+    const next = normalizeEngineRuntimeOptions(options)
+    this.runtimeOptions = next
+    this.threads = this.resolveThreadCount(next.engineThreads)
+
+    if (!this.ready || !this.process) {
+      return
+    }
+
+    await this.stopSearchIfNeeded()
+    this.send(`setoption name Threads value ${this.threads}`)
+    this.send(`setoption name Hash value ${next.engineHashMb}`)
+    this.send('isready')
+    await this.waitFor('readyok', 10000)
   }
 
   private async getBestMoveLocked(fen: string, moves: string[], difficulty: Difficulty, limit?: EngineSearchLimit): Promise<string | null> {
     if (!this.ready || !this.process) {
       console.error('Engine not ready, attempting reinit...')
-      const ok = await this.init()
+      const ok = await this.init(this.runtimeOptions)
       if (!ok) return null
     }
 
@@ -193,7 +235,7 @@ export class PikafishEngine extends EventEmitter {
 
   private async getCandidatesLocked(fen: string, moves: string[], difficulty: Difficulty, count: number, limit?: EngineSearchLimit): Promise<EngineCandidate[]> {
     if (!this.ready || !this.process) {
-      const ok = await this.init()
+      const ok = await this.init(this.runtimeOptions)
       if (!ok) return []
     }
 

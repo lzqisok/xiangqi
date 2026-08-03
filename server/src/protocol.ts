@@ -12,6 +12,8 @@ export interface EngineRequest {
   searchMode?: 'depth' | 'time'
   searchDepth?: number
   searchTimeMs?: number
+  engineThreads?: 'auto' | number
+  engineHashMb?: number
 }
 
 export type ProtocolValidation =
@@ -21,6 +23,7 @@ export type ProtocolValidation =
 const DIFFICULTIES = new Set(['easy', 'medium', 'hard', 'master'])
 const SEARCH_MODES = new Set(['depth', 'time'])
 const UCI_MOVE_RE = /^[a-i][0-9][a-i][0-9]$/
+export const MAX_MOVE_COUNT = 600
 
 export function parseClientMessage(raw: string): ProtocolValidation {
   let parsed: unknown
@@ -56,6 +59,10 @@ export function parseClientMessage(raw: string): ProtocolValidation {
     return { ok: false, requestId, error: 'moves must be an array of UCI strings' }
   }
 
+  if (Array.isArray(msg.moves) && msg.moves.length > MAX_MOVE_COUNT) {
+    return { ok: false, requestId, error: `moves must contain at most ${MAX_MOVE_COUNT} items` }
+  }
+
   if (Array.isArray(msg.moves) && msg.moves.length > 0 && typeof msg.fen !== 'string') {
     return { ok: false, requestId, error: 'fen is required when moves are provided' }
   }
@@ -74,6 +81,18 @@ export function parseClientMessage(raw: string): ProtocolValidation {
 
   if (msg.searchTimeMs !== undefined && (typeof msg.searchTimeMs !== 'number' || !Number.isInteger(msg.searchTimeMs) || msg.searchTimeMs < 500 || msg.searchTimeMs > 10000)) {
     return { ok: false, requestId, error: 'searchTimeMs must be an integer between 500 and 10000' }
+  }
+
+  if (
+    msg.engineThreads !== undefined &&
+    msg.engineThreads !== 'auto' &&
+    (typeof msg.engineThreads !== 'number' || !Number.isInteger(msg.engineThreads) || msg.engineThreads < 1 || msg.engineThreads > 8)
+  ) {
+    return { ok: false, requestId, error: 'engineThreads must be "auto" or an integer between 1 and 8' }
+  }
+
+  if (msg.engineHashMb !== undefined && (typeof msg.engineHashMb !== 'number' || !Number.isInteger(msg.engineHashMb) || msg.engineHashMb < 16 || msg.engineHashMb > 512)) {
+    return { ok: false, requestId, error: 'engineHashMb must be an integer between 16 and 512' }
   }
 
   if ((msg.type === 'move' || msg.type === 'hint' || msg.type === 'analyze' || msg.type === 'candidates') && typeof msg.requestId !== 'string') {
@@ -114,6 +133,8 @@ export function parseClientMessage(raw: string): ProtocolValidation {
       searchMode: typeof msg.searchMode === 'string' ? msg.searchMode as EngineRequest['searchMode'] : undefined,
       searchDepth: typeof msg.searchDepth === 'number' ? msg.searchDepth : undefined,
       searchTimeMs: typeof msg.searchTimeMs === 'number' ? msg.searchTimeMs : undefined,
+      engineThreads: msg.engineThreads === 'auto' || typeof msg.engineThreads === 'number' ? msg.engineThreads as EngineRequest['engineThreads'] : undefined,
+      engineHashMb: typeof msg.engineHashMb === 'number' ? msg.engineHashMb : undefined,
     },
   }
 }

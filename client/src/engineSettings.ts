@@ -1,6 +1,7 @@
 import { Difficulty } from './types'
 
 export type EngineSearchMode = 'depth' | 'time'
+export type EngineThreads = 'auto' | number
 
 export interface EngineSettings {
   candidateCount: number
@@ -9,6 +10,8 @@ export interface EngineSettings {
   searchMode: EngineSearchMode
   searchDepth: number
   searchTimeMs: number
+  engineThreads: EngineThreads
+  engineHashMb: number
 }
 
 export const DEFAULT_ENGINE_SETTINGS: EngineSettings = {
@@ -18,6 +21,8 @@ export const DEFAULT_ENGINE_SETTINGS: EngineSettings = {
   searchMode: 'depth',
   searchDepth: 16,
   searchTimeMs: 2500,
+  engineThreads: 'auto',
+  engineHashMb: 128,
 }
 
 const STORAGE_KEY = 'xiangqi_engine_settings'
@@ -27,6 +32,12 @@ const SEARCH_MODES = new Set<EngineSearchMode>(['depth', 'time'])
 function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.max(min, Math.min(max, Math.round(value)))
+}
+
+function normalizeThreads(value: unknown): EngineThreads {
+  if (value === 'auto') return 'auto'
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_ENGINE_SETTINGS.engineThreads
+  return Math.max(1, Math.min(8, Math.round(value)))
 }
 
 function canUseStorage(): boolean {
@@ -68,6 +79,13 @@ export function normalizeEngineSettings(value: Partial<EngineSettings> | null | 
       500,
       10000,
       DEFAULT_ENGINE_SETTINGS.searchTimeMs,
+    ),
+    engineThreads: normalizeThreads(value?.engineThreads),
+    engineHashMb: clampInteger(
+      value?.engineHashMb,
+      16,
+      512,
+      DEFAULT_ENGINE_SETTINGS.engineHashMb,
     ),
   }
 }

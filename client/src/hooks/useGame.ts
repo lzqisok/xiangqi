@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Board, Position, Move, MoveRecord, PieceColor,
   GameMode, Difficulty, PlayerSide, GameStatus, GameStatusReason, WSMessage, PlayerConfig, AnalysisPoint, MoveCandidate, EngineSearchLimit,
+  EngineRuntimeOptions,
 } from '../types'
 import { parseFen, boardToFen, applyMove, INITIAL_FEN, findKing } from '../engine/board'
 import { getLegalMoves, isInCheck, getGameStatusDetail } from '../engine/rules'
@@ -20,6 +21,7 @@ interface UseGameOptions {
   candidateCount?: number
   hintDifficulty?: Difficulty
   searchLimit?: EngineSearchLimit
+  engineRuntimeOptions?: EngineRuntimeOptions
   analysisEnabled?: boolean
   initialFen?: string
   initialMoveRecords?: MoveRecord[]
@@ -90,6 +92,7 @@ export function useGame({
   candidateCount = 3,
   hintDifficulty = 'master',
   searchLimit,
+  engineRuntimeOptions,
   analysisEnabled = false,
   initialFen,
   initialMoveRecords,
@@ -395,11 +398,11 @@ export function useGame({
     }
   }, [connected])
 
-  // Send init to server whenever connected or difficulty changes
+  // Send init to server whenever connected, difficulty, or runtime engine settings change.
   useEffect(() => {
     if (!gameMode || !connected) return
-    send({ type: 'init', difficulty })
-  }, [connected, difficulty, gameMode, send])
+    send({ type: 'init', difficulty, ...engineRuntimeOptions })
+  }, [connected, difficulty, engineRuntimeOptions, gameMode, send])
 
   useEffect(() => {
     if (!gameMode || !connected || !analysisEnabled) {
@@ -426,7 +429,7 @@ export function useGame({
         analysisRequestRef.current = null
       }
     }
-  }, [analysisEnabled, connected, engineBaseFen, gameMode, send, uciMoves, searchLimit])
+  }, [analysisEnabled, connected, engineBaseFen, engineRuntimeOptions, gameMode, send, uciMoves, searchLimit])
 
   // Trigger AI move
   useEffect(() => {
@@ -791,6 +794,7 @@ export function useGame({
     analysisPoints,
     moveCandidates,
     moveRecords,
+    historyRecords: moveHistory,
     currentMoveIndex,
     hintThinking,
     candidateThinking,

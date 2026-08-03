@@ -17,6 +17,7 @@ interface Props {
   trainingHint: string
   trainingHintHistory: string
   naturalLimitReminder: string
+  repetitionReminder: string
   canRequestTrainingHint: boolean
   aiThinking: boolean
   connectionState: ConnectionState
@@ -24,6 +25,11 @@ interface Props {
   engineStatusMessage: string
   aiAutoPlaying: boolean
   aiAutoDelay: number
+  studyAutoPlaying: boolean
+  studyReplayDelay: number
+  canStudyReplay: boolean
+  canJumpToPrevMarked: boolean
+  canJumpToNextMarked: boolean
   onNewGame: () => void
   onUndo: () => void
   onRedo: () => void
@@ -32,6 +38,7 @@ interface Props {
   onExportFen: () => void
   onImportFen: () => void
   onCopyMoveText: () => void
+  onCopyReplayLink: () => void
   onSaveRecentFen: () => void
   onSaveAsEndgame: () => void
   onSaveStudy: () => void
@@ -43,6 +50,10 @@ interface Props {
   onResign: () => void
   onToggleAiAutoPlay: () => void
   onAiAutoDelayChange: (delay: number) => void
+  onToggleStudyAutoPlay: () => void
+  onStudyReplayDelayChange: (delay: number) => void
+  onJumpToPrevMarked: () => void
+  onJumpToNextMarked: () => void
   canUndo: boolean
   canRedo: boolean
   canRequestHint: boolean
@@ -93,6 +104,7 @@ export default function GamePanel({
   trainingHint,
   trainingHintHistory,
   naturalLimitReminder,
+  repetitionReminder,
   canRequestTrainingHint,
   aiThinking,
   connectionState,
@@ -100,9 +112,15 @@ export default function GamePanel({
   engineStatusMessage,
   aiAutoPlaying,
   aiAutoDelay,
+  studyAutoPlaying,
+  studyReplayDelay,
+  canStudyReplay,
+  canJumpToPrevMarked,
+  canJumpToNextMarked,
   onNewGame, onUndo, onRedo, onFlip, onToggleAnalysis,
-  onExportFen, onImportFen, onCopyMoveText, onSaveRecentFen, onSaveAsEndgame, onSaveStudy, onExportImage, onTrainingHint,
+  onExportFen, onImportFen, onCopyMoveText, onCopyReplayLink, onSaveRecentFen, onSaveAsEndgame, onSaveStudy, onExportImage, onTrainingHint,
   onHint, onNextAiMove, onDeclareDraw, onResign, onToggleAiAutoPlay, onAiAutoDelayChange,
+  onToggleStudyAutoPlay, onStudyReplayDelayChange, onJumpToPrevMarked, onJumpToNextMarked,
   canUndo, canRedo, canRequestHint, canStepAi, hintThinking,
 }: Props) {
   const isAiVsAi = gameMode === 'ai-vs-ai'
@@ -138,6 +156,7 @@ export default function GamePanel({
       {trainingHint && <div className="training-hint">{trainingHint}</div>}
       {trainingHintHistory && <div className="training-hint-history">{trainingHintHistory}</div>}
       {naturalLimitReminder && <div className="natural-limit-reminder">{naturalLimitReminder}</div>}
+      {repetitionReminder && <div className="natural-limit-reminder">{repetitionReminder}</div>}
 
       <div className={`engine-status ${connectionState} ${engineAvailable === false ? 'engine-offline' : ''}`}>
         <span className="engine-status-dot" />
@@ -187,6 +206,28 @@ export default function GamePanel({
         </div>
       )}
 
+      {gameMode === 'study' && (
+        <div className="panel-section">
+          <div className="panel-section-title">研究回放</div>
+          <div className="panel-buttons panel-buttons-primary">
+            <button className="primary-action accent-action" onClick={onToggleStudyAutoPlay} disabled={!canStudyReplay && !studyAutoPlaying}>
+              {studyAutoPlaying ? '暂停回放' : '自动回放'}
+            </button>
+            <button className="primary-action" onClick={onJumpToPrevMarked} disabled={!canJumpToPrevMarked}>上一星标</button>
+            <button className="primary-action" onClick={onJumpToNextMarked} disabled={!canJumpToNextMarked}>下一星标</button>
+          </div>
+          <select
+            className="speed-select"
+            value={studyReplayDelay}
+            onChange={e => onStudyReplayDelayChange(Number(e.target.value))}
+          >
+            <option value={400}>快速</option>
+            <option value={900}>标准</option>
+            <option value={1600}>慢速</option>
+          </select>
+        </div>
+      )}
+
       <div className="panel-section">
         <div className="panel-section-title">其他功能</div>
         <div className="panel-buttons">
@@ -203,6 +244,7 @@ export default function GamePanel({
           <button onClick={onSaveStudy}>保存研究</button>
           <button onClick={onExportImage}>导出图片</button>
           <button onClick={onCopyMoveText}>复制棋谱</button>
+          <button onClick={onCopyReplayLink}>复制回放链接</button>
           <button onClick={onSaveAsEndgame}>另存残局</button>
           {gameMode === 'human-vs-human' && <button onClick={onDeclareDraw} disabled={!canDeclareDraw}>和棋</button>}
           {!isAiVsAi && <button className="new-game" onClick={onResign} disabled={!canManualEnd}>认输</button>}

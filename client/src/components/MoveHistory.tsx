@@ -7,6 +7,8 @@ interface Props {
   onJumpTo: (index: number) => void
   onToggleMark: (index: number) => void
   onUpdateNote: (index: number, note: string) => void
+  showOnlyAnnotated?: boolean
+  onShowOnlyAnnotatedChange?: (enabled: boolean) => void
 }
 
 function formatElapsedMs(elapsedMs: number): string {
@@ -14,8 +16,19 @@ function formatElapsedMs(elapsedMs: number): string {
   return `${(elapsedMs / 1000).toFixed(1)}s`
 }
 
-export default function MoveHistory({ moves, currentIndex, onJumpTo, onToggleMark, onUpdateNote }: Props) {
+export default function MoveHistory({
+  moves,
+  currentIndex,
+  onJumpTo,
+  onToggleMark,
+  onUpdateNote,
+  showOnlyAnnotated = false,
+  onShowOnlyAnnotatedChange,
+}: Props) {
   const listRef = useRef<HTMLDivElement>(null)
+  const visibleMoves = showOnlyAnnotated
+    ? moves.map((record, index) => ({ record, index })).filter(item => item.record.marked || item.record.note)
+    : moves.map((record, index) => ({ record, index }))
 
   useEffect(() => {
     const listEl = listRef.current
@@ -36,14 +49,31 @@ export default function MoveHistory({ moves, currentIndex, onJumpTo, onToggleMar
 
   return (
     <div className="move-history">
-      <h3>走棋记录</h3>
+      <div className="move-history-header">
+        <h3>走棋记录</h3>
+        {onShowOnlyAnnotatedChange && (
+          <label>
+            <input
+              type="checkbox"
+              checked={showOnlyAnnotated}
+              onChange={e => onShowOnlyAnnotatedChange(e.target.checked)}
+            />
+            标注
+          </label>
+        )}
+      </div>
       <div className="move-list" ref={listRef}>
         {moves.length === 0 && (
           <div style={{ color: 'var(--text-secondary)', fontSize: '13px', padding: '8px 0' }}>
             暂无走棋记录
           </div>
         )}
-        {moves.map((record, i) => {
+        {moves.length > 0 && visibleMoves.length === 0 && (
+          <div style={{ color: 'var(--text-secondary)', fontSize: '13px', padding: '8px 0' }}>
+            暂无标注记录
+          </div>
+        )}
+        {visibleMoves.map(({ record, index: i }) => {
           const moveNum = Math.floor(i / 2) + 1
           const isRed = i % 2 === 0
           return (

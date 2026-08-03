@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { isStaleEngineResponse, parseClientMessage } from './protocol.js'
+import { isStaleEngineResponse, MAX_MOVE_COUNT, parseClientMessage } from './protocol.js'
 
 const VALID_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
@@ -14,6 +14,8 @@ test('parseClientMessage accepts valid move requests', () => {
     searchMode: 'depth',
     searchDepth: 18,
     searchTimeMs: 2500,
+    engineThreads: 'auto',
+    engineHashMb: 256,
   }))
 
   assert.equal(result.ok, true)
@@ -23,6 +25,8 @@ test('parseClientMessage accepts valid move requests', () => {
     assert.equal(result.message.searchMode, 'depth')
     assert.equal(result.message.searchDepth, 18)
     assert.equal(result.message.searchTimeMs, 2500)
+    assert.equal(result.message.engineThreads, 'auto')
+    assert.equal(result.message.engineHashMb, 256)
   }
 })
 
@@ -97,6 +101,36 @@ test('parseClientMessage rejects invalid search limits', () => {
   if (!badTime.ok) assert.equal(badTime.error, 'searchTimeMs must be an integer between 500 and 10000')
 })
 
+test('parseClientMessage validates engine runtime options', () => {
+  const valid = parseClientMessage(JSON.stringify({
+    type: 'init',
+    difficulty: 'medium',
+    engineThreads: 4,
+    engineHashMb: 128,
+  }))
+  assert.equal(valid.ok, true)
+  if (valid.ok) {
+    assert.equal(valid.message.engineThreads, 4)
+    assert.equal(valid.message.engineHashMb, 128)
+  }
+
+  const badThreads = parseClientMessage(JSON.stringify({
+    type: 'init',
+    difficulty: 'medium',
+    engineThreads: 12,
+  }))
+  assert.equal(badThreads.ok, false)
+  if (!badThreads.ok) assert.equal(badThreads.error, 'engineThreads must be "auto" or an integer between 1 and 8')
+
+  const badHash = parseClientMessage(JSON.stringify({
+    type: 'init',
+    difficulty: 'medium',
+    engineHashMb: 8,
+  }))
+  assert.equal(badHash.ok, false)
+  if (!badHash.ok) assert.equal(badHash.error, 'engineHashMb must be an integer between 16 and 512')
+})
+
 test('parseClientMessage rejects empty requestId and malformed UCI moves', () => {
   const emptyRequestId = parseClientMessage(JSON.stringify({ type: 'move', requestId: '', fen: VALID_FEN, moves: [] }))
   assert.equal(emptyRequestId.ok, false)
@@ -110,6 +144,21 @@ test('parseClientMessage rejects empty requestId and malformed UCI moves', () =>
   }))
   assert.equal(badMoves.ok, false)
   if (!badMoves.ok) assert.equal(badMoves.error, 'moves must be an array of UCI strings')
+})
+
+test('parseClientMessage rejects oversized move lists before replay validation', () => {
+  const result = parseClientMessage(JSON.stringify({
+    type: 'move',
+    requestId: 'move-too-long',
+    fen: VALID_FEN,
+    moves: Array.from({ length: MAX_MOVE_COUNT + 1 }, () => 'h2e2'),
+  }))
+
+  assert.equal(result.ok, false)
+  if (!result.ok) {
+    assert.equal(result.requestId, 'move-too-long')
+    assert.equal(result.error, `moves must contain at most ${MAX_MOVE_COUNT} items`)
+  }
 })
 
 test('parseClientMessage rejects UCI move lists that cannot legally replay from FEN', () => {

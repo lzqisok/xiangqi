@@ -1,7 +1,7 @@
 import express from 'express'
 import { createServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
-import { PikafishEngine, EngineSearchLimit } from './engine.js'
+import { PikafishEngine, EngineSearchLimit, EngineRuntimeOptions } from './engine.js'
 import { parseClientMessage } from './protocol.js'
 import { validateFenPosition } from './validation.js'
 
@@ -24,10 +24,22 @@ function getSearchLimit(msg: {
   }
 }
 
+function getRuntimeOptions(msg: {
+  engineThreads?: EngineRuntimeOptions['engineThreads']
+  engineHashMb?: number
+}): EngineRuntimeOptions | undefined {
+  if (msg.engineThreads === undefined && msg.engineHashMb === undefined) return undefined
+  return {
+    engineThreads: msg.engineThreads,
+    engineHashMb: msg.engineHashMb,
+  }
+}
+
 let sharedEngine: PikafishEngine | null = null
 let engineReady = false
 let engineInitPromise: Promise<PikafishEngine | null> | null = null
 let activeAnalysis: { sessionId: string; requestId?: string } | null = null
+let currentRuntimeOptions: EngineRuntimeOptions | undefined
 
 function makeSessionId(): string {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -55,7 +67,7 @@ async function getEngine(): Promise<PikafishEngine | null> {
     }
 
     sharedEngine = new PikafishEngine()
-    engineReady = await sharedEngine.init()
+    engineReady = await sharedEngine.init(currentRuntimeOptions)
 
     if (!engineReady) {
       console.warn('Engine not available, running in local-only mode')
@@ -141,6 +153,19 @@ wss.on('connection', async (ws) => {
       switch (msg.type) {
         case 'init': {
           currentDifficulty = msg.difficulty || 'medium'
+          const runtimeOptions = getRuntimeOptions(msg)
+          if (runtimeOptions) {
+            currentRuntimeOptions = runtimeOptions
+            const engine = await getEngine()
+            if (engine) {
+              try {
+                await engine.applyRuntimeOptions(runtimeOptions)
+              } catch (err) {
+                console.error('Apply engine options error:', err)
+                sendError(ws, 'Engine option update failed')
+              }
+            }
+          }
           sendEngineStatus(ws, Boolean(sharedEngine && engineReady), engineReady ? 'Engine ready' : 'Engine not available')
           break
         }

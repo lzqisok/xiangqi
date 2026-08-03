@@ -393,11 +393,27 @@ body {
   flex-direction: column;
 }
 
-.move-history h3 {
+.move-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.move-history-header h3 {
   font-family: 'Noto Serif SC', serif;
   font-size: 15px;
-  margin-bottom: 10px;
   color: var(--accent);
+}
+
+.move-history-header label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .move-list {

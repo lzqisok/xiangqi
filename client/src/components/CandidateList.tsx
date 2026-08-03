@@ -1,4 +1,5 @@
 import { Difficulty, EngineSearchMode, MoveCandidate } from '../types'
+import { EngineThreads } from '../engineSettings'
 
 interface Props {
   candidates: MoveCandidate[]
@@ -19,6 +20,10 @@ interface Props {
   onSearchDepthChange: (depth: number) => void
   searchTimeMs: number
   onSearchTimeMsChange: (timeMs: number) => void
+  engineThreads: EngineThreads
+  onEngineThreadsChange: (threads: EngineThreads) => void
+  engineHashMb: number
+  onEngineHashMbChange: (hashMb: number) => void
 }
 
 function formatScore(score: number): string {
@@ -53,6 +58,10 @@ export default function CandidateList({
   onSearchDepthChange,
   searchTimeMs,
   onSearchTimeMsChange,
+  engineThreads,
+  onEngineThreadsChange,
+  engineHashMb,
+  onEngineHashMbChange,
 }: Props) {
   return (
     <div className="candidate-list">
@@ -123,6 +132,26 @@ export default function CandidateList({
             </select>
           </label>
         )}
+        <label>
+          引擎线程
+          <select
+            value={engineThreads}
+            onChange={e => onEngineThreadsChange(e.target.value === 'auto' ? 'auto' : Number(e.target.value))}
+          >
+            <option value="auto">自动</option>
+            {[1, 2, 3, 4, 5, 6, 7, 8].map(threads => (
+              <option value={threads} key={threads}>{threads} 线程</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Hash
+          <select value={engineHashMb} onChange={e => onEngineHashMbChange(Number(e.target.value))}>
+            {[16, 32, 64, 128, 256, 512].map(hashMb => (
+              <option value={hashMb} key={hashMb}>{hashMb} MB</option>
+            ))}
+          </select>
+        </label>
       </div>
       {candidates.length === 0 ? (
         <div className="candidate-empty">{thinking ? '正在计算候选走法' : '暂无候选走法'}</div>

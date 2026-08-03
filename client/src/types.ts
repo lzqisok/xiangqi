@@ -107,8 +107,13 @@ export interface EngineSearchLimit {
   searchTimeMs?: number
 }
 
+export interface EngineRuntimeOptions {
+  engineThreads?: 'auto' | number
+  engineHashMb?: number
+}
+
 export type WSMessage =
-  | { type: 'init'; difficulty: Difficulty }
+  | ({ type: 'init'; difficulty: Difficulty } & EngineRuntimeOptions)
   | ({ type: 'move'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty } & EngineSearchLimit)
   | ({ type: 'hint'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty } & EngineSearchLimit)
   | ({ type: 'analyze'; requestId: string; fen: string; moves: string[] } & EngineSearchLimit)

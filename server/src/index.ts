@@ -288,6 +288,74 @@ wss.on('connection', async (ws) => {
           break
         }
 
+        case 'review': {
+          const engine = await getEngine()
+          if (!engine) {
+            sendEngineStatus(ws, false, 'Engine not available')
+            sendError(ws, 'Engine not available', msg.requestId)
+            break
+          }
+
+          const requestId = msg.requestId
+          const fen = msg.fen || INITIAL_FEN
+          const moves: string[] = msg.moves || []
+          const resumeAnalysis = shouldResumeLocalAnalysis()
+          if (resumeAnalysis) detachAnalysisHandler(engine)
+
+          try {
+            const generation = requestGeneration
+            const initialTurn = fen.trim().split(/\s+/)[1] === 'b' ? 'black' : 'red'
+            const positions = []
+
+            for (let prefixLength = 0; prefixLength <= moves.length; prefixLength++) {
+              if (generation !== requestGeneration || ws.readyState !== WebSocket.OPEN) break
+              const candidates = await engine.getCandidates(
+                fen,
+                moves.slice(0, prefixLength),
+                'master',
+                1,
+                { searchMode: 'depth', searchDepth: msg.searchDepth || 12 },
+              )
+              if (generation !== requestGeneration || ws.readyState !== WebSocket.OPEN) break
+              const candidate = candidates[0]
+              if (!candidate) throw new Error('Engine returned no review candidate')
+              const redToMove = prefixLength % 2 === 0
+                ? initialTurn === 'red'
+                : initialTurn === 'black'
+              positions.push({
+                moveIndex: prefixLength - 1,
+                evaluation: redToMove ? candidate.score : -candidate.score,
+                depth: candidate.depth,
+                bestMove: candidate.move,
+                pv: candidate.pv,
+              })
+              ws.send(JSON.stringify({
+                type: 'review-progress',
+                requestId,
+                completed: prefixLength + 1,
+                total: moves.length + 1,
+              }))
+            }
+
+            if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'review-result', requestId, positions }))
+            }
+          } catch (err) {
+            console.error('Review engine error:', err)
+            sendError(ws, 'Review engine error', requestId)
+          } finally {
+            if (resumeAnalysis && shouldResumeLocalAnalysis()) {
+              try {
+                attachAnalysisHandler(engine)
+                await engine.analyze(localAnalysisFen, localAnalysisMoves, localAnalysisLimit)
+              } catch (err) {
+                console.error('Resume analysis error:', err)
+              }
+            }
+          }
+          break
+        }
+
         case 'analyze': {
           const engine = await getEngine()
           if (!engine) {

@@ -8,6 +8,7 @@ import EndgameLibrary from './components/EndgameLibrary'
 import EndgameEditor from './components/EndgameEditor'
 import CandidateList from './components/CandidateList'
 import CandidatePreviewControls from './components/CandidatePreviewControls'
+import ReviewPanel from './components/ReviewPanel'
 import StudyLibrary from './components/StudyLibrary'
 import { useGame } from './hooks/useGame'
 import { BUILTIN_ENDGAMES } from './endgames/builtin'
@@ -40,6 +41,7 @@ import { buildBoardExportMetadata, createAnnotatedBoardPng } from './export/boar
 import { formatTrainingHintHistory, getEndgameTrainingFeedback, getEndgameTrainingHint, recordTrainingHintLevel, TrainingHintHistoryEntry } from './training/hints'
 import { createReplayUrl, parseReplayStudyFromSearch } from './share/replayLink'
 import { buildCandidatePreview, getCandidatePreviewFrame } from './analysis/candidatePreview'
+import { buildMoveReviews } from './analysis/moveReview'
 import { createStudyContentSignature, createStudySaveInput } from './studies/autosave'
 import { EndgameDefinition, EndgameStartConfig, EndgameTarget, GameMode, Difficulty, MoveCandidate, MoveRecord, PlayerSide, StudyPosition } from './types'
 
@@ -156,6 +158,10 @@ export default function App() {
       ? getCandidatePreviewFrame(candidateAutoPositionKey, candidatePreview.records, candidatePreview.stepIndex)
       : null,
     [candidateAutoPositionKey, candidatePreview],
+  )
+  const moveReviews = useMemo(
+    () => buildMoveReviews(game.initialFen, game.historyRecords, game.reviewPositions),
+    [game.historyRecords, game.initialFen, game.reviewPositions],
   )
   const studyContent = useMemo(() => ({
     initialFen: game.initialFen,
@@ -631,6 +637,19 @@ export default function App() {
             onEngineHashMbChange={(engineHashMb) => {
               setEngineSettings(current => saveEngineSettings({ ...current, engineHashMb }))
             }}
+          />
+          <ReviewPanel
+            moveCount={game.historyRecords.length}
+            reviews={moveReviews}
+            thinking={game.reviewThinking}
+            progress={game.reviewProgress}
+            canRequest={game.canRequestReview}
+            onRequest={() => {
+              setCandidatePreview(null)
+              game.requestReview()
+            }}
+            onCancel={game.cancelReview}
+            onJumpToPosition={game.jumpToMove}
           />
           {showAnalysis && <AnalysisCurve points={game.analysisPoints} />}
         </div>

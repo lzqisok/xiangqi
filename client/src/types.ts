@@ -87,6 +87,14 @@ export interface MoveCandidate {
   pv: string[]
 }
 
+export interface ReviewPosition {
+  moveIndex: number
+  evaluation: number
+  depth: number
+  bestMove: string
+  pv: string[]
+}
+
 export interface StudyPosition {
   id: string
   name: string
@@ -118,8 +126,11 @@ export type WSMessage =
   | ({ type: 'hint'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty } & EngineSearchLimit)
   | ({ type: 'analyze'; requestId: string; fen: string; moves: string[] } & EngineSearchLimit)
   | ({ type: 'candidates'; requestId?: string; fen?: string; moves?: string[]; difficulty?: Difficulty; count?: number; candidates?: MoveCandidate[] } & EngineSearchLimit)
+  | { type: 'review'; requestId: string; fen: string; moves: string[]; searchDepth: number }
   | { type: 'stop'; requestId?: string }
   | { type: 'bestmove'; requestId?: string; move: string; ponder?: string; elapsedMs?: number; requestKind?: 'move' | 'hint' }
   | { type: 'info'; requestId?: string; data: EngineInfo }
+  | { type: 'review-progress'; requestId: string; completed: number; total: number }
+  | { type: 'review-result'; requestId: string; positions: ReviewPosition[] }
   | { type: 'engine-status'; available: boolean; message?: string }
   | { type: 'error'; requestId?: string; message: string }

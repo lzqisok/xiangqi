@@ -1,6 +1,6 @@
 import { validateFenPosition, validateMoveSequence } from './validation.js'
 
-export type RequestKind = 'move' | 'hint' | 'analyze' | 'candidates' | 'stop' | 'init'
+export type RequestKind = 'move' | 'hint' | 'analyze' | 'candidates' | 'review' | 'stop' | 'init'
 
 export interface EngineRequest {
   type: RequestKind
@@ -24,6 +24,7 @@ const DIFFICULTIES = new Set(['easy', 'medium', 'hard', 'master'])
 const SEARCH_MODES = new Set(['depth', 'time'])
 const UCI_MOVE_RE = /^[a-i][0-9][a-i][0-9]$/
 export const MAX_MOVE_COUNT = 600
+export const MAX_REVIEW_MOVE_COUNT = 120
 
 export function parseClientMessage(raw: string): ProtocolValidation {
   let parsed: unknown
@@ -43,7 +44,7 @@ export function parseClientMessage(raw: string): ProtocolValidation {
     return { ok: false, requestId, error: 'Message type is required' }
   }
 
-  if (!['move', 'hint', 'analyze', 'candidates', 'stop', 'init'].includes(msg.type)) {
+  if (!['move', 'hint', 'analyze', 'candidates', 'review', 'stop', 'init'].includes(msg.type)) {
     return { ok: false, requestId, error: `Unsupported message type: ${msg.type}` }
   }
 
@@ -61,6 +62,10 @@ export function parseClientMessage(raw: string): ProtocolValidation {
 
   if (Array.isArray(msg.moves) && msg.moves.length > MAX_MOVE_COUNT) {
     return { ok: false, requestId, error: `moves must contain at most ${MAX_MOVE_COUNT} items` }
+  }
+
+  if (msg.type === 'review' && Array.isArray(msg.moves) && msg.moves.length > MAX_REVIEW_MOVE_COUNT) {
+    return { ok: false, requestId, error: `review moves must contain at most ${MAX_REVIEW_MOVE_COUNT} items` }
   }
 
   if (Array.isArray(msg.moves) && msg.moves.length > 0 && typeof msg.fen !== 'string') {
@@ -95,7 +100,7 @@ export function parseClientMessage(raw: string): ProtocolValidation {
     return { ok: false, requestId, error: 'engineHashMb must be an integer between 16 and 512' }
   }
 
-  if ((msg.type === 'move' || msg.type === 'hint' || msg.type === 'analyze' || msg.type === 'candidates') && typeof msg.requestId !== 'string') {
+  if ((msg.type === 'move' || msg.type === 'hint' || msg.type === 'analyze' || msg.type === 'candidates' || msg.type === 'review') && typeof msg.requestId !== 'string') {
     return { ok: false, error: 'requestId is required' }
   }
 

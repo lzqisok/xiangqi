@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Board, Position, Move, MoveRecord, PieceColor,
   GameMode, Difficulty, PlayerSide, GameStatus, GameStatusReason, WSMessage, PlayerConfig, AnalysisPoint, MoveCandidate, EngineSearchLimit,
-  EngineRuntimeOptions,
+  EngineRuntimeOptions, ReviewPosition,
 } from '../types'
 import { parseFen, boardToFen, applyMove, INITIAL_FEN, findKing } from '../engine/board'
 import { getLegalMoves, isInCheck, getGameStatusDetail } from '../engine/rules'
@@ -122,6 +122,10 @@ export function useGame({
   const [aiThinking, setAiThinking] = useState(false)
   const [hintThinking, setHintThinking] = useState(false)
   const [candidateThinking, setCandidateThinking] = useState(false)
+  const [reviewThinking, setReviewThinking] = useState(false)
+  const [reviewProgress, setReviewProgress] = useState({ completed: 0, total: 0 })
+  const [reviewPositions, setReviewPositions] = useState<ReviewPosition[]>([])
+  const [reviewedMovesKey, setReviewedMovesKey] = useState('')
   const [hintMove, setHintMove] = useState<Move | null>(null)
   const [engineAvailable, setEngineAvailable] = useState<boolean | null>(null)
   const [engineStatusMessage, setEngineStatusMessage] = useState('')
@@ -137,6 +141,7 @@ export function useGame({
   const pendingRequestRef = useRef<PendingEngineRequest | null>(null)
   const analysisRequestRef = useRef<{ id: string; movesKey: string } | null>(null)
   const candidateRequestRef = useRef<{ id: string; movesKey: string } | null>(null)
+  const reviewRequestRef = useRef<{ id: string; movesKey: string } | null>(null)
   const players = getDefaultPlayers(
     gameMode,
     difficulty,
@@ -299,6 +304,18 @@ export function useGame({
       }))
       setCandidateThinking(false)
       candidateRequestRef.current = null
+    } else if (msg.type === 'review-progress') {
+      const request = reviewRequestRef.current
+      if (!request || msg.requestId !== request.id) return
+      setReviewProgress({ completed: msg.completed, total: msg.total })
+    } else if (msg.type === 'review-result') {
+      const request = reviewRequestRef.current
+      if (!request || msg.requestId !== request.id) return
+      setReviewPositions(msg.positions)
+      setReviewedMovesKey(request.movesKey)
+      setReviewProgress({ completed: msg.positions.length, total: msg.positions.length })
+      setReviewThinking(false)
+      reviewRequestRef.current = null
     } else if (msg.type === 'error') {
       setEngineStatusMessage(msg.message)
       if (msg.message.toLowerCase().includes('engine')) {
@@ -306,27 +323,32 @@ export function useGame({
       }
       pendingRequestRef.current = null
       candidateRequestRef.current = null
+      reviewRequestRef.current = null
       setAiThinking(false)
       setHintThinking(false)
       setCandidateThinking(false)
+      setReviewThinking(false)
     }
   }, [buildMoveFromUci, translatePv])
 
   const { send, connected, connectionState } = useWebSocket(handleWsMessage)
 
   // Initialize game when mode changes (not when connection flickers)
-  const prevGameMode = useRef(gameMode)
-  const prevDifficulty = useRef(difficulty)
-  const prevPlayerSide = useRef(playerSide)
-  const prevInitialFen = useRef(resolvedInitialFen)
-  const prevInitialMoveRecords = useRef(initialMoveRecords)
-  const prevInitialCurrentMoveIndex = useRef(initialCurrentMoveIndex)
-  const prevInitialAnalysisPoints = useRef(initialAnalysisPoints)
-  const prevRedPlayerConfig = useRef(redPlayerConfig)
-  const prevBlackPlayerConfig = useRef(blackPlayerConfig)
+  const prevGameMode = useRef<GameMode | null | undefined>(undefined)
+  const prevDifficulty = useRef<Difficulty | undefined>(undefined)
+  const prevPlayerSide = useRef<PlayerSide | undefined>(undefined)
+  const prevInitialFen = useRef<string | undefined>(undefined)
+  const prevInitialMoveRecords = useRef<MoveRecord[] | undefined>(undefined)
+  const prevInitialCurrentMoveIndex = useRef<number | undefined>(undefined)
+  const prevInitialAnalysisPoints = useRef<AnalysisPoint[] | undefined>(undefined)
+  const prevRedPlayerConfig = useRef<PlayerConfig | undefined>(undefined)
+  const prevBlackPlayerConfig = useRef<PlayerConfig | undefined>(undefined)
 
   useEffect(() => {
-    if (!gameMode) return
+    if (!gameMode) {
+      prevGameMode.current = null
+      return
+    }
 
     const modeChanged = prevGameMode.current !== gameMode
     const diffChanged = prevDifficulty.current !== difficulty
@@ -379,10 +401,15 @@ export function useGame({
     setAiThinking(false)
     setHintThinking(false)
     setCandidateThinking(false)
+    setReviewThinking(false)
+    setReviewProgress({ completed: 0, total: 0 })
+    setReviewPositions([])
+    setReviewedMovesKey('')
     setHintMove(null)
     pendingRequestRef.current = null
     analysisRequestRef.current = null
     candidateRequestRef.current = null
+    reviewRequestRef.current = null
   }, [gameMode, difficulty, playerSide, aiRedDifficulty, aiBlackDifficulty, resolvedInitialFen, initialMoveRecords, initialCurrentMoveIndex, initialAnalysisPoints, redPlayerConfig, blackPlayerConfig])
 
   useEffect(() => {
@@ -392,11 +419,22 @@ export function useGame({
       setAiThinking(false)
       setHintThinking(false)
       setCandidateThinking(false)
+      setReviewThinking(false)
       pendingRequestRef.current = null
       analysisRequestRef.current = null
       candidateRequestRef.current = null
+      reviewRequestRef.current = null
     }
   }, [connected])
+
+  const historyMovesKey = uciListFromRecords(moveHistory).join(' ')
+  useEffect(() => {
+    if (reviewedMovesKey && reviewedMovesKey !== historyMovesKey) {
+      setReviewPositions([])
+      setReviewProgress({ completed: 0, total: 0 })
+      setReviewedMovesKey('')
+    }
+  }, [historyMovesKey, reviewedMovesKey])
 
   // Send init to server whenever connected, difficulty, or runtime engine settings change.
   useEffect(() => {
@@ -433,7 +471,7 @@ export function useGame({
 
   // Trigger AI move
   useEffect(() => {
-    if (!shouldAutoRequestAiMove({
+    if (reviewThinking || !shouldAutoRequestAiMove({
       gameStatus,
       aiThinking,
       gameMode,
@@ -462,13 +500,14 @@ export function useGame({
       candidateRequestRef.current = null
       setAiThinking(false)
     }
-  }, [gameStatus, aiThinking, gameMode, currentPlayerConfig, connected, send, engineBaseFen, uciMoves, difficulty, searchLimit])
+  }, [gameStatus, aiThinking, reviewThinking, gameMode, currentPlayerConfig, connected, send, engineBaseFen, uciMoves, difficulty, searchLimit])
 
   const handleCellClick = useCallback((pos: Position) => {
     if (gameStatus !== 'playing') return
     if (gameMode === 'ai-vs-ai') return
     if (currentPlayerConfig.type === 'ai') return
     if (aiThinking) return
+    if (reviewThinking) return
 
     const piece = board[pos.row][pos.col]
 
@@ -529,7 +568,7 @@ export function useGame({
       setSelectedPos(pos)
       setLegalMoves(getLegalMoves(board, pos))
     }
-  }, [board, selectedPos, legalMoves, currentTurn, gameMode, currentPlayerConfig, gameStatus, aiThinking, uciMoves, moveHistory, currentMoveIndex])
+  }, [board, selectedPos, legalMoves, currentTurn, gameMode, currentPlayerConfig, gameStatus, aiThinking, reviewThinking, uciMoves, moveHistory, currentMoveIndex])
 
   const inCheck = (() => {
     if (isInCheck(board, currentTurn)) {
@@ -543,10 +582,12 @@ export function useGame({
     setAiThinking(false)
     setHintThinking(false)
     setCandidateThinking(false)
+    setReviewThinking(false)
     setHintMove(null)
     setMoveCandidates([])
     pendingRequestRef.current = null
     candidateRequestRef.current = null
+    reviewRequestRef.current = null
   }, [connected, send])
 
   const undo = useCallback(() => {
@@ -617,7 +658,22 @@ export function useGame({
   }, [])
 
   const jumpToMove = useCallback((index: number) => {
-    if (index < 0 || index >= moveHistory.length) return
+    if (index < -1 || index >= moveHistory.length) return
+    if (index === -1) {
+      const { board: initialBoard, turn } = parseFen(engineBaseFen)
+      setBoard(initialBoard)
+      setCurrentTurn(turn)
+      setLastMove(null)
+      setCurrentMoveIndex(-1)
+      setUciMoves([])
+      setSelectedPos(null)
+      setLegalMoves([])
+      stopActiveRequests()
+      const statusDetail = getGameStatusDetail(initialBoard, turn)
+      setGameStatus(statusDetail.status)
+      setGameStatusReason(statusDetail.reason)
+      return
+    }
     const record = moveHistory[index]
     const { board: targetBoard, turn } = parseFen(record.fen)
     setBoard(targetBoard)
@@ -631,7 +687,7 @@ export function useGame({
     const statusDetail = getGameStatusDetail(targetBoard, turn)
     setGameStatus(statusDetail.status)
     setGameStatusReason(statusDetail.reason)
-  }, [moveHistory, stopActiveRequests])
+  }, [engineBaseFen, moveHistory, stopActiveRequests])
 
   const getCurrentFen = useCallback(() => {
     return boardToFen(board, currentTurn, Math.floor((currentMoveIndex + 2) / 2))
@@ -670,7 +726,7 @@ export function useGame({
   }, [stopActiveRequests])
 
   const requestHint = useCallback(() => {
-    if (!connected || gameStatus !== 'playing' || aiThinking || hintThinking || candidateThinking) return
+    if (!connected || gameStatus !== 'playing' || aiThinking || hintThinking || candidateThinking || reviewThinking) return
     if (currentPlayerConfig.type !== 'human') return
 
     setHintThinking(true)
@@ -687,10 +743,10 @@ export function useGame({
       pendingRequestRef.current = null
       setHintThinking(false)
     }
-  }, [connected, gameStatus, aiThinking, hintThinking, candidateThinking, currentPlayerConfig, send, uciMoves, engineBaseFen, hintDifficulty, searchLimit])
+  }, [connected, gameStatus, aiThinking, hintThinking, candidateThinking, reviewThinking, currentPlayerConfig, send, uciMoves, engineBaseFen, hintDifficulty, searchLimit])
 
   const requestCandidates = useCallback(() => {
-    if (!connected || gameStatus !== 'playing' || aiThinking || hintThinking || candidateThinking) return
+    if (!connected || gameStatus !== 'playing' || aiThinking || hintThinking || candidateThinking || reviewThinking) return
 
     setCandidateThinking(true)
     setMoveCandidates([])
@@ -709,11 +765,36 @@ export function useGame({
       candidateRequestRef.current = null
       setCandidateThinking(false)
     }
-  }, [connected, gameStatus, aiThinking, hintThinking, candidateThinking, send, engineBaseFen, uciMoves, currentPlayerConfig, difficulty, candidateCount, searchLimit])
+  }, [connected, gameStatus, aiThinking, hintThinking, candidateThinking, reviewThinking, send, engineBaseFen, uciMoves, currentPlayerConfig, difficulty, candidateCount, searchLimit])
+
+  const requestReview = useCallback(() => {
+    if (!connected || engineAvailable === false || moveHistory.length === 0 || moveHistory.length > 120) return
+    if (aiThinking || hintThinking || candidateThinking || reviewThinking) return
+
+    const moves = uciListFromRecords(moveHistory)
+    const requestId = makeRequestId('review')
+    reviewRequestRef.current = { id: requestId, movesKey: moves.join(' ') }
+    setReviewThinking(true)
+    setReviewProgress({ completed: 0, total: moves.length + 1 })
+    setReviewPositions([])
+    const sent = send({ type: 'review', requestId, fen: engineBaseFen, moves, searchDepth: 12 })
+    if (!sent) {
+      reviewRequestRef.current = null
+      setReviewThinking(false)
+    }
+  }, [aiThinking, candidateThinking, connected, engineAvailable, engineBaseFen, hintThinking, moveHistory, reviewThinking, send])
+
+  const cancelReview = useCallback(() => {
+    const request = reviewRequestRef.current
+    if (connected && request) send({ type: 'stop', requestId: request.id })
+    reviewRequestRef.current = null
+    setReviewThinking(false)
+    setReviewProgress({ completed: 0, total: 0 })
+  }, [connected, send])
 
   const nextAiMove = useCallback(() => {
     if (gameMode !== 'ai-vs-ai') return
-    if (!connected || gameStatus !== 'playing' || aiThinking) return
+    if (!connected || gameStatus !== 'playing' || aiThinking || reviewThinking) return
 
     const difficultyForTurn = currentTurn === 'red' ? aiRedDifficulty : aiBlackDifficulty
     setAiThinking(true)
@@ -731,7 +812,7 @@ export function useGame({
       candidateRequestRef.current = null
       setAiThinking(false)
     }
-  }, [gameMode, connected, gameStatus, aiThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, engineBaseFen, searchLimit])
+  }, [gameMode, connected, gameStatus, aiThinking, reviewThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, engineBaseFen, searchLimit])
 
   const declareDraw = useCallback(() => {
     if (gameStatus !== 'playing') return
@@ -758,6 +839,7 @@ export function useGame({
     !aiThinking &&
     !hintThinking &&
     !candidateThinking &&
+    !reviewThinking &&
     currentPlayerConfig.type === 'human'
 
   const canStepAi =
@@ -765,7 +847,8 @@ export function useGame({
     connected &&
     engineAvailable !== false &&
     gameStatus === 'playing' &&
-    !aiThinking
+    !aiThinking &&
+    !reviewThinking
 
   const bestLineNotation = useMemo(() => {
     return translatePv(bestLine, board)
@@ -798,15 +881,19 @@ export function useGame({
     currentMoveIndex,
     hintThinking,
     candidateThinking,
+    reviewThinking,
+    reviewProgress,
+    reviewPositions,
     aiThinking,
     connectionState,
     connected,
     engineAvailable,
     engineStatusMessage,
-    canUndo: currentMoveIndex >= 0 && !aiThinking && !hintThinking,
-    canRedo: currentMoveIndex < moveHistory.length - 1 && !aiThinking && !hintThinking,
+    canUndo: currentMoveIndex >= 0 && !aiThinking && !hintThinking && !reviewThinking,
+    canRedo: currentMoveIndex < moveHistory.length - 1 && !aiThinking && !hintThinking && !reviewThinking,
     canRequestHint,
-    canRequestCandidates: connected && engineAvailable !== false && gameStatus === 'playing' && !aiThinking && !hintThinking && !candidateThinking,
+    canRequestCandidates: connected && engineAvailable !== false && gameStatus === 'playing' && !aiThinking && !hintThinking && !candidateThinking && !reviewThinking,
+    canRequestReview: connected && engineAvailable !== false && moveHistory.length > 0 && moveHistory.length <= 120 && !aiThinking && !hintThinking && !candidateThinking && !reviewThinking,
     canStepAi,
     handleCellClick,
     undo,
@@ -818,6 +905,8 @@ export function useGame({
     jumpToMove,
     requestHint,
     requestCandidates,
+    requestReview,
+    cancelReview,
     nextAiMove,
     declareDraw,
     resign,

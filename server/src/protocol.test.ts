@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { isStaleEngineResponse, MAX_MOVE_COUNT, parseClientMessage } from './protocol.js'
+import { isStaleEngineResponse, MAX_MOVE_COUNT, MAX_REVIEW_MOVE_COUNT, parseClientMessage } from './protocol.js'
 
 const VALID_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
@@ -58,6 +58,30 @@ test('parseClientMessage accepts candidate requests with bounded count', () => {
   }))
   assert.equal(fractional.ok, false)
   if (!fractional.ok) assert.equal(fractional.error, 'count must be an integer between 1 and 5')
+})
+
+test('parseClientMessage accepts bounded review requests and requires an id', () => {
+  const result = parseClientMessage(JSON.stringify({
+    type: 'review',
+    requestId: 'review-1',
+    fen: VALID_FEN,
+    moves: [],
+    searchDepth: 12,
+  }))
+  assert.equal(result.ok, true)
+
+  const missingId = parseClientMessage(JSON.stringify({ type: 'review', fen: VALID_FEN, moves: [] }))
+  assert.equal(missingId.ok, false)
+  if (!missingId.ok) assert.equal(missingId.error, 'requestId is required')
+
+  const oversized = parseClientMessage(JSON.stringify({
+    type: 'review',
+    requestId: 'review-long',
+    fen: VALID_FEN,
+    moves: Array.from({ length: MAX_REVIEW_MOVE_COUNT + 1 }, () => 'h2e2'),
+  }))
+  assert.equal(oversized.ok, false)
+  if (!oversized.ok) assert.equal(oversized.error, `review moves must contain at most ${MAX_REVIEW_MOVE_COUNT} items`)
 })
 
 test('parseClientMessage rejects invalid JSON, missing requestId, and bad FEN', () => {

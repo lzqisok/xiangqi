@@ -3,6 +3,8 @@ import { EngineThreads } from '../engineSettings'
 
 interface Props {
   candidates: MoveCandidate[]
+  selectedCandidateMove?: string
+  onPreview: (candidate: MoveCandidate) => void
   thinking: boolean
   onRequest: () => void
   canRequest: boolean
@@ -41,6 +43,8 @@ const difficultyLabels: Record<Difficulty, string> = {
 
 export default function CandidateList({
   candidates,
+  selectedCandidateMove,
+  onPreview,
   thinking,
   onRequest,
   canRequest,
@@ -157,7 +161,10 @@ export default function CandidateList({
         <div className="candidate-empty">{thinking ? '正在计算候选走法' : '暂无候选走法'}</div>
       ) : (
         candidates.map((candidate, index) => (
-          <div className="candidate-item" key={`${candidate.move}-${index}`}>
+          <div
+            className={`candidate-item ${selectedCandidateMove === candidate.move ? 'preview-active' : ''}`}
+            key={`${candidate.move}-${index}`}
+          >
             <div className="candidate-row">
               <span className="candidate-rank">{index + 1}</span>
               <strong>{candidate.notation || candidate.move}</strong>
@@ -169,6 +176,9 @@ export default function CandidateList({
                 {candidate.pvNotation.slice(1).join('  ')}
               </div>
             )}
+            <button className="candidate-preview-button" onClick={() => onPreview(candidate)}>
+              {selectedCandidateMove === candidate.move ? '重新预览' : '棋盘预览'}
+            </button>
           </div>
         ))
       )}

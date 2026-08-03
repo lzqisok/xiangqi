@@ -7,6 +7,7 @@ import AnalysisCurve from './components/AnalysisCurve'
 import EndgameLibrary from './components/EndgameLibrary'
 import EndgameEditor from './components/EndgameEditor'
 import CandidateList from './components/CandidateList'
+import CandidatePreviewControls from './components/CandidatePreviewControls'
 import StudyLibrary from './components/StudyLibrary'
 import { useGame } from './hooks/useGame'
 import { BUILTIN_ENDGAMES } from './endgames/builtin'
@@ -38,7 +39,9 @@ import { EngineSettings, loadEngineSettings, saveEngineSettings } from './engine
 import { buildBoardExportMetadata, createAnnotatedBoardPng } from './export/boardImage'
 import { formatTrainingHintHistory, getEndgameTrainingFeedback, getEndgameTrainingHint, recordTrainingHintLevel, TrainingHintHistoryEntry } from './training/hints'
 import { createReplayUrl, parseReplayStudyFromSearch } from './share/replayLink'
-import { EndgameDefinition, EndgameStartConfig, EndgameTarget, GameMode, Difficulty, MoveRecord, PlayerSide, StudyPosition } from './types'
+import { buildCandidatePreview, getCandidatePreviewFrame } from './analysis/candidatePreview'
+import { createStudyContentSignature, createStudySaveInput } from './studies/autosave'
+import { EndgameDefinition, EndgameStartConfig, EndgameTarget, GameMode, Difficulty, MoveCandidate, MoveRecord, PlayerSide, StudyPosition } from './types'
 
 type EndgameDraft = {
   id: string | null
@@ -49,6 +52,12 @@ type EndgameDraft = {
   target?: EndgameTarget
   maxMoves?: number
   solution: string[]
+}
+
+type CandidatePreviewState = {
+  candidate: MoveCandidate
+  records: MoveRecord[]
+  stepIndex: number
 }
 
 export default function App() {
@@ -76,6 +85,8 @@ export default function App() {
   const [studyReplayDelay, setStudyReplayDelay] = useState(900)
   const [showOnlyAnnotatedMoves, setShowOnlyAnnotatedMoves] = useState(false)
   const [candidateAutoRefresh, setCandidateAutoRefresh] = useState(false)
+  const [candidatePreview, setCandidatePreview] = useState<CandidatePreviewState | null>(null)
+  const [studySaveStatus, setStudySaveStatus] = useState<'saved' | 'unsaved' | 'shared' | null>(null)
   const [engineSettings, setEngineSettings] = useState<EngineSettings>(() => loadEngineSettings())
   const [trainingHintLevel, setTrainingHintLevel] = useState(0)
   const [trainingHintHistory, setTrainingHintHistory] = useState<TrainingHintHistoryEntry[]>([])
@@ -140,6 +151,21 @@ export default function App() {
   const naturalLimitReminder = getNaturalLimitReminder(game.moveRecords)
   const repetitionReminder = getRepetitionReminder(game.initialFen, game.moveRecords)
   const candidateAutoPositionKey = game.moveRecords[game.currentMoveIndex]?.fen || game.initialFen
+  const candidatePreviewFrame = useMemo(
+    () => candidatePreview
+      ? getCandidatePreviewFrame(candidateAutoPositionKey, candidatePreview.records, candidatePreview.stepIndex)
+      : null,
+    [candidateAutoPositionKey, candidatePreview],
+  )
+  const studyContent = useMemo(() => ({
+    initialFen: game.initialFen,
+    moves: game.historyRecords,
+    currentMoveIndex: game.currentMoveIndex,
+    analysisPoints: game.analysisPoints,
+  }), [game.analysisPoints, game.currentMoveIndex, game.historyRecords, game.initialFen])
+  const studyContentSignature = useMemo(() => createStudyContentSignature(studyContent), [studyContent])
+  const selectedStudyIsPersisted = Boolean(selectedStudy && studies.some(study => study.id === selectedStudy.id))
+  const lastSavedStudySignatureRef = useRef<string | null>(null)
   const canRequestTrainingHint = Boolean(selectedEndgame?.solution?.length) && game.gameStatus === 'playing'
 
   useEffect(() => {
@@ -193,6 +219,47 @@ export default function App() {
       candidateAutoRequestRef.current = null
     }
   }, [candidateAutoRefresh])
+
+  useEffect(() => {
+    setCandidatePreview(null)
+  }, [candidateAutoPositionKey])
+
+  useEffect(() => {
+    if (gameMode !== 'study' || !selectedStudy) {
+      lastSavedStudySignatureRef.current = null
+      setStudySaveStatus(null)
+      return
+    }
+    if (!selectedStudyIsPersisted) {
+      lastSavedStudySignatureRef.current = null
+      setStudySaveStatus('shared')
+      return
+    }
+    lastSavedStudySignatureRef.current = createStudyContentSignature({
+      initialFen: selectedStudy.initialFen,
+      moves: selectedStudy.moves,
+      currentMoveIndex: selectedStudy.currentMoveIndex,
+      analysisPoints: selectedStudy.analysisPoints,
+    })
+    setStudySaveStatus('saved')
+  }, [gameMode, selectedStudy?.id, selectedStudyIsPersisted])
+
+  useEffect(() => {
+    if (gameMode !== 'study' || !selectedStudy || !selectedStudyIsPersisted) return
+    if (studyContentSignature === lastSavedStudySignatureRef.current) {
+      setStudySaveStatus('saved')
+      return
+    }
+
+    setStudySaveStatus('unsaved')
+    const timer = window.setTimeout(() => {
+      const saved = saveStudyPosition(createStudySaveInput(selectedStudy, studyContent))
+      lastSavedStudySignatureRef.current = studyContentSignature
+      setStudies(saved)
+      setStudySaveStatus('saved')
+    }, 800)
+    return () => window.clearTimeout(timer)
+  }, [gameMode, selectedStudy, selectedStudyIsPersisted, studyContent, studyContentSignature])
 
   if (!gameMode) {
     return <StartScreen onStart={(mode, diff, side, redDiff, blackDiff) => {
@@ -342,22 +409,42 @@ export default function App() {
             depth={game.analysisDepth}
           />
         )}
-        <Board
-          ref={boardRef}
-          board={game.board}
-          gameStatus={game.gameStatus}
-          gameStatusReason={game.gameStatusReason}
-          selectedPos={game.selectedPos}
-          legalMoves={game.legalMoves}
-          lastMove={game.lastMove}
-          hintMove={game.hintMove}
-          inCheck={game.inCheck}
-          flipped={game.flipped}
-          aiThinking={game.aiThinking}
-          thinkingText={`${game.currentTurn === 'red' ? '红方' : '黑方'} AI 思考中...`}
-          onCellClick={game.handleCellClick}
-          onCancelSelection={game.cancelSelection}
-        />
+        <div className="board-stage">
+          <Board
+            ref={boardRef}
+            board={candidatePreviewFrame?.board || game.board}
+            gameStatus={game.gameStatus}
+            gameStatusReason={game.gameStatusReason}
+            selectedPos={candidatePreview ? null : game.selectedPos}
+            legalMoves={candidatePreview ? [] : game.legalMoves}
+            lastMove={candidatePreviewFrame?.lastMove || game.lastMove}
+            hintMove={candidatePreview ? null : game.hintMove}
+            inCheck={candidatePreview ? null : game.inCheck}
+            flipped={game.flipped}
+            aiThinking={candidatePreview ? false : game.aiThinking}
+            thinkingText={`${game.currentTurn === 'red' ? '红方' : '黑方'} AI 思考中...`}
+            interactionDisabled={Boolean(candidatePreview)}
+            onCellClick={game.handleCellClick}
+            onCancelSelection={game.cancelSelection}
+          />
+          {candidatePreview && candidatePreviewFrame && (
+            <CandidatePreviewControls
+              candidateLabel={candidatePreview.candidate.notation || candidatePreview.candidate.move}
+              notation={candidatePreviewFrame.notation}
+              stepIndex={candidatePreview.stepIndex}
+              stepCount={candidatePreview.records.length}
+              onPrevious={() => setCandidatePreview(current => current ? {
+                ...current,
+                stepIndex: Math.max(0, current.stepIndex - 1),
+              } : null)}
+              onNext={() => setCandidatePreview(current => current ? {
+                ...current,
+                stepIndex: Math.min(current.records.length, current.stepIndex + 1),
+              } : null)}
+              onClose={() => setCandidatePreview(null)}
+            />
+          )}
+        </div>
         <div className="side-panel">
           <GamePanel
             currentTurn={game.currentTurn}
@@ -372,6 +459,7 @@ export default function App() {
             flipped={game.flipped}
             showAnalysis={showAnalysis}
             scenarioName={gameMode === 'endgame' ? selectedEndgame?.name ?? null : gameMode === 'study' ? selectedStudy?.name ?? null : null}
+            studySaveStatus={gameMode === 'study' ? studySaveStatus : null}
             trainingFeedback={trainingFeedback}
             trainingHint={trainingHint}
             trainingHintHistory={trainingHintHistoryText}
@@ -436,17 +524,20 @@ export default function App() {
               const name = window.prompt('研究名称', defaultName)
               if (!name?.trim()) return
               const description = window.prompt('研究说明', selectedStudy?.description || '') || ''
+              const existingStudyId = selectedStudy?.id
               const saved = saveStudyPosition({
-                id: selectedStudy?.id,
+                id: existingStudyId,
                 name: name.trim(),
                 description: description.trim() || undefined,
                 initialFen: game.initialFen,
-                moves: game.moveRecords,
+                moves: game.historyRecords,
                 currentMoveIndex: game.currentMoveIndex,
                 analysisPoints: game.analysisPoints,
               })
               setStudies(saved)
-              setSelectedStudy(saved.find(item => item.name === name.trim()) || saved[0] || null)
+              setSelectedStudy(existingStudyId
+                ? saved.find(item => item.id === existingStudyId) || saved[0] || null
+                : saved[0] || null)
             }}
             onExportImage={async () => {
               const dataUrl = boardRef.current?.exportPng()
@@ -491,8 +582,20 @@ export default function App() {
           />
           <CandidateList
             candidates={game.moveCandidates}
+            selectedCandidateMove={candidatePreview?.candidate.move}
+            onPreview={(candidate) => {
+              try {
+                const records = buildCandidatePreview(candidateAutoPositionKey, candidate)
+                setCandidatePreview({ candidate, records, stepIndex: Math.min(1, records.length) })
+              } catch {
+                window.alert('当前候选变化无法在棋盘上预览。')
+              }
+            }}
             thinking={game.candidateThinking}
-            onRequest={game.requestCandidates}
+            onRequest={() => {
+              setCandidatePreview(null)
+              game.requestCandidates()
+            }}
             canRequest={game.canRequestCandidates}
             autoRefresh={candidateAutoRefresh}
             onAutoRefreshChange={setCandidateAutoRefresh}

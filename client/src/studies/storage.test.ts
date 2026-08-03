@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { deleteStudyPositions, duplicateStudyPosition, importStudyPositionsJson, renameStudyPosition } from './storage'
+import { deleteStudyPositions, duplicateStudyPosition, importStudyPositionsJson, renameStudyPosition, saveStudyPosition } from './storage'
 
 const MOVE = {
   move: {
@@ -76,6 +76,21 @@ test('duplicateStudyPosition copies a study with a new id and name', () => {
   assert.equal(result[0].name, '研究 study-a 副本')
   assert.equal(result[0].moves.length, 1)
   assert.equal(result[1].id, 'study-a')
+})
+
+test('saveStudyPosition updates an existing study without changing its creation time', () => {
+  mockStudies([makeStudy('study-a', 1)])
+
+  const result = saveStudyPosition({
+    ...makeStudy('study-a', 99),
+    currentMoveIndex: -1,
+  })
+
+  assert.equal(result.length, 1)
+  assert.equal(result[0].id, 'study-a')
+  assert.equal(result[0].createdAt, 1)
+  assert.equal(result[0].currentMoveIndex, -1)
+  assert.equal(result[0].updatedAt >= result[0].createdAt, true)
 })
 
 function makeStudy(id: string, updatedAt: number) {

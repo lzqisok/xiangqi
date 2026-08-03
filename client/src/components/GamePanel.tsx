@@ -13,6 +13,7 @@ interface Props {
   flipped: boolean
   showAnalysis: boolean
   scenarioName: string | null
+  studySaveStatus: 'saved' | 'unsaved' | 'shared' | null
   trainingFeedback: string
   trainingHint: string
   trainingHintHistory: string
@@ -100,6 +101,7 @@ export default function GamePanel({
   currentTurn, gameMode, difficulty, aiRedDifficulty, aiBlackDifficulty, redPlayerConfig, blackPlayerConfig, gameStatus, gameStatusReason,
   showAnalysis,
   scenarioName,
+  studySaveStatus,
   trainingFeedback,
   trainingHint,
   trainingHintHistory,
@@ -151,7 +153,16 @@ export default function GamePanel({
           </span>
         )}
       </div>
-      {scenarioName && <div className="scenario-name">{scenarioName}</div>}
+      {scenarioName && (
+        <div className="scenario-name">
+          <span>{scenarioName}</span>
+          {studySaveStatus && (
+            <span className={`study-save-status ${studySaveStatus}`}>
+              {studySaveStatus === 'saved' ? '已自动保存' : studySaveStatus === 'unsaved' ? '等待自动保存' : '分享回放 · 尚未保存'}
+            </span>
+          )}
+        </div>
+      )}
       {trainingFeedback && <div className="training-feedback">{trainingFeedback}</div>}
       {trainingHint && <div className="training-hint">{trainingHint}</div>}
       {trainingHintHistory && <div className="training-hint-history">{trainingHintHistory}</div>}

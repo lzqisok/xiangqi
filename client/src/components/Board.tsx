@@ -14,6 +14,7 @@ interface Props {
   flipped: boolean
   aiThinking: boolean
   thinkingText: string
+  interactionDisabled?: boolean
   onCellClick: (pos: Position) => void
   onCancelSelection: () => void
 }
@@ -64,6 +65,7 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
   flipped,
   aiThinking,
   thinkingText,
+  interactionDisabled = false,
   onCellClick,
   onCancelSelection,
 }, ref) {
@@ -268,6 +270,7 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
   }, [])
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (interactionDisabled) return
     longPressHandledRef.current = false
     clearLongPressTimer()
     const pointerType = e.pointerType
@@ -279,9 +282,10 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
       onCancelSelection()
       if (pointerType === 'touch') navigator.vibrate?.(12)
     }, 520)
-  }, [clearLongPressTimer, onCancelSelection])
+  }, [clearLongPressTimer, interactionDisabled, onCancelSelection])
 
   const handlePointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (interactionDisabled) return
     clearLongPressTimer()
     if (longPressHandledRef.current) return
 
@@ -290,7 +294,7 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
       if (e.pointerType === 'touch') navigator.vibrate?.(8)
       onCellClick(closest)
     }
-  }, [clearLongPressTimer, getClosestPosition, getPointerTolerance, onCellClick])
+  }, [clearLongPressTimer, getClosestPosition, getPointerTolerance, interactionDisabled, onCellClick])
 
   const handlePointerCancel = useCallback(() => {
     clearLongPressTimer()
@@ -302,7 +306,7 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
     <div className="board-wrapper">
       <canvas
         ref={canvasRef}
-        className="board-canvas"
+        className={`board-canvas ${interactionDisabled ? 'interaction-disabled' : ''}`}
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}

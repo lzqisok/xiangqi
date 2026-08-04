@@ -1,9 +1,12 @@
+import { Difficulty } from './types'
+
 export type EngineSearchMode = 'depth' | 'time'
 export type EngineThreads = 'auto' | number
 
 export interface EngineSettings {
   candidateCount: number
   candidateAutoRefreshDelay: number
+  hintDifficulty: Difficulty
   searchMode: EngineSearchMode
   searchDepth: number
   searchTimeMs: number
@@ -14,6 +17,7 @@ export interface EngineSettings {
 export const DEFAULT_ENGINE_SETTINGS: EngineSettings = {
   candidateCount: 3,
   candidateAutoRefreshDelay: 900,
+  hintDifficulty: 'master',
   searchMode: 'depth',
   searchDepth: 16,
   searchTimeMs: 2500,
@@ -22,6 +26,7 @@ export const DEFAULT_ENGINE_SETTINGS: EngineSettings = {
 }
 
 const STORAGE_KEY = 'xiangqi_engine_settings'
+const DIFFICULTIES = new Set<Difficulty>(['easy', 'medium', 'hard', 'master'])
 const SEARCH_MODES = new Set<EngineSearchMode>(['depth', 'time'])
 
 function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
@@ -57,6 +62,9 @@ export function normalizeEngineSettings(value: Partial<EngineSettings> | null | 
       5000,
       DEFAULT_ENGINE_SETTINGS.candidateAutoRefreshDelay,
     ),
+    hintDifficulty: DIFFICULTIES.has(value?.hintDifficulty as Difficulty)
+      ? value!.hintDifficulty!
+      : DEFAULT_ENGINE_SETTINGS.hintDifficulty,
     searchMode: SEARCH_MODES.has(value?.searchMode as EngineSearchMode)
       ? value!.searchMode!
       : DEFAULT_ENGINE_SETTINGS.searchMode,

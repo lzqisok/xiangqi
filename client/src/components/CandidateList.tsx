@@ -1,4 +1,4 @@
-import { EngineSearchMode, MoveCandidate } from '../types'
+import { Difficulty, EngineSearchMode, MoveCandidate } from '../types'
 import { EngineThreads } from '../engineSettings'
 
 interface Props {
@@ -14,6 +14,8 @@ interface Props {
   onCandidateCountChange: (count: number) => void
   autoRefreshDelay: number
   onAutoRefreshDelayChange: (delay: number) => void
+  hintDifficulty: Difficulty
+  onHintDifficultyChange: (difficulty: Difficulty) => void
   searchMode: EngineSearchMode
   onSearchModeChange: (mode: EngineSearchMode) => void
   searchDepth: number
@@ -32,6 +34,13 @@ function formatScore(score: number): string {
   return `${score > 0 ? '红' : '黑'} +${(Math.abs(score) / 100).toFixed(1)}`
 }
 
+const difficultyLabels: Record<Difficulty, string> = {
+  easy: '入门',
+  medium: '普通',
+  hard: '困难',
+  master: '大师',
+}
+
 export default function CandidateList({
   candidates,
   selectedCandidateMove,
@@ -45,6 +54,8 @@ export default function CandidateList({
   onCandidateCountChange,
   autoRefreshDelay,
   onAutoRefreshDelayChange,
+  hintDifficulty,
+  onHintDifficultyChange,
   searchMode,
   onSearchModeChange,
   searchDepth,
@@ -92,6 +103,14 @@ export default function CandidateList({
             <option value={1500}>1.5 秒</option>
             <option value={2500}>2.5 秒</option>
             <option value={5000}>5 秒</option>
+          </select>
+        </label>
+        <label>
+          提示强度
+          <select value={hintDifficulty} onChange={e => onHintDifficultyChange(e.target.value as Difficulty)}>
+            {Object.entries(difficultyLabels).map(([value, label]) => (
+              <option value={value} key={value}>{label}</option>
+            ))}
           </select>
         </label>
         <label>

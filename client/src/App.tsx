@@ -884,9 +884,23 @@ function StartScreen({ onStart }: {
   return (
     <div className="start-screen">
       <div className="start-card">
-        <div className="start-eyebrow">PIKAFISH XIANGQI</div>
-        <h1>中国象棋</h1>
-        <p className="subtitle">对弈、拆棋与复盘，专注每一个局面。</p>
+        <section className="start-hero">
+          <div className="start-seal" aria-hidden="true">弈</div>
+          <div className="start-eyebrow">PIKAFISH XIANGQI</div>
+          <h1>中国象棋</h1>
+          <p className="subtitle">一方棋盘，认真走好每一步。</p>
+          <div className="start-engine-note">
+            <span>本地 Pikafish</span>
+            <span>多级 AI</span>
+            <span>研究与复盘</span>
+          </div>
+        </section>
+
+        <section className="start-config">
+        <div className="start-config-heading">
+          <span>新对局</span>
+          <small>选择模式后开始</small>
+        </div>
 
         <div className="option-group mode-option-group">
           <label>游戏模式</label>
@@ -919,10 +933,10 @@ function StartScreen({ onStart }: {
             <div className="option-group">
               <label>难度等级</label>
               <div className="btn-group">
-                <button className={diff === 'easy' ? 'active' : ''} onClick={() => setDiff('easy')}>初级</button>
-                <button className={diff === 'medium' ? 'active' : ''} onClick={() => setDiff('medium')}>中级</button>
-                <button className={diff === 'hard' ? 'active' : ''} onClick={() => setDiff('hard')}>高级</button>
-                <button className={diff === 'master' ? 'active' : ''} onClick={() => setDiff('master')}>大师</button>
+                <button className={diff === 'easy' ? 'active' : ''} onClick={() => setDiff('easy')}>初级 · D8</button>
+                <button className={diff === 'medium' ? 'active' : ''} onClick={() => setDiff('medium')}>中级 · D14</button>
+                <button className={diff === 'hard' ? 'active' : ''} onClick={() => setDiff('hard')}>高级 · D20</button>
+                <button className={diff === 'master' ? 'active' : ''} onClick={() => setDiff('master')}>大师 · D26</button>
               </div>
             </div>
             <div className="option-group">
@@ -940,19 +954,19 @@ function StartScreen({ onStart }: {
             <div className="option-group">
               <label>红方强度</label>
               <div className="btn-group">
-                <button className={redDiff === 'easy' ? 'active' : ''} onClick={() => setRedDiff('easy')}>初级</button>
-                <button className={redDiff === 'medium' ? 'active' : ''} onClick={() => setRedDiff('medium')}>中级</button>
-                <button className={redDiff === 'hard' ? 'active' : ''} onClick={() => setRedDiff('hard')}>高级</button>
-                <button className={redDiff === 'master' ? 'active' : ''} onClick={() => setRedDiff('master')}>大师</button>
+                <button className={redDiff === 'easy' ? 'active' : ''} onClick={() => setRedDiff('easy')}>初级 · D8</button>
+                <button className={redDiff === 'medium' ? 'active' : ''} onClick={() => setRedDiff('medium')}>中级 · D14</button>
+                <button className={redDiff === 'hard' ? 'active' : ''} onClick={() => setRedDiff('hard')}>高级 · D20</button>
+                <button className={redDiff === 'master' ? 'active' : ''} onClick={() => setRedDiff('master')}>大师 · D26</button>
               </div>
             </div>
             <div className="option-group">
               <label>黑方强度</label>
               <div className="btn-group">
-                <button className={blackDiff === 'easy' ? 'active' : ''} onClick={() => setBlackDiff('easy')}>初级</button>
-                <button className={blackDiff === 'medium' ? 'active' : ''} onClick={() => setBlackDiff('medium')}>中级</button>
-                <button className={blackDiff === 'hard' ? 'active' : ''} onClick={() => setBlackDiff('hard')}>高级</button>
-                <button className={blackDiff === 'master' ? 'active' : ''} onClick={() => setBlackDiff('master')}>大师</button>
+                <button className={blackDiff === 'easy' ? 'active' : ''} onClick={() => setBlackDiff('easy')}>初级 · D8</button>
+                <button className={blackDiff === 'medium' ? 'active' : ''} onClick={() => setBlackDiff('medium')}>中级 · D14</button>
+                <button className={blackDiff === 'hard' ? 'active' : ''} onClick={() => setBlackDiff('hard')}>高级 · D20</button>
+                <button className={blackDiff === 'master' ? 'active' : ''} onClick={() => setBlackDiff('master')}>大师 · D26</button>
               </div>
             </div>
           </>
@@ -961,6 +975,7 @@ function StartScreen({ onStart }: {
         <button className="start-btn" onClick={() => onStart(mode, diff, side, redDiff, blackDiff)}>
           开始游戏
         </button>
+        </section>
       </div>
     </div>
   )

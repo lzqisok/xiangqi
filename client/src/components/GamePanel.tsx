@@ -69,6 +69,17 @@ const DIFFICULTY_NAMES: Record<Difficulty, string> = {
   master: '大师',
 }
 
+const DIFFICULTY_DEPTH: Record<Difficulty, number> = {
+  easy: 8,
+  medium: 14,
+  hard: 20,
+  master: 26,
+}
+
+function formatDifficulty(difficulty: Difficulty): string {
+  return `${DIFFICULTY_NAMES[difficulty]} · D${DIFFICULTY_DEPTH[difficulty]}`
+}
+
 function formatStatus(status: GameStatus, reason?: GameStatusReason): string {
   if (status === 'playing') return ''
   if (status === 'draw') return '和棋'
@@ -86,7 +97,7 @@ function formatStatus(status: GameStatus, reason?: GameStatusReason): string {
 
 function formatPlayerConfig(config: PlayerConfig): string {
   if (config.type === 'human') return '人类'
-  return `AI(${DIFFICULTY_NAMES[config.difficulty || 'medium']})`
+  return `AI ${formatDifficulty(config.difficulty || 'medium')}`
 }
 
 function formatEngineStatus(connectionState: ConnectionState, engineAvailable: boolean | null, message: string): string {
@@ -130,13 +141,18 @@ export default function GamePanel({
   const canManualEnd = gameStatus === 'playing' && !aiThinking && !hintThinking
   const canDeclareDraw = canManualEnd && gameMode === 'human-vs-human'
   const modeText = isHumanVsAi ? '人机对弈' : isAiVsAi ? 'AI 对战' : gameMode === 'endgame' ? '残局模式' : gameMode === 'study' ? '研究局面' : '双人对弈'
+  const activeDifficulty = currentTurn === 'red'
+    ? redPlayerConfig.difficulty
+    : blackPlayerConfig.difficulty
 
   return (
     <div className="game-panel">
       <div className="status">
         {gameStatus === 'playing' ? (
           <div className={`turn-indicator ${currentTurn}`}>
-            {aiThinking ? `${currentTurn === 'red' ? '红方' : '黑方'} AI 思考中...` : currentTurn === 'red' ? '红方走棋' : '黑方走棋'}
+            {aiThinking
+              ? `${currentTurn === 'red' ? '红方' : '黑方'} AI · ${formatDifficulty(activeDifficulty || difficulty)}`
+              : currentTurn === 'red' ? '红方走棋' : '黑方走棋'}
           </div>
         ) : (
           <div className="game-over">{formatStatus(gameStatus, gameStatusReason)}</div>
@@ -145,8 +161,8 @@ export default function GamePanel({
 
       <div className="info-row">
         <span className="info-chip">{modeText}</span>
-        {isHumanVsAi && <span className="info-chip">{DIFFICULTY_NAMES[difficulty]}</span>}
-        {isAiVsAi && <span className="info-chip">红 {DIFFICULTY_NAMES[aiRedDifficulty]} / 黑 {DIFFICULTY_NAMES[aiBlackDifficulty]}</span>}
+        {isHumanVsAi && <span className="info-chip">{formatDifficulty(difficulty)}</span>}
+        {isAiVsAi && <span className="info-chip">红 {formatDifficulty(aiRedDifficulty)} / 黑 {formatDifficulty(aiBlackDifficulty)}</span>}
         {gameMode === 'endgame' && (
           <span className="info-chip">
             红: {formatPlayerConfig(redPlayerConfig)} / 黑: {formatPlayerConfig(blackPlayerConfig)}

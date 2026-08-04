@@ -114,7 +114,7 @@ export default function CandidateList({
           </select>
         </label>
         <label>
-          搜索上限
+          分析工具上限
           <select value={searchMode} onChange={e => onSearchModeChange(e.target.value as EngineSearchMode)}>
             <option value="depth">按深度</option>
             <option value="time">按时间</option>

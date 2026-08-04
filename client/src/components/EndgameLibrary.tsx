@@ -265,7 +265,7 @@ function PlayerConfigSection({
               className={value.difficulty === diff ? 'active' : ''}
               onClick={() => updatePlayer(onChange, 'ai', diff)}
             >
-              {diff === 'easy' ? '初级' : diff === 'medium' ? '中级' : diff === 'hard' ? '高级' : '大师'}
+              {diff === 'easy' ? '初级 · D8' : diff === 'medium' ? '中级 · D14' : diff === 'hard' ? '高级 · D20' : '大师 · D26'}
             </button>
           ))}
         </div>

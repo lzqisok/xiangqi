@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildGoCommand, normalizeEngineRuntimeOptions } from './engine.js'
+import { buildGoCommand, getDifficultyDepth, normalizeEngineRuntimeOptions } from './engine.js'
 
 test('buildGoCommand uses explicit depth limits', () => {
   assert.equal(buildGoCommand(14, { searchMode: 'depth', searchDepth: 18 }), 'go depth 18')
@@ -12,6 +12,13 @@ test('buildGoCommand uses explicit time limits', () => {
 
 test('buildGoCommand falls back to default depth when limits are incomplete', () => {
   assert.equal(buildGoCommand(14, { searchMode: 'time' }), 'go depth 14')
+})
+
+test('difficulty levels map to distinct playing strengths', () => {
+  assert.deepEqual(
+    (['easy', 'medium', 'hard', 'master'] as const).map(getDifficultyDepth),
+    [8, 14, 20, 26],
+  )
 })
 
 test('normalizeEngineRuntimeOptions keeps safe runtime ranges', () => {

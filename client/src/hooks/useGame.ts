@@ -540,14 +540,13 @@ export function useGame({
       fen: engineBaseFen,
       moves: uciMoves,
       difficulty: currentPlayerConfig.difficulty || difficulty,
-      ...searchLimit,
     })
     if (!sent) {
       pendingRequestRef.current = null
       candidateRequestRef.current = null
       setAiThinking(false)
     }
-  }, [gameStatus, aiThinking, reviewThinking, gameMode, currentPlayerConfig, connected, send, engineBaseFen, uciMoves, difficulty, searchLimit])
+  }, [gameStatus, aiThinking, reviewThinking, gameMode, currentPlayerConfig, connected, send, engineBaseFen, uciMoves, difficulty])
 
   const handleCellClick = useCallback((pos: Position) => {
     if (gameStatus !== 'playing') return
@@ -926,13 +925,13 @@ export function useGame({
       fen: engineBaseFen,
       movesKey: uciMoves.join(' '),
     }
-    const sent = send({ type: 'move', requestId, fen: engineBaseFen, moves: uciMoves, difficulty: difficultyForTurn, ...searchLimit })
+    const sent = send({ type: 'move', requestId, fen: engineBaseFen, moves: uciMoves, difficulty: difficultyForTurn })
     if (!sent) {
       pendingRequestRef.current = null
       candidateRequestRef.current = null
       setAiThinking(false)
     }
-  }, [gameMode, connected, gameStatus, aiThinking, reviewThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, engineBaseFen, searchLimit])
+  }, [gameMode, connected, gameStatus, aiThinking, reviewThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, engineBaseFen])
 
   const declareDraw = useCallback(() => {
     if (gameStatus !== 'playing') return

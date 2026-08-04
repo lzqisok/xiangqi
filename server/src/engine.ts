@@ -43,6 +43,10 @@ const DEPTH_MAP: Record<Difficulty, number> = {
   master: 26,
 }
 
+export function getDifficultyDepth(difficulty: Difficulty): number {
+  return DEPTH_MAP[difficulty]
+}
+
 export function buildGoCommand(defaultDepth: number, limit?: EngineSearchLimit): string {
   if (limit?.searchMode === 'time' && typeof limit.searchTimeMs === 'number') {
     return `go movetime ${limit.searchTimeMs}`
@@ -199,7 +203,7 @@ export class PikafishEngine extends EventEmitter {
 
     try {
       await this.stopSearchIfNeeded()
-      const depth = DEPTH_MAP[difficulty]
+      const depth = getDifficultyDepth(difficulty)
       this.send('isready')
       await this.waitFor('readyok', 5000)
 
@@ -242,7 +246,7 @@ export class PikafishEngine extends EventEmitter {
     let infoHandler: ((info: EngineInfo) => void) | null = null
     try {
       await this.stopSearchIfNeeded()
-      const depth = Math.min(16, DEPTH_MAP[difficulty])
+      const depth = Math.min(16, getDifficultyDepth(difficulty))
       const candidateCount = Math.max(1, Math.min(5, count))
       const candidates = new Map<number, EngineCandidate>()
       infoHandler = (info: EngineInfo) => {

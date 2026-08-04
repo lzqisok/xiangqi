@@ -239,8 +239,8 @@ export default function GamePanel({
         </div>
       )}
 
-      <div className="panel-section">
-        <div className="panel-section-title">其他功能</div>
+      <details className="panel-section secondary-actions">
+        <summary>更多工具</summary>
         <div className="panel-buttons">
           <button onClick={onFlip}>翻转棋盘</button>
           <button
@@ -261,7 +261,7 @@ export default function GamePanel({
           {!isAiVsAi && <button className="new-game" onClick={onResign} disabled={!canManualEnd}>认输</button>}
           <button className="new-game" onClick={onNewGame}>新游戏</button>
         </div>
-      </div>
+      </details>
     </div>
   )
 }

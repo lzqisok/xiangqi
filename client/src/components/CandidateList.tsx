@@ -73,15 +73,20 @@ export default function CandidateList({
         <h3>候选走法</h3>
         <button onClick={onRequest} disabled={!canRequest}>{thinking ? '计算中...' : '刷新'}</button>
       </div>
-      <label className="candidate-auto-refresh">
-        <input
-          type="checkbox"
-          checked={autoRefresh}
-          onChange={e => onAutoRefreshChange(e.target.checked)}
-        />
-        自动刷新
-      </label>
-      <div className="engine-settings-panel">
+      <div className="candidate-quick-settings">
+        <label className="candidate-auto-refresh">
+          <input
+            type="checkbox"
+            checked={autoRefresh}
+            onChange={e => onAutoRefreshChange(e.target.checked)}
+          />
+          自动刷新
+        </label>
+        <span>{candidateCount} 路 · {searchMode === 'depth' ? `D${searchDepth}` : `${searchTimeMs / 1000}s`}</span>
+      </div>
+      <details className="engine-settings-disclosure">
+        <summary>引擎参数</summary>
+        <div className="engine-settings-panel">
         <label>
           候选数量
           <select value={candidateCount} onChange={e => onCandidateCountChange(Number(e.target.value))}>
@@ -156,7 +161,8 @@ export default function CandidateList({
             ))}
           </select>
         </label>
-      </div>
+        </div>
+      </details>
       {candidates.length === 0 ? (
         <div className="candidate-empty">{thinking ? '正在计算候选走法' : '暂无候选走法'}</div>
       ) : (

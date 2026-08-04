@@ -9,8 +9,6 @@ interface VariationPanelProps {
 }
 
 export default function VariationPanel({ children, mainChildId, branchCount, onSelect, onSetMain }: VariationPanelProps) {
-  if (branchCount === 0 && children.length <= 1) return null
-
   return (
     <section className="variation-panel">
       <div className="variation-header">
@@ -20,7 +18,7 @@ export default function VariationPanel({ children, mainChildId, branchCount, onS
         </div>
       </div>
 
-      {children.length > 0 ? (
+      {branchCount > 0 && children.length > 0 ? (
         <div className="variation-options">
           <span className="variation-help">当前局面的后续走法</span>
           {children.map(node => {

@@ -14,14 +14,14 @@
   --legal-move: rgba(47, 158, 111, 0.42);
   --last-move: rgba(70, 132, 123, 0.38);
   --check-highlight: rgba(216, 73, 56, 0.34);
-  --bg-dark: #111916;
-  --bg-card: #18231f;
-  --text-primary: #f3ead8;
-  --text-secondary: #aeb8ad;
-  --accent: #d6a64b;
-  --accent-hover: #e4b960;
-  --btn-bg: #25443b;
-  --btn-hover: #31594d;
+  --bg-dark: #0d1512;
+  --bg-card: #17211d;
+  --text-primary: #f5f0e7;
+  --text-secondary: #a8b2ab;
+  --accent: #d8ad5b;
+  --accent-hover: #e7bf70;
+  --btn-bg: #253d35;
+  --btn-hover: #315247;
   --danger: #b64035;
   --success: #3d9b73;
   --panel-border: rgba(222, 207, 176, 0.11);
@@ -37,7 +37,8 @@
 body {
   font-family: 'Noto Sans SC', sans-serif;
   background:
-    linear-gradient(180deg, rgba(34, 52, 44, 0.86), rgba(17, 25, 22, 1)),
+    radial-gradient(circle at 50% -20%, rgba(91, 123, 103, 0.25), transparent 45%),
+    linear-gradient(180deg, #16231e 0%, #0d1512 72%),
     var(--bg-dark);
   color: var(--text-primary);
   min-height: 100vh;
@@ -46,17 +47,96 @@ body {
 
 .app {
   display: flex;
+  flex-direction: column;
   justify-content: center;
+  gap: 16px;
   align-items: flex-start;
   min-height: 100vh;
-  padding: 20px;
+  padding: 18px 24px 28px;
 }
+
+.workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: min(100%, 1268px);
+  min-height: 54px;
+  margin: 0 auto;
+  padding: 0 4px;
+}
+
+.workspace-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.workspace-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(216, 173, 91, 0.48);
+  border-radius: 50%;
+  background: rgba(216, 173, 91, 0.1);
+  color: var(--accent);
+  font-family: 'Noto Serif SC', serif;
+  font-size: 21px;
+  font-weight: 900;
+}
+
+.workspace-brand > span:last-child {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-brand strong {
+  font-family: 'Noto Serif SC', serif;
+  font-size: 20px;
+  letter-spacing: 3px;
+}
+
+.workspace-brand small {
+  margin-top: 1px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  letter-spacing: 1.7px;
+}
+
+.workspace-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.workspace-context > span,
+.workspace-context > strong {
+  padding: 6px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  font-weight: 500;
+}
+
+.workspace-context > strong {
+  max-width: 240px;
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-context .workspace-turn.red { color: #ef7a69; }
+.workspace-context .workspace-turn.black { color: #d0d8d2; }
 
 .game-container {
   display: flex;
   gap: 20px;
   align-items: flex-start;
-  width: min(100%, 1520px);
+  width: min(100%, 1268px);
+  margin: 0 auto;
   justify-content: center;
 }
 
@@ -73,6 +153,11 @@ body {
   width: 592px;
   max-width: 100%;
   flex-shrink: 0;
+  padding: 7px;
+  border: 1px solid rgba(216, 173, 91, 0.18);
+  border-radius: 15px;
+  background: rgba(4, 9, 7, 0.2);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
 }
 
 .board-game-over-banner {
@@ -106,8 +191,8 @@ body {
 }
 
 .board-canvas {
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.34);
   cursor: pointer;
   display: block;
   max-width: 100%;
@@ -204,28 +289,101 @@ body {
 .side-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  width: 280px;
+  gap: 0;
+  width: 340px;
   flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: rgba(20, 30, 26, 0.88);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.24);
 }
 
 .left-panel {
-  width: 260px;
+  width: 244px;
   flex-shrink: 0;
 }
 
 .left-panel .move-history {
-  height: min(656px, calc(100vh - 40px));
+  height: min(670px, calc(100vh - 104px));
   max-height: none;
+}
+
+.workspace-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid var(--panel-border);
+  background: rgba(6, 12, 9, 0.24);
+}
+
+.workspace-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 38px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: 'Noto Sans SC', sans-serif;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.workspace-tabs button:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.workspace-tabs button.active {
+  background: rgba(216, 173, 91, 0.13);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.workspace-tabs button span {
+  min-width: 16px;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: rgba(216, 173, 91, 0.16);
+  font-size: 9px;
+}
+
+.workspace-tool-content {
+  max-height: calc(100vh - 122px);
+  overflow-y: auto;
+}
+
+.workspace-tool-content::-webkit-scrollbar { width: 5px; }
+.workspace-tool-content::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.workspace-tool-content > .candidate-list,
+.workspace-tool-content > .review-panel,
+.workspace-tool-content > .variation-panel,
+.workspace-tool-content > .analysis-curve {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.workspace-tool-content > .analysis-curve {
+  border-top: 1px solid var(--panel-border);
 }
 
 /* Game Panel */
 .game-panel {
-  background: var(--bg-card);
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  padding: 20px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 18px;
+  box-shadow: none;
 }
 
 .game-panel .status {
@@ -282,6 +440,35 @@ body {
 .panel-section + .panel-section {
   margin-top: 14px;
 }
+
+.secondary-actions {
+  padding-top: 14px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.secondary-actions summary,
+.engine-settings-disclosure summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.secondary-actions summary::after,
+.engine-settings-disclosure summary::after {
+  content: '＋';
+  color: var(--accent);
+  font-size: 15px;
+}
+
+.secondary-actions[open] summary::after,
+.engine-settings-disclosure[open] summary::after { content: '－'; }
+
+.secondary-actions .panel-buttons { margin-top: 9px; }
 
 .panel-section-title {
   font-size: 12px;
@@ -478,11 +665,11 @@ body {
 
 /* Move History */
 .move-history {
-  background: var(--bg-card);
+  background: rgba(20, 30, 26, 0.88);
   border: 1px solid var(--panel-border);
-  border-radius: 8px;
+  border-radius: 14px;
   padding: 16px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.24);
   max-height: 350px;
   display: flex;
   flex-direction: column;
@@ -635,9 +822,33 @@ body {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin-bottom: 10px;
+  margin-bottom: 0;
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+.candidate-quick-settings {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.engine-settings-disclosure {
+  margin-bottom: 12px;
+  padding: 4px 9px;
+  border: 1px solid var(--panel-border);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.engine-settings-disclosure .engine-settings-panel {
+  margin: 7px 0 5px;
+  padding-top: 9px;
+  border-top: 1px solid var(--panel-border);
 }
 
 .engine-settings-panel {
@@ -1083,18 +1294,41 @@ body {
   align-items: center;
   min-height: 100vh;
   background:
-    radial-gradient(ellipse at top, rgba(60, 91, 76, 0.5) 0%, rgba(17, 25, 22, 0) 62%),
-    linear-gradient(180deg, #1f3129 0%, #111916 76%);
+    radial-gradient(circle at 50% 10%, rgba(104, 139, 116, 0.3), transparent 42%),
+    linear-gradient(145deg, #17261f 0%, #0c1411 78%);
 }
 
 .start-card {
-  background: var(--bg-card);
-  border-radius: 12px;
-  padding: 48px 44px;
-  box-shadow: 0 16px 64px rgba(0, 0, 0, 0.5);
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(155deg, rgba(29, 43, 36, 0.96), rgba(17, 27, 23, 0.96));
+  border-radius: 20px;
+  padding: 46px 48px 42px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.48);
   text-align: center;
-  min-width: 460px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  min-width: 620px;
+  border: 1px solid rgba(216, 173, 91, 0.14);
+}
+
+.start-card::before {
+  content: '楚河  ·  汉界';
+  position: absolute;
+  top: 24px;
+  right: -34px;
+  color: rgba(216, 173, 91, 0.04);
+  font-family: 'Noto Serif SC', serif;
+  font-size: 56px;
+  letter-spacing: 12px;
+  transform: rotate(90deg);
+  pointer-events: none;
+}
+
+.start-eyebrow {
+  margin-bottom: 10px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 3px;
 }
 
 .endgame-library-card,
@@ -1105,17 +1339,17 @@ body {
 
 .start-card h1 {
   font-family: 'Noto Serif SC', serif;
-  font-size: 42px;
+  font-size: 46px;
   font-weight: 900;
   color: var(--accent);
-  margin-bottom: 4px;
-  letter-spacing: 8px;
+  margin-bottom: 6px;
+  letter-spacing: 10px;
 }
 
 .start-card .subtitle {
   color: var(--text-secondary);
   font-size: 14px;
-  margin-bottom: 36px;
+  margin-bottom: 34px;
 }
 
 .option-group {
@@ -1142,20 +1376,20 @@ body {
 
 .mode-btn-group {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
 }
 
 .mode-btn-group button {
-  min-height: 44px;
+  min-height: 54px;
 }
 
 .btn-group button {
   flex: 1;
   padding: 10px 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 7px;
-  background: transparent;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
   color: var(--text-primary);
   font-size: 14px;
   font-family: 'Noto Sans SC', sans-serif;
@@ -1590,7 +1824,7 @@ body {
   width: 100%;
   padding: 14px;
   border: none;
-  border-radius: 10px;
+  border-radius: 12px;
   background: linear-gradient(135deg, var(--accent), #bc7d3e);
   color: #1b1712;
   font-size: 18px;
@@ -1598,7 +1832,7 @@ body {
   font-family: 'Noto Sans SC', sans-serif;
   cursor: pointer;
   transition: all 0.2s;
-  margin-top: 12px;
+  margin-top: 16px;
 }
 
 .start-btn:hover {
@@ -1742,6 +1976,13 @@ body {
   .app {
     padding: 12px;
   }
+  .workspace-header {
+    min-height: 48px;
+  }
+  .workspace-context > strong,
+  .workspace-context > span:first-child {
+    display: none;
+  }
   .game-container {
     flex-direction: column;
     align-items: center;
@@ -1751,7 +1992,7 @@ body {
     order: 1;
   }
   .left-panel {
-    order: 2;
+    order: 3;
     width: 100%;
     max-width: 500px;
   }
@@ -1760,15 +2001,18 @@ body {
     max-height: 350px;
   }
   .side-panel {
-    order: 3;
+    order: 2;
     width: 100%;
-    max-width: 500px;
-    flex-direction: row;
-    flex-wrap: wrap;
+    max-width: 592px;
+    flex-direction: column;
+    flex-wrap: nowrap;
   }
   .side-panel > * {
-    flex: 1;
-    min-width: 260px;
+    flex: none;
+    min-width: 0;
+  }
+  .workspace-tool-content {
+    max-height: none;
   }
   .engine-settings-panel {
     grid-template-columns: 1fr;
@@ -1782,8 +2026,8 @@ body {
     width: 100%;
   }
   .start-card {
-    min-width: min(100%, 460px);
-    width: min(100%, 460px);
+    min-width: min(100%, 620px);
+    width: min(100%, 620px);
     padding: 36px 24px;
   }
   .endgame-library-list {
@@ -1799,6 +2043,22 @@ body {
 }
 
 @media (max-width: 560px) {
+  .workspace-brand small { display: none; }
+
+  .workspace-brand strong {
+    font-size: 18px;
+  }
+
+  .workspace-context {
+    gap: 0;
+  }
+
+  .workspace-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+  }
+
   .candidate-preview-controls {
     align-items: stretch;
     flex-direction: column;
@@ -1841,6 +2101,10 @@ body {
   .start-card h1 {
     font-size: 34px;
     letter-spacing: 4px;
+  }
+
+  .mode-btn-group {
+    grid-template-columns: 1fr 1fr;
   }
 
   .btn-group {

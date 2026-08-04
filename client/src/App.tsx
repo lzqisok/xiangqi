@@ -63,6 +63,8 @@ type CandidatePreviewState = {
   stepIndex: number
 }
 
+type WorkspaceTab = 'play' | 'engine' | 'review' | 'variations'
+
 export default function App() {
   const [initialReplay] = useState(() => (
     typeof window === 'undefined' ? null : parseReplayStudyFromSearch(window.location.search)
@@ -89,6 +91,7 @@ export default function App() {
   const [showOnlyAnnotatedMoves, setShowOnlyAnnotatedMoves] = useState(false)
   const [candidateAutoRefresh, setCandidateAutoRefresh] = useState(false)
   const [candidatePreview, setCandidatePreview] = useState<CandidatePreviewState | null>(null)
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('play')
   const [studySaveStatus, setStudySaveStatus] = useState<'saved' | 'unsaved' | 'shared' | null>(null)
   const [engineSettings, setEngineSettings] = useState<EngineSettings>(() => loadEngineSettings())
   const [trainingHintLevel, setTrainingHintLevel] = useState(0)
@@ -399,6 +402,23 @@ export default function App() {
 
   return (
     <div className="app">
+      <header className="workspace-header">
+        <div className="workspace-brand">
+          <span className="workspace-brand-mark" aria-hidden="true">象</span>
+          <span>
+            <strong>棋境</strong>
+            <small>PIKAFISH XIANGQI</small>
+          </span>
+        </div>
+        <div className="workspace-context">
+          <span>{formatModeName(gameMode)}</span>
+          {gameMode === 'endgame' && selectedEndgame?.name && <strong>{selectedEndgame.name}</strong>}
+          {gameMode === 'study' && selectedStudy?.name && <strong>{selectedStudy.name}</strong>}
+          <span className={`workspace-turn ${game.currentTurn}`}>
+            {game.gameStatus === 'playing' ? `${game.currentTurn === 'red' ? '红方' : '黑方'}走棋` : '棋局结束'}
+          </span>
+        </div>
+      </header>
       <div className="game-container">
         <div className="left-panel">
           <MoveHistory
@@ -456,7 +476,18 @@ export default function App() {
           )}
         </div>
         <div className="side-panel">
-          <GamePanel
+          <nav className="workspace-tabs" aria-label="棋局工具">
+            <button className={workspaceTab === 'play' ? 'active' : ''} onClick={() => setWorkspaceTab('play')}>对局</button>
+            <button className={workspaceTab === 'engine' ? 'active' : ''} onClick={() => setWorkspaceTab('engine')}>分析</button>
+            <button className={workspaceTab === 'review' ? 'active' : ''} onClick={() => setWorkspaceTab('review')}>
+              复盘{moveReviews.length > 0 ? <span>{moveReviews.length}</span> : null}
+            </button>
+            <button className={workspaceTab === 'variations' ? 'active' : ''} onClick={() => setWorkspaceTab('variations')}>
+              变招{game.variationBranchCount > 0 ? <span>{game.variationBranchCount}</span> : null}
+            </button>
+          </nav>
+          <div className="workspace-tool-content">
+          {workspaceTab === 'play' && <GamePanel
             currentTurn={game.currentTurn}
             gameMode={gameMode}
             difficulty={difficulty}
@@ -502,7 +533,10 @@ export default function App() {
             onUndo={game.undo}
             onRedo={game.redo}
             onFlip={game.flip}
-            onToggleAnalysis={() => setShowAnalysis(!showAnalysis)}
+            onToggleAnalysis={() => {
+              setShowAnalysis(!showAnalysis)
+              if (!showAnalysis) setWorkspaceTab('engine')
+            }}
             onExportFen={() => setShowFenDialog('export')}
             onImportFen={() => setShowFenDialog('import')}
             onCopyMoveText={() => {
@@ -590,8 +624,8 @@ export default function App() {
             canRequestHint={game.canRequestHint}
             canStepAi={game.canStepAi}
             hintThinking={game.hintThinking}
-          />
-          <CandidateList
+          />}
+          {workspaceTab === 'engine' && <CandidateList
             candidates={game.moveCandidates}
             selectedCandidateMove={candidatePreview?.candidate.move}
             onPreview={(candidate) => {
@@ -642,8 +676,8 @@ export default function App() {
             onEngineHashMbChange={(engineHashMb) => {
               setEngineSettings(current => saveEngineSettings({ ...current, engineHashMb }))
             }}
-          />
-          <ReviewPanel
+          />}
+          {workspaceTab === 'review' && <ReviewPanel
             moveCount={game.historyRecords.length}
             reviews={moveReviews}
             thinking={game.reviewThinking}
@@ -655,15 +689,16 @@ export default function App() {
             }}
             onCancel={game.cancelReview}
             onJumpToPosition={game.jumpToMove}
-          />
-          <VariationPanel
+          />}
+          {workspaceTab === 'variations' && <VariationPanel
             children={game.variationChildren}
             mainChildId={game.mainVariationChildId}
             branchCount={game.variationBranchCount}
             onSelect={game.selectVariation}
             onSetMain={game.setMainVariationChild}
-          />
-          {showAnalysis && <AnalysisCurve points={game.analysisPoints} />}
+          />}
+          {workspaceTab === 'engine' && showAnalysis && <AnalysisCurve points={game.analysisPoints} />}
+          </div>
         </div>
       </div>
 
@@ -699,6 +734,14 @@ function scenarioNameFromState(gameMode: GameMode, selectedEndgame: EndgameDefin
     return `${selectedEndgame.name}-副本`
   }
   return '自定义残局'
+}
+
+function formatModeName(gameMode: GameMode): string {
+  if (gameMode === 'human-vs-ai') return '人机对弈'
+  if (gameMode === 'human-vs-human') return '双人对弈'
+  if (gameMode === 'ai-vs-ai') return 'AI 对战'
+  if (gameMode === 'endgame') return '残局训练'
+  return '研究局面'
 }
 
 function formatMoveRecords(records: MoveRecord[]): string {
@@ -841,8 +884,9 @@ function StartScreen({ onStart }: {
   return (
     <div className="start-screen">
       <div className="start-card">
+        <div className="start-eyebrow">PIKAFISH XIANGQI</div>
         <h1>中国象棋</h1>
-        <p className="subtitle">基于 Pikafish 引擎</p>
+        <p className="subtitle">对弈、拆棋与复盘，专注每一个局面。</p>
 
         <div className="option-group mode-option-group">
           <label>游戏模式</label>

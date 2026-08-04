@@ -23,8 +23,6 @@ export default function ReviewPanel({
   onCancel,
   onJumpToPosition,
 }: ReviewPanelProps) {
-  if (moveCount === 0) return null
-
   const issues = reviews.filter(review => DISPLAY_CATEGORIES.has(review.category))
   const counts = reviews.reduce<Partial<Record<MoveReviewCategory, number>>>((result, review) => {
     result[review.category] = (result[review.category] || 0) + 1
@@ -83,6 +81,9 @@ export default function ReviewPanel({
 
       {!thinking && reviews.length === 0 && moveCount > 120 && (
         <div className="review-empty">当前棋谱超过 120 步，请缩短后再复盘。</div>
+      )}
+      {moveCount === 0 && (
+        <div className="review-empty">完成走棋后，可在这里生成逐步复盘。</div>
       )}
     </section>
   )

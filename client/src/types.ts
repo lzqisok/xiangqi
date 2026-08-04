@@ -95,6 +95,23 @@ export interface ReviewPosition {
   pv: string[]
 }
 
+export interface VariationNode {
+  id: string
+  parentId: string | null
+  move?: MoveRecord
+  fen: string
+  children: string[]
+  mainChildId?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface VariationTree {
+  rootId: string
+  nodes: Record<string, VariationNode>
+  currentNodeId: string
+}
+
 export interface StudyPosition {
   id: string
   name: string
@@ -103,6 +120,7 @@ export interface StudyPosition {
   moves: MoveRecord[]
   currentMoveIndex: number
   analysisPoints: AnalysisPoint[]
+  variationTree?: VariationTree
   createdAt: number
   updatedAt: number
 }

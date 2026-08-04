@@ -872,6 +872,92 @@ body {
   grid-column: 2 / 4;
 }
 
+.variation-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.variation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.variation-header h3 {
+  color: var(--accent);
+  font-family: 'Noto Serif SC', serif;
+  font-size: 15px;
+}
+
+.variation-header span,
+.variation-help,
+.variation-empty {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.variation-options {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.variation-help {
+  margin-bottom: 1px;
+}
+
+.variation-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
+.variation-select,
+.variation-promote {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.variation-select {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.variation-select span {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.variation-option.main .variation-select {
+  border-color: rgba(214, 166, 75, 0.3);
+  background: rgba(214, 166, 75, 0.08);
+}
+
+.variation-promote {
+  padding: 6px 8px;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.variation-select:hover,
+.variation-promote:hover {
+  border-color: rgba(214, 166, 75, 0.4);
+}
+
+.variation-empty {
+  margin-top: 10px;
+  line-height: 1.5;
+}
+
 /* Analysis Bar */
 .analysis-bar {
   width: 32px;

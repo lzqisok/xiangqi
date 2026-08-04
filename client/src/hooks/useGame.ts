@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Board, Position, Move, MoveRecord, PieceColor,
   GameMode, Difficulty, PlayerSide, GameStatus, GameStatusReason, WSMessage, PlayerConfig, AnalysisPoint, MoveCandidate, EngineSearchLimit,
-  EngineRuntimeOptions, ReviewPosition,
+  EngineRuntimeOptions, ReviewPosition, VariationTree,
 } from '../types'
 import { parseFen, boardToFen, applyMove, INITIAL_FEN, findKing } from '../engine/board'
 import { getLegalMoves, isInCheck, getGameStatusDetail } from '../engine/rules'
@@ -11,6 +11,15 @@ import { validateFenPosition } from '../engine/validation'
 import { useWebSocket } from './useWebSocket'
 import { getManualDrawStatus, getRedoTargetIndex, getResignationStatus, getUndoTargetIndex, sendStopForActiveEngineRequests, shouldAutoRequestAiMove } from './gameFlow'
 import { playMoveSound, playCaptureSound, playCheckSound, playGameOverSound } from '../audio'
+import {
+  addVariationMove,
+  countVariationBranches,
+  createVariationTree,
+  getVariationLine,
+  selectVariationNode,
+  setMainVariation,
+  updateVariationMove,
+} from '../variations/tree'
 
 interface UseGameOptions {
   gameMode: GameMode | null
@@ -27,6 +36,7 @@ interface UseGameOptions {
   initialMoveRecords?: MoveRecord[]
   initialCurrentMoveIndex?: number
   initialAnalysisPoints?: AnalysisPoint[]
+  initialVariationTree?: VariationTree
   redPlayerConfig?: PlayerConfig
   blackPlayerConfig?: PlayerConfig
 }
@@ -98,6 +108,7 @@ export function useGame({
   initialMoveRecords,
   initialCurrentMoveIndex,
   initialAnalysisPoints,
+  initialVariationTree,
   redPlayerConfig,
   blackPlayerConfig,
 }: UseGameOptions) {
@@ -126,6 +137,8 @@ export function useGame({
   const [reviewProgress, setReviewProgress] = useState({ completed: 0, total: 0 })
   const [reviewPositions, setReviewPositions] = useState<ReviewPosition[]>([])
   const [reviewedMovesKey, setReviewedMovesKey] = useState('')
+  const [variationTree, setVariationTree] = useState<VariationTree>(() => createVariationTree(resolvedInitialFen, [], -1))
+  const [activeVariationNodeIds, setActiveVariationNodeIds] = useState<string[]>([])
   const [hintMove, setHintMove] = useState<Move | null>(null)
   const [engineAvailable, setEngineAvailable] = useState<boolean | null>(null)
   const [engineStatusMessage, setEngineStatusMessage] = useState('')
@@ -142,6 +155,10 @@ export function useGame({
   const analysisRequestRef = useRef<{ id: string; movesKey: string } | null>(null)
   const candidateRequestRef = useRef<{ id: string; movesKey: string } | null>(null)
   const reviewRequestRef = useRef<{ id: string; movesKey: string } | null>(null)
+  const variationTreeRef = useRef(variationTree)
+  variationTreeRef.current = variationTree
+  const activeVariationNodeIdsRef = useRef(activeVariationNodeIds)
+  activeVariationNodeIdsRef.current = activeVariationNodeIds
   const players = getDefaultPlayers(
     gameMode,
     difficulty,
@@ -186,6 +203,21 @@ export function useGame({
 
     return translated
   }, [buildMoveFromUci])
+
+  const commitVariationMove = useCallback((record: MoveRecord, parentMoveIndex: number) => {
+    const currentTree = variationTreeRef.current
+    const parentId = parentMoveIndex >= 0
+      ? activeVariationNodeIdsRef.current[parentMoveIndex]
+      : currentTree.rootId
+    const added = addVariationMove(currentTree, parentId || currentTree.rootId, record)
+    const line = getVariationLine(added.tree, added.nodeId)
+    variationTreeRef.current = added.tree
+    activeVariationNodeIdsRef.current = line.nodeIds
+    setVariationTree(added.tree)
+    setActiveVariationNodeIds(line.nodeIds)
+    setAnalysisPoints(prev => prev.filter(point => point.moveIndex <= parentMoveIndex))
+    return line
+  }, [])
 
   const handleWsMessage = useCallback((msg: WSMessage) => {
     if (msg.type === 'bestmove') {
@@ -238,9 +270,10 @@ export function useGame({
       setLastMove(move)
       setCurrentTurn(nextTurn)
       setHintMove(null)
-      setUciMoves(prev => [...prev.slice(0, historyIdx + 1), msg.move])
-      setMoveHistory(prev => [...prev.slice(0, historyIdx + 1), { move, notation, fen, elapsedMs: msg.elapsedMs, source }])
-      setCurrentMoveIndex(historyIdx + 1)
+      const variationLine = commitVariationMove({ move, notation, fen, elapsedMs: msg.elapsedMs, source }, historyIdx)
+      setUciMoves(uciListFromRecords(variationLine.records.slice(0, variationLine.currentMoveIndex + 1)))
+      setMoveHistory(variationLine.records)
+      setCurrentMoveIndex(variationLine.currentMoveIndex)
       setSelectedPos(null)
       setLegalMoves([])
       setMoveCandidates([])
@@ -329,7 +362,7 @@ export function useGame({
       setCandidateThinking(false)
       setReviewThinking(false)
     }
-  }, [buildMoveFromUci, translatePv])
+  }, [buildMoveFromUci, commitVariationMove, translatePv])
 
   const { send, connected, connectionState } = useWebSocket(handleWsMessage)
 
@@ -341,6 +374,7 @@ export function useGame({
   const prevInitialMoveRecords = useRef<MoveRecord[] | undefined>(undefined)
   const prevInitialCurrentMoveIndex = useRef<number | undefined>(undefined)
   const prevInitialAnalysisPoints = useRef<AnalysisPoint[] | undefined>(undefined)
+  const prevInitialVariationTree = useRef<VariationTree | undefined>(undefined)
   const prevRedPlayerConfig = useRef<PlayerConfig | undefined>(undefined)
   const prevBlackPlayerConfig = useRef<PlayerConfig | undefined>(undefined)
 
@@ -357,6 +391,7 @@ export function useGame({
     const recordsChanged = prevInitialMoveRecords.current !== initialMoveRecords
     const indexChanged = prevInitialCurrentMoveIndex.current !== initialCurrentMoveIndex
     const analysisPointsChanged = prevInitialAnalysisPoints.current !== initialAnalysisPoints
+    const variationTreeChanged = prevInitialVariationTree.current !== initialVariationTree
     const redConfigChanged = prevRedPlayerConfig.current !== redPlayerConfig
     const blackConfigChanged = prevBlackPlayerConfig.current !== blackPlayerConfig
 
@@ -367,13 +402,21 @@ export function useGame({
     prevInitialMoveRecords.current = initialMoveRecords
     prevInitialCurrentMoveIndex.current = initialCurrentMoveIndex
     prevInitialAnalysisPoints.current = initialAnalysisPoints
+    prevInitialVariationTree.current = initialVariationTree
     prevRedPlayerConfig.current = redPlayerConfig
     prevBlackPlayerConfig.current = blackPlayerConfig
 
-    if (!modeChanged && !diffChanged && !sideChanged && !fenChanged && !recordsChanged && !indexChanged && !analysisPointsChanged && !redConfigChanged && !blackConfigChanged) return
+    if (!modeChanged && !diffChanged && !sideChanged && !fenChanged && !recordsChanged && !indexChanged && !analysisPointsChanged && !variationTreeChanged && !redConfigChanged && !blackConfigChanged) return
 
-    const restoredRecords = initialMoveRecords || []
-    const restoredIndex = Math.min(initialCurrentMoveIndex ?? restoredRecords.length - 1, restoredRecords.length - 1)
+    const legacyRecords = initialMoveRecords || []
+    const restoredTree = initialVariationTree || createVariationTree(
+      resolvedInitialFen,
+      legacyRecords,
+      initialCurrentMoveIndex ?? legacyRecords.length - 1,
+    )
+    const restoredLine = getVariationLine(restoredTree)
+    const restoredRecords = restoredLine.records
+    const restoredIndex = restoredLine.currentMoveIndex
     const restoredFen = restoredIndex >= 0 ? restoredRecords[restoredIndex].fen : resolvedInitialFen
     const { board: initBoard, turn } = parseFen(restoredFen)
     setEngineBaseFen(resolvedInitialFen)
@@ -384,6 +427,10 @@ export function useGame({
     setMoveHistory(restoredRecords)
     setCurrentMoveIndex(restoredIndex)
     setUciMoves(uciListFromRecords(restoredRecords.slice(0, restoredIndex + 1)))
+    setVariationTree(restoredTree)
+    variationTreeRef.current = restoredTree
+    setActiveVariationNodeIds(restoredLine.nodeIds)
+    activeVariationNodeIdsRef.current = restoredLine.nodeIds
     const statusDetail = getGameStatusDetail(initBoard, turn)
     setGameStatus(statusDetail.status)
     setGameStatusReason(statusDetail.reason)
@@ -410,7 +457,7 @@ export function useGame({
     analysisRequestRef.current = null
     candidateRequestRef.current = null
     reviewRequestRef.current = null
-  }, [gameMode, difficulty, playerSide, aiRedDifficulty, aiBlackDifficulty, resolvedInitialFen, initialMoveRecords, initialCurrentMoveIndex, initialAnalysisPoints, redPlayerConfig, blackPlayerConfig])
+  }, [gameMode, difficulty, playerSide, aiRedDifficulty, aiBlackDifficulty, resolvedInitialFen, initialMoveRecords, initialCurrentMoveIndex, initialAnalysisPoints, initialVariationTree, redPlayerConfig, blackPlayerConfig])
 
   useEffect(() => {
     if (!connected) {
@@ -517,21 +564,20 @@ export function useGame({
         const selectedPiece = board[selectedPos.row][selectedPos.col]!
         const { newBoard, captured } = applyMove(board, selectedPos, pos)
         const move: Move = { from: selectedPos, to: pos, captured: captured || undefined, piece: selectedPiece }
-        const uci = moveToUci(selectedPos, pos)
         const notation = moveToNotation(board, move)
         const nextTurn: PieceColor = currentTurn === 'red' ? 'black' : 'red'
         const fen = boardToFen(newBoard, nextTurn)
 
-        const newUciMoves = [...uciMoves.slice(0, currentMoveIndex + 1), uci]
-        const newHistory = [...moveHistory.slice(0, currentMoveIndex + 1), { move, notation, fen, source: 'human' as const }]
+        const variationLine = commitVariationMove({ move, notation, fen, source: 'human' }, currentMoveIndex)
+        const newUciMoves = uciListFromRecords(variationLine.records.slice(0, variationLine.currentMoveIndex + 1))
 
         setBoard(newBoard)
         setLastMove(move)
         setCurrentTurn(nextTurn)
         setHintMove(null)
         setUciMoves(newUciMoves)
-        setMoveHistory(newHistory)
-        setCurrentMoveIndex(newHistory.length - 1)
+        setMoveHistory(variationLine.records)
+        setCurrentMoveIndex(variationLine.currentMoveIndex)
         setSelectedPos(null)
         setLegalMoves([])
         setMoveCandidates([])
@@ -568,7 +614,7 @@ export function useGame({
       setSelectedPos(pos)
       setLegalMoves(getLegalMoves(board, pos))
     }
-  }, [board, selectedPos, legalMoves, currentTurn, gameMode, currentPlayerConfig, gameStatus, aiThinking, reviewThinking, uciMoves, moveHistory, currentMoveIndex])
+  }, [board, selectedPos, legalMoves, currentTurn, gameMode, currentPlayerConfig, gameStatus, aiThinking, reviewThinking, currentMoveIndex, commitVariationMove])
 
   const inCheck = (() => {
     if (isInCheck(board, currentTurn)) {
@@ -590,12 +636,21 @@ export function useGame({
     reviewRequestRef.current = null
   }, [connected, send])
 
+  const setVariationCurrentIndex = useCallback((index: number) => {
+    const tree = variationTreeRef.current
+    const nodeId = index >= 0 ? activeVariationNodeIdsRef.current[index] : tree.rootId
+    if (!nodeId) return
+    const nextTree = selectVariationNode(tree, nodeId)
+    variationTreeRef.current = nextTree
+    setVariationTree(nextTree)
+  }, [])
+
   const undo = useCallback(() => {
     if (currentMoveIndex < 0) return
     const targetIndex = getUndoTargetIndex(currentMoveIndex, gameMode, players)
 
     if (targetIndex < 0) {
-      const { board: initBoard, turn } = parseFen(resolvedInitialFen)
+      const { board: initBoard, turn } = parseFen(engineBaseFen)
       setBoard(initBoard)
       setCurrentTurn(turn)
       setLastMove(null)
@@ -614,11 +669,12 @@ export function useGame({
     }
 
     setCurrentMoveIndex(targetIndex)
+    setVariationCurrentIndex(targetIndex)
     setUciMoves(uciListFromRecords(moveHistory.slice(0, targetIndex + 1)))
     setSelectedPos(null)
     setLegalMoves([])
     stopActiveRequests()
-  }, [currentMoveIndex, moveHistory, gameMode, players, resolvedInitialFen, stopActiveRequests])
+  }, [currentMoveIndex, moveHistory, gameMode, players, engineBaseFen, setVariationCurrentIndex, stopActiveRequests])
 
   const redo = useCallback(() => {
     if (currentMoveIndex >= moveHistory.length - 1) return
@@ -630,6 +686,7 @@ export function useGame({
     setCurrentTurn(turn)
     setLastMove(record.move)
     setCurrentMoveIndex(targetIndex)
+    setVariationCurrentIndex(targetIndex)
     setUciMoves(uciListFromRecords(moveHistory.slice(0, targetIndex + 1)))
     setSelectedPos(null)
     setLegalMoves([])
@@ -638,7 +695,7 @@ export function useGame({
     const statusDetail = getGameStatusDetail(nextBoard, turn)
     setGameStatus(statusDetail.status)
     setGameStatusReason(statusDetail.reason)
-  }, [currentMoveIndex, moveHistory, gameMode, players, stopActiveRequests])
+  }, [currentMoveIndex, moveHistory, gameMode, players, setVariationCurrentIndex, stopActiveRequests])
 
   const flip = useCallback(() => {
     setFlipped(f => !f)
@@ -650,11 +707,29 @@ export function useGame({
   }, [])
 
   const toggleMoveMark = useCallback((index: number) => {
-    setMoveHistory(prev => prev.map((record, i) => i === index ? { ...record, marked: !record.marked } : record))
+    setMoveHistory(prev => {
+      const next = prev.map((record, i) => i === index ? { ...record, marked: !record.marked } : record)
+      const nodeId = activeVariationNodeIdsRef.current[index]
+      if (nodeId && next[index]) {
+        const nextTree = updateVariationMove(variationTreeRef.current, nodeId, next[index])
+        variationTreeRef.current = nextTree
+        setVariationTree(nextTree)
+      }
+      return next
+    })
   }, [])
 
   const updateMoveNote = useCallback((index: number, note: string) => {
-    setMoveHistory(prev => prev.map((record, i) => i === index ? { ...record, note: note.trim() || undefined } : record))
+    setMoveHistory(prev => {
+      const next = prev.map((record, i) => i === index ? { ...record, note: note.trim() || undefined } : record)
+      const nodeId = activeVariationNodeIdsRef.current[index]
+      if (nodeId && next[index]) {
+        const nextTree = updateVariationMove(variationTreeRef.current, nodeId, next[index])
+        variationTreeRef.current = nextTree
+        setVariationTree(nextTree)
+      }
+      return next
+    })
   }, [])
 
   const jumpToMove = useCallback((index: number) => {
@@ -665,6 +740,7 @@ export function useGame({
       setCurrentTurn(turn)
       setLastMove(null)
       setCurrentMoveIndex(-1)
+      setVariationCurrentIndex(-1)
       setUciMoves([])
       setSelectedPos(null)
       setLegalMoves([])
@@ -680,6 +756,7 @@ export function useGame({
     setCurrentTurn(turn)
     setLastMove(record.move)
     setCurrentMoveIndex(index)
+    setVariationCurrentIndex(index)
     setUciMoves(uciListFromRecords(moveHistory.slice(0, index + 1)))
     setSelectedPos(null)
     setLegalMoves([])
@@ -687,7 +764,7 @@ export function useGame({
     const statusDetail = getGameStatusDetail(targetBoard, turn)
     setGameStatus(statusDetail.status)
     setGameStatusReason(statusDetail.reason)
-  }, [engineBaseFen, moveHistory, stopActiveRequests])
+  }, [engineBaseFen, moveHistory, setVariationCurrentIndex, stopActiveRequests])
 
   const getCurrentFen = useCallback(() => {
     return boardToFen(board, currentTurn, Math.floor((currentMoveIndex + 2) / 2))
@@ -718,12 +795,55 @@ export function useGame({
       setBestLine([])
       setAnalysisDepth(0)
       setAnalysisPoints([])
+      const emptyTree = createVariationTree(normalizedFen, [], -1)
+      variationTreeRef.current = emptyTree
+      activeVariationNodeIdsRef.current = []
+      setVariationTree(emptyTree)
+      setActiveVariationNodeIds([])
       stopActiveRequests()
       return true
     } catch {
       return false
     }
   }, [stopActiveRequests])
+
+  const selectVariation = useCallback((nodeId: string) => {
+    const selectedTree = selectVariationNode(variationTreeRef.current, nodeId)
+    if (selectedTree === variationTreeRef.current) return
+    const line = getVariationLine(selectedTree, nodeId)
+    const node = selectedTree.nodes[nodeId]
+    if (!node?.move) return
+    const { board: selectedBoard, turn } = parseFen(node.fen)
+    variationTreeRef.current = selectedTree
+    activeVariationNodeIdsRef.current = line.nodeIds
+    setVariationTree(selectedTree)
+    setActiveVariationNodeIds(line.nodeIds)
+    setMoveHistory(line.records)
+    setCurrentMoveIndex(line.currentMoveIndex)
+    setUciMoves(uciListFromRecords(line.records.slice(0, line.currentMoveIndex + 1)))
+    setBoard(selectedBoard)
+    setCurrentTurn(turn)
+    setLastMove(node.move.move)
+    setSelectedPos(null)
+    setLegalMoves([])
+    setAnalysisPoints([])
+    stopActiveRequests()
+    const statusDetail = getGameStatusDetail(selectedBoard, turn)
+    setGameStatus(statusDetail.status)
+    setGameStatusReason(statusDetail.reason)
+  }, [stopActiveRequests])
+
+  const setMainVariationChild = useCallback((childId: string) => {
+    const currentTree = variationTreeRef.current
+    const nextTree = setMainVariation(currentTree, currentTree.currentNodeId, childId)
+    if (nextTree === currentTree) return
+    const line = getVariationLine(nextTree, nextTree.currentNodeId)
+    variationTreeRef.current = nextTree
+    activeVariationNodeIdsRef.current = line.nodeIds
+    setVariationTree(nextTree)
+    setActiveVariationNodeIds(line.nodeIds)
+    setMoveHistory(line.records)
+  }, [])
 
   const requestHint = useCallback(() => {
     if (!connected || gameStatus !== 'playing' || aiThinking || hintThinking || candidateThinking || reviewThinking) return
@@ -858,6 +978,11 @@ export function useGame({
     () => moveHistory.slice(0, currentMoveIndex + 1),
     [moveHistory, currentMoveIndex],
   )
+  const variationChildren = useMemo(() => {
+    const currentNode = variationTree.nodes[variationTree.currentNodeId]
+    if (!currentNode) return []
+    return currentNode.children.flatMap(id => variationTree.nodes[id] ? [variationTree.nodes[id]] : [])
+  }, [variationTree])
 
   return {
     board,
@@ -878,6 +1003,10 @@ export function useGame({
     moveCandidates,
     moveRecords,
     historyRecords: moveHistory,
+    variationTree,
+    variationChildren,
+    variationBranchCount: countVariationBranches(variationTree),
+    mainVariationChildId: variationTree.nodes[variationTree.currentNodeId]?.mainChildId,
     currentMoveIndex,
     hintThinking,
     candidateThinking,
@@ -903,6 +1032,8 @@ export function useGame({
     toggleMoveMark,
     updateMoveNote,
     jumpToMove,
+    selectVariation,
+    setMainVariationChild,
     requestHint,
     requestCandidates,
     requestReview,

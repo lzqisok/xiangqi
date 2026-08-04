@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { deleteStudyPositions, duplicateStudyPosition, importStudyPositionsJson, renameStudyPosition, saveStudyPosition } from './storage'
+import { deleteStudyPositions, duplicateStudyPosition, exportStudyPositionsJson, importStudyPositionsJson, renameStudyPosition, saveStudyPosition } from './storage'
+import { createVariationTree } from '../variations/tree'
 
 const MOVE = {
   move: {
@@ -13,6 +14,7 @@ const MOVE = {
 }
 
 test('importStudyPositionsJson imports wrapped studies and filters invalid entries', () => {
+  mockStudies([])
   const result = importStudyPositionsJson(JSON.stringify({
     studies: [
       {
@@ -44,6 +46,22 @@ test('importStudyPositionsJson imports wrapped studies and filters invalid entri
   assert.equal(result[0].moves.length, 1)
 })
 
+test('study JSON v2 preserves valid trees and rejects disconnected nodes', () => {
+  const valid = makeStudy('study-tree', 1)
+  valid.variationTree = createVariationTree(valid.initialFen, valid.moves, 0, 1)
+  mockStudies([valid])
+  assert.equal(JSON.parse(exportStudyPositionsJson()).version, 2)
+
+  const invalid = structuredClone(valid)
+  invalid.id = 'study-invalid-tree'
+  invalid.variationTree!.nodes.orphan = {
+    ...invalid.variationTree!.nodes['variation-node-1'],
+    id: 'orphan',
+  }
+  const imported = importStudyPositionsJson(JSON.stringify({ version: 2, studies: [invalid] }))
+  assert.deepEqual(imported.map(study => study.id), ['study-tree'])
+})
+
 test('deleteStudyPositions removes multiple selected studies', () => {
   mockStudies([
     makeStudy('study-a', 1),
@@ -67,7 +85,9 @@ test('renameStudyPosition trims names and preserves blank names', () => {
 })
 
 test('duplicateStudyPosition copies a study with a new id and name', () => {
-  mockStudies([makeStudy('study-a', 1)])
+  const source = makeStudy('study-a', 1)
+  source.variationTree = createVariationTree(source.initialFen, source.moves, 0, 1)
+  mockStudies([source])
 
   const result = duplicateStudyPosition('study-a')
 
@@ -75,6 +95,8 @@ test('duplicateStudyPosition copies a study with a new id and name', () => {
   assert.notEqual(result[0].id, 'study-a')
   assert.equal(result[0].name, '研究 study-a 副本')
   assert.equal(result[0].moves.length, 1)
+  assert.deepEqual(result[0].variationTree, source.variationTree)
+  assert.notEqual(result[0].variationTree, source.variationTree)
   assert.equal(result[1].id, 'study-a')
 })
 
@@ -103,6 +125,7 @@ function makeStudy(id: string, updatedAt: number) {
     analysisPoints: [],
     createdAt: updatedAt,
     updatedAt,
+    variationTree: undefined as ReturnType<typeof createVariationTree> | undefined,
   }
 }
 

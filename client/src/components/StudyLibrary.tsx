@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { StudyPosition } from '../types'
+import { countVariationBranches } from '../variations/tree'
 
 interface Props {
   studies: StudyPosition[]
@@ -171,7 +172,8 @@ export default function StudyLibrary({ studies, onBack, onStart, onDelete, onDel
                 <code>{study.initialFen}</code>
                 <span>
                   {study.moves.length} 手 · 当前第 {study.currentMoveIndex + 1} 手 ·
-                  标记 {countMarked(study)} · 备注 {countNotes(study)} · {formatTime(study.updatedAt)}
+                  标记 {countMarked(study)} · 备注 {countNotes(study)} ·
+                  支线 {study.variationTree ? countVariationBranches(study.variationTree) : 0} · {formatTime(study.updatedAt)}
                 </span>
               </div>
               <div className="study-card-actions">

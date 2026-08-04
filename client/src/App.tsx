@@ -9,6 +9,7 @@ import EndgameEditor from './components/EndgameEditor'
 import CandidateList from './components/CandidateList'
 import CandidatePreviewControls from './components/CandidatePreviewControls'
 import ReviewPanel from './components/ReviewPanel'
+import VariationPanel from './components/VariationPanel'
 import StudyLibrary from './components/StudyLibrary'
 import { useGame } from './hooks/useGame'
 import { BUILTIN_ENDGAMES } from './endgames/builtin'
@@ -143,6 +144,7 @@ export default function App() {
     initialMoveRecords: gameMode === 'study' ? selectedStudy?.moves : undefined,
     initialCurrentMoveIndex: gameMode === 'study' ? selectedStudy?.currentMoveIndex : undefined,
     initialAnalysisPoints: gameMode === 'study' ? selectedStudy?.analysisPoints : undefined,
+    initialVariationTree: gameMode === 'study' ? selectedStudy?.variationTree : undefined,
     redPlayerConfig: gameMode === 'endgame' ? endgameConfig.red : undefined,
     blackPlayerConfig: gameMode === 'endgame' ? endgameConfig.black : undefined,
   })
@@ -168,7 +170,8 @@ export default function App() {
     moves: game.historyRecords,
     currentMoveIndex: game.currentMoveIndex,
     analysisPoints: game.analysisPoints,
-  }), [game.analysisPoints, game.currentMoveIndex, game.historyRecords, game.initialFen])
+    variationTree: game.variationTree,
+  }), [game.analysisPoints, game.currentMoveIndex, game.historyRecords, game.initialFen, game.variationTree])
   const studyContentSignature = useMemo(() => createStudyContentSignature(studyContent), [studyContent])
   const selectedStudyIsPersisted = Boolean(selectedStudy && studies.some(study => study.id === selectedStudy.id))
   const lastSavedStudySignatureRef = useRef<string | null>(null)
@@ -246,6 +249,7 @@ export default function App() {
       moves: selectedStudy.moves,
       currentMoveIndex: selectedStudy.currentMoveIndex,
       analysisPoints: selectedStudy.analysisPoints,
+      variationTree: selectedStudy.variationTree,
     })
     setStudySaveStatus('saved')
   }, [gameMode, selectedStudy?.id, selectedStudyIsPersisted])
@@ -539,6 +543,7 @@ export default function App() {
                 moves: game.historyRecords,
                 currentMoveIndex: game.currentMoveIndex,
                 analysisPoints: game.analysisPoints,
+                variationTree: game.variationTree,
               })
               setStudies(saved)
               setSelectedStudy(existingStudyId
@@ -650,6 +655,13 @@ export default function App() {
             }}
             onCancel={game.cancelReview}
             onJumpToPosition={game.jumpToMove}
+          />
+          <VariationPanel
+            children={game.variationChildren}
+            mainChildId={game.mainVariationChildId}
+            branchCount={game.variationBranchCount}
+            onSelect={game.selectVariation}
+            onSetMain={game.setMainVariationChild}
           />
           {showAnalysis && <AnalysisCurve points={game.analysisPoints} />}
         </div>

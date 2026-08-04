@@ -1,10 +1,11 @@
-import { AnalysisPoint, MoveRecord, StudyPosition } from '../types'
+import { AnalysisPoint, MoveRecord, StudyPosition, VariationTree } from '../types'
 
 export interface StudyContentSnapshot {
   initialFen: string
   moves: MoveRecord[]
   currentMoveIndex: number
   analysisPoints: AnalysisPoint[]
+  variationTree?: VariationTree
 }
 
 export function createStudyContentSignature(content: StudyContentSnapshot): string {

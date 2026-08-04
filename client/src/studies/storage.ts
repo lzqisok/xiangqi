@@ -1,4 +1,4 @@
-import { MoveRecord, StudyPosition } from '../types'
+import { MoveRecord, StudyPosition, VariationTree } from '../types'
 
 const STORAGE_KEY = 'xiangqi.study-positions.v1'
 
@@ -22,9 +22,55 @@ function isValidStudy(value: unknown): value is StudyPosition {
     item.moves.every(isValidMoveRecord) &&
     typeof item.currentMoveIndex === 'number' &&
     Array.isArray(item.analysisPoints) &&
+    (item.variationTree === undefined || isValidVariationTree(item.variationTree)) &&
     typeof item.createdAt === 'number' &&
     typeof item.updatedAt === 'number'
   )
+}
+
+function isValidVariationTree(value: unknown): value is VariationTree {
+  if (!value || typeof value !== 'object') return false
+  const tree = value as Record<string, unknown>
+  if (typeof tree.rootId !== 'string' || typeof tree.currentNodeId !== 'string' || !tree.nodes || typeof tree.nodes !== 'object') {
+    return false
+  }
+  const nodes = tree.nodes as Record<string, unknown>
+  if (!nodes[tree.rootId] || !nodes[tree.currentNodeId]) return false
+
+  const entries = Object.entries(nodes)
+  const structurallyValid = entries.every(([id, value]) => {
+    if (!value || typeof value !== 'object') return false
+    const node = value as Record<string, unknown>
+    const isRoot = id === tree.rootId
+    return (
+      node.id === id &&
+      (isRoot
+        ? node.parentId === null && node.move === undefined
+        : typeof node.parentId === 'string' && Boolean(nodes[node.parentId]) && isValidMoveRecord(node.move)) &&
+      typeof node.fen === 'string' &&
+      Array.isArray(node.children) &&
+      node.children.every(childId => typeof childId === 'string' && Boolean(nodes[childId])) &&
+      (node.mainChildId === undefined || (typeof node.mainChildId === 'string' && node.children.includes(node.mainChildId))) &&
+      typeof node.createdAt === 'number' &&
+      typeof node.updatedAt === 'number'
+    )
+  })
+  if (!structurallyValid) return false
+
+  const reachable = new Set<string>()
+  const pending = [tree.rootId]
+  while (pending.length > 0) {
+    const id = pending.pop()!
+    if (reachable.has(id)) return false
+    reachable.add(id)
+    const node = nodes[id] as { children: string[] }
+    for (const childId of node.children) {
+      const child = nodes[childId] as { parentId: string | null }
+      if (child.parentId !== id) return false
+      pending.push(childId)
+    }
+  }
+  return reachable.size === entries.length && reachable.has(tree.currentNodeId)
 }
 
 function isPosition(value: unknown): value is { row: number; col: number } {
@@ -125,6 +171,7 @@ export function duplicateStudyPosition(id: string): StudyPosition[] {
       },
     })),
     analysisPoints: source.analysisPoints.map(point => ({ ...point })),
+    variationTree: source.variationTree ? structuredClone(source.variationTree) : undefined,
     createdAt: now,
     updatedAt: now,
   }
@@ -135,7 +182,7 @@ export function duplicateStudyPosition(id: string): StudyPosition[] {
 
 export function exportStudyPositionsJson(): string {
   return JSON.stringify({
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     studies: loadStudyPositions(),
   }, null, 2)

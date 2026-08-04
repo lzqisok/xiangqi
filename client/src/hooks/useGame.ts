@@ -28,7 +28,6 @@ interface UseGameOptions {
   aiRedDifficulty: Difficulty
   aiBlackDifficulty: Difficulty
   candidateCount?: number
-  hintDifficulty?: Difficulty
   searchLimit?: EngineSearchLimit
   engineRuntimeOptions?: EngineRuntimeOptions
   analysisEnabled?: boolean
@@ -100,7 +99,6 @@ export function useGame({
   aiRedDifficulty,
   aiBlackDifficulty,
   candidateCount = 3,
-  hintDifficulty = 'master',
   searchLimit,
   engineRuntimeOptions,
   analysisEnabled = false,
@@ -857,12 +855,12 @@ export function useGame({
       fen: engineBaseFen,
       movesKey: uciMoves.join(' '),
     }
-    const sent = send({ type: 'hint', requestId, fen: engineBaseFen, moves: uciMoves, difficulty: hintDifficulty, ...searchLimit })
+    const sent = send({ type: 'hint', requestId, fen: engineBaseFen, moves: uciMoves, difficulty: 'master' })
     if (!sent) {
       pendingRequestRef.current = null
       setHintThinking(false)
     }
-  }, [connected, gameStatus, aiThinking, hintThinking, candidateThinking, reviewThinking, currentPlayerConfig, send, uciMoves, engineBaseFen, hintDifficulty, searchLimit])
+  }, [connected, gameStatus, aiThinking, hintThinking, candidateThinking, reviewThinking, currentPlayerConfig, send, uciMoves, engineBaseFen])
 
   const requestCandidates = useCallback(() => {
     if (!connected || gameStatus !== 'playing' || aiThinking || hintThinking || candidateThinking || reviewThinking) return

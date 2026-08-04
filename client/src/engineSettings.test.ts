@@ -67,7 +67,6 @@ test('serializeEngineSettings stores only normalized values', () => {
   const raw = serializeEngineSettings({
     candidateCount: 4,
     candidateAutoRefreshDelay: 1200,
-    hintDifficulty: 'hard',
     searchMode: 'depth',
     searchDepth: 16,
     searchTimeMs: 3000,
@@ -78,11 +77,19 @@ test('serializeEngineSettings stores only normalized values', () => {
   assert.deepEqual(JSON.parse(raw), {
     candidateCount: 4,
     candidateAutoRefreshDelay: 1200,
-    hintDifficulty: 'hard',
     searchMode: 'depth',
     searchDepth: 16,
     searchTimeMs: 3000,
     engineThreads: 4,
     engineHashMb: 256,
   })
+})
+
+test('legacy hint difficulty is no longer persisted', () => {
+  const legacy = {
+    ...DEFAULT_ENGINE_SETTINGS,
+    hintDifficulty: 'easy',
+  } as Partial<typeof DEFAULT_ENGINE_SETTINGS>
+
+  assert.equal('hintDifficulty' in JSON.parse(serializeEngineSettings(legacy)), false)
 })

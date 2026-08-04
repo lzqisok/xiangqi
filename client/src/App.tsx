@@ -139,7 +139,6 @@ export default function App() {
     aiRedDifficulty,
     aiBlackDifficulty,
     candidateCount: engineSettings.candidateCount,
-    hintDifficulty: engineSettings.hintDifficulty,
     searchLimit,
     engineRuntimeOptions,
     analysisEnabled: showAnalysis,
@@ -651,10 +650,6 @@ export default function App() {
             autoRefreshDelay={engineSettings.candidateAutoRefreshDelay}
             onAutoRefreshDelayChange={(candidateAutoRefreshDelay) => {
               setEngineSettings(current => saveEngineSettings({ ...current, candidateAutoRefreshDelay }))
-            }}
-            hintDifficulty={engineSettings.hintDifficulty}
-            onHintDifficultyChange={(hintDifficulty) => {
-              setEngineSettings(current => saveEngineSettings({ ...current, hintDifficulty }))
             }}
             searchMode={engineSettings.searchMode}
             onSearchModeChange={(searchMode) => {

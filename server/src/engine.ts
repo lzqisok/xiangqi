@@ -36,6 +36,54 @@ export interface EngineRuntimeOptions {
   engineHashMb?: number
 }
 
+export interface EngineMoveResult {
+  move: string | null
+  searchCapped: boolean
+}
+
+export interface EngineSearchCompletion {
+  line: string
+  searchCapped: boolean
+}
+
+export const ENGINE_SEARCH_TIMEOUT_MS = 60_000
+export const ENGINE_STOP_GRACE_MS = 5_000
+
+export function waitForBestMoveWithStop(
+  emitter: EventEmitter,
+  requestStop: () => void,
+  timeoutMs = ENGINE_SEARCH_TIMEOUT_MS,
+  stopGraceMs = ENGINE_STOP_GRACE_MS,
+): Promise<EngineSearchCompletion> {
+  return new Promise((resolve, reject) => {
+    let searchCapped = false
+    let stopTimer: ReturnType<typeof setTimeout> | undefined
+
+    const cleanup = () => {
+      clearTimeout(timeoutTimer)
+      if (stopTimer) clearTimeout(stopTimer)
+      emitter.removeListener('line', handler)
+    }
+
+    const handler = (line: string) => {
+      if (!line.startsWith('bestmove')) return
+      cleanup()
+      resolve({ line, searchCapped })
+    }
+
+    const timeoutTimer = setTimeout(() => {
+      searchCapped = true
+      stopTimer = setTimeout(() => {
+        cleanup()
+        reject(new Error('Engine did not return bestmove after stop'))
+      }, stopGraceMs)
+      requestStop()
+    }, timeoutMs)
+
+    emitter.on('line', handler)
+  })
+}
+
 const DEPTH_MAP: Record<Difficulty, number> = {
   easy: 8,
   medium: 14,
@@ -89,6 +137,8 @@ export class PikafishEngine extends EventEmitter {
   private commandQueue: Promise<void> = Promise.resolve()
 
   async init(options?: EngineRuntimeOptions): Promise<boolean> {
+    this.terminateProcess()
+    this.buffer = ''
     const engineDir = path.resolve(process.cwd(), '../engine')
     const candidates = [
       path.join(engineDir, 'pikafish'),
@@ -122,12 +172,13 @@ export class PikafishEngine extends EventEmitter {
     try {
       this.runtimeOptions = normalizeEngineRuntimeOptions(options || this.runtimeOptions)
       this.threads = this.resolveThreadCount(this.runtimeOptions.engineThreads)
-      this.process = spawn(enginePath, [], {
+      const child = spawn(enginePath, [], {
         cwd: engineDir,
         stdio: ['pipe', 'pipe', 'pipe'],
       })
+      this.process = child
 
-      this.process.stdout!.on('data', (data: Buffer) => {
+      child.stdout!.on('data', (data: Buffer) => {
         this.buffer += data.toString()
         const lines = this.buffer.split('\n')
         this.buffer = lines.pop() || ''
@@ -136,13 +187,16 @@ export class PikafishEngine extends EventEmitter {
         }
       })
 
-      this.process.stderr!.on('data', (data: Buffer) => {
+      child.stderr!.on('data', (data: Buffer) => {
         console.error('[pikafish stderr]', data.toString())
       })
 
-      this.process.on('exit', (code) => {
+      child.on('exit', (code) => {
+        if (this.process !== child) return
+        this.process = null
         console.log(`Pikafish process exited with code ${code}`)
         this.ready = false
+        this.searching = false
         this.emit('exit', code)
       })
 
@@ -162,7 +216,7 @@ export class PikafishEngine extends EventEmitter {
     }
   }
 
-  async getBestMove(fen: string, moves: string[], difficulty: Difficulty, limit?: EngineSearchLimit): Promise<string | null> {
+  async getBestMove(fen: string, moves: string[], difficulty: Difficulty, limit?: EngineSearchLimit): Promise<EngineMoveResult> {
     return this.enqueue(() => this.getBestMoveLocked(fen, moves, difficulty, limit))
   }
 
@@ -194,11 +248,11 @@ export class PikafishEngine extends EventEmitter {
     await this.waitFor('readyok', 10000)
   }
 
-  private async getBestMoveLocked(fen: string, moves: string[], difficulty: Difficulty, limit?: EngineSearchLimit): Promise<string | null> {
+  private async getBestMoveLocked(fen: string, moves: string[], difficulty: Difficulty, limit?: EngineSearchLimit): Promise<EngineMoveResult> {
     if (!this.ready || !this.process) {
       console.error('Engine not ready, attempting reinit...')
       const ok = await this.init(this.runtimeOptions)
-      if (!ok) return null
+      if (!ok) return { move: null, searchCapped: false }
     }
 
     try {
@@ -216,21 +270,21 @@ export class PikafishEngine extends EventEmitter {
       this.searching = true
       this.send(buildGoCommand(depth, limit))
 
-      const result = await this.waitFor('bestmove', 60000)
+      const result = await waitForBestMoveWithStop(this, () => this.send('stop'))
       this.searching = false
-      if (result) {
-        const parts = result.split(' ')
+      if (result.line) {
+        const parts = result.line.split(' ')
         const idx = parts.indexOf('bestmove')
         if (idx >= 0 && parts[idx + 1]) {
-          return parts[idx + 1]
+          return { move: parts[idx + 1], searchCapped: result.searchCapped }
         }
       }
     } catch (err) {
       console.error('getBestMove error:', err)
-      this.ready = false
-      this.searching = false
+      this.terminateProcess()
+      throw err
     }
-    return null
+    return { move: null, searchCapped: false }
   }
 
   async analyze(fen: string, moves: string[], limit?: EngineSearchLimit): Promise<void> {
@@ -271,7 +325,7 @@ export class PikafishEngine extends EventEmitter {
       this.send(posCmd)
       this.searching = true
       this.send(buildGoCommand(depth, limit))
-      await this.waitFor('bestmove', 60000)
+      await waitForBestMoveWithStop(this, () => this.send('stop'))
       this.searching = false
 
       return Array.from(candidates.entries())
@@ -280,9 +334,8 @@ export class PikafishEngine extends EventEmitter {
         .slice(0, candidateCount)
     } catch (err) {
       console.error('getCandidates error:', err)
-      this.ready = false
-      this.searching = false
-      return []
+      this.terminateProcess()
+      throw err
     } finally {
       if (infoHandler) {
         this.removeListener('info', infoHandler)
@@ -417,12 +470,21 @@ export class PikafishEngine extends EventEmitter {
     }
   }
 
+  private terminateProcess() {
+    const child = this.process
+    this.process = null
+    this.ready = false
+    this.searching = false
+    this.buffer = ''
+    if (!child) return
+
+    child.stdout?.removeAllListeners()
+    child.stderr?.removeAllListeners()
+    child.removeAllListeners()
+    if (!child.killed) child.kill()
+  }
+
   destroy() {
-    if (this.process) {
-      this.send('quit')
-      setTimeout(() => {
-        this.process?.kill()
-      }, 1000)
-    }
+    this.terminateProcess()
   }
 }

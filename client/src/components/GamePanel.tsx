@@ -105,6 +105,7 @@ function formatEngineStatus(connectionState: ConnectionState, engineAvailable: b
   if (connectionState === 'disconnected') return '后端未连接'
   if (engineAvailable === false) return message || '引擎不可用'
   if (engineAvailable === null) return '引擎检测中'
+  if (message && message !== 'Engine ready') return message
   return '引擎可用'
 }
 

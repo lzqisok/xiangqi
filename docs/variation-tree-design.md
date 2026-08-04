@@ -9,13 +9,14 @@
 - 每个节点可保留备注、星标和引擎评估。
 - 后续可与候选走法、回放分享和研究导入导出组合。
 
-当前第一阶段已经落地，同时保留线性 `moveRecords` 作为活动分支的派生结果。
+当前变招保留、分支切换、主线设置和研究 JSON v2 存储均已落地，同时保留线性 `moveRecords` 作为活动分支的派生结果。
 
 ## 实施状态
 
 - 已完成旧线性棋谱到变招树的自动迁移。
 - 已完成悔棋后创建支线、分支切换和设为主线。
 - 已完成研究本地存储、自动保存、复制与 JSON v2 导入导出。
+- 已完成当前节点后续分支展示、切换和设为主线。
 - 回放链接仍只分享当前活动线；节点独立评估留待后续阶段。
 
 ## 当前约束
@@ -29,7 +30,7 @@
 
 因此变招树不能一次性替换历史模型，应先兼容线性主线。
 
-## 建议模型
+## 当前模型
 
 ```ts
 export interface VariationNode {
@@ -39,12 +40,6 @@ export interface VariationNode {
   fen: string
   children: string[]
   mainChildId?: string
-  marked?: boolean
-  note?: string
-  evaluation?: {
-    score: number
-    depth: number
-  }
   createdAt: number
   updatedAt: number
 }
@@ -62,8 +57,8 @@ export interface VariationTree {
 - 子节点的 `move` 表示从父节点走到该节点的走法。
 - `children` 保存所有后续分支。
 - `mainChildId` 表示主线，每个节点最多一个主线子节点。
-- `marked`、`note` 可先保留在 `MoveRecord` 中，迁移后再逐步提升到节点字段。
-- `evaluation` 保存该节点局面的引擎评估，不保存完整 PV，避免第一阶段存储膨胀。
+- 星标和备注当前保存在节点内的 `MoveRecord` 上。
+- 引擎评估仍按活动线的步索引保存于研究对象；提升为节点独立评估是后续工作。
 
 ## 线性记录迁移
 
@@ -88,25 +83,27 @@ export interface VariationTree {
 - 用户可以手动“设为主线”。
 - 导出线性棋谱时，默认沿 `mainChildId` 输出。
 
-## 受影响模块
+## 实际模块边界
 
 - `client/src/hooks/useGame.ts`
   - 当前历史状态、悔棋、重做、跳转、新走法追加逻辑。
-  - 第一阶段建议保留线性派生结果，避免所有调用方同时迁移。
+  - 保留线性派生结果，避免所有调用方同时维护树结构。
 - `client/src/components/MoveHistory.tsx`
-  - 需要从线性列表升级为树形或主线 + 支线混合展示。
+  - 继续展示当前活动线；分支入口由 `VariationPanel` 展示。
+- `client/src/components/VariationPanel.tsx`
+  - 展示当前局面的后续分支，并支持切换和设为主线。
 - `client/src/studies/storage.ts`
-  - 需要支持 `variationTree` 字段，同时继续读取旧版 `moves`。
+  - 保存 `variationTree` 字段，同时继续读取旧版 `moves`。
 - `client/src/types.ts`
-  - 新增 `VariationNode`、`VariationTree`，并扩展 `StudyPosition`。
+  - 定义 `VariationNode`、`VariationTree`，并扩展 `StudyPosition`。
 - 导入导出
-  - JSON 需要版本化，旧数据导入时自动迁移。
+  - JSON v2 保存完整变招树，旧数据导入时自动迁移。
 - 测试
   - 历史跳转、悔棋后新分支、主线切换、旧研究导入兼容。
 
-## 分阶段落地
+## 已完成的分阶段落地
 
-### 阶段 1：只读模型与迁移
+### 阶段 1：只读模型与迁移（已完成）
 
 - 新增类型与转换函数。
 - 旧 `MoveRecord[]` 可转换为 `VariationTree`。
@@ -118,7 +115,7 @@ export interface VariationTree {
 - 旧研究数据可以无损转换为树。
 - 主线导出后与原 `moves` 顺序一致。
 
-### 阶段 2：保留分支
+### 阶段 2：保留分支（已完成）
 
 - 在非末尾节点走新棋时，不截断原后续。
 - 新走法成为当前节点的新 child。
@@ -129,7 +126,7 @@ export interface VariationTree {
 - 悔棋后走新棋，旧线仍可找回。
 - 当前线性回放不丢失。
 
-### 阶段 3：分支切换与主线设置
+### 阶段 3：分支切换与主线设置（已完成）
 
 - 走棋记录 UI 展示节点分支。
 - 支持切换到任意子分支。
@@ -140,7 +137,7 @@ export interface VariationTree {
 - 同一局面多个后续走法可切换。
 - 主线变化后，复制棋谱和回放默认走新主线。
 
-### 阶段 4：研究存储升级
+### 阶段 4：研究存储升级（已完成）
 
 - `StudyPosition` 增加 `variationTree?: VariationTree`。
 - 保存新研究时写入树结构。
@@ -152,9 +149,11 @@ export interface VariationTree {
 - 旧 JSON 可导入。
 - 新 JSON 可完整保留分支、备注、星标和评估。
 
-## 暂不做
+## 后续边界
 
 - 在线协同编辑变招树。
 - 多人评论。
 - 将完整引擎 PV 自动写入树。
+- 将分析曲线和评估绑定到每个变招节点。
+- 在分享链接中携带完整变招树。
 - 云端存储和短链接。

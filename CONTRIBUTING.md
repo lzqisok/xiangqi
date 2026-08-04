@@ -7,7 +7,7 @@
 ## 开发环境
 
 - Node.js 18+
-- pnpm
+- pnpm 9.15.9（由根目录 `packageManager` 固定）
 - 可用的 Pikafish 引擎文件与 `pikafish.nnue`
 
 安装与启动：
@@ -16,6 +16,8 @@
 pnpm install
 pnpm dev
 ```
+
+引擎二进制与 `pikafish.nnue` 只用于本地运行，不要提交到仓库。
 
 ## 分支命名建议
 
@@ -55,9 +57,10 @@ pnpm dev
 ## 提交 Pull Request 前检查
 
 1. 确认功能可运行（本地手测主流程）
-2. 确认构建通过：`pnpm build`
-3. 确认未提交无关文件（如本地缓存、临时日志）
-4. PR 说明中写清：
+2. 确认测试通过：`pnpm test`
+3. 确认构建通过：`pnpm build`
+4. 确认 `git diff --check` 无格式错误，且没有提交构建产物、引擎文件、本地缓存或临时日志
+5. PR 说明中写清：
    - 改动动机（Why）
    - 主要实现（What）
    - 验证步骤（How to test）
@@ -83,6 +86,8 @@ pnpm dev
 - 一个 PR 尽量只解决一个问题
 - 不在同一个 PR 混入大规模格式化
 - 优先复用现有模式与工具函数
+- 修改 WebSocket、规则、存储或异步状态流时，补充对应的定向测试
+- 修改跨前后端消息字段时，同步更新 `client/src/types.ts`、`server/src/protocol.ts` 和相关说明
 
 ## License
 

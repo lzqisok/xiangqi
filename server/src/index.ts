@@ -102,6 +102,7 @@ wss.on('connection', async (ws) => {
   let localAnalysisMoves: string[] = []
   let localAnalysisLimit: EngineSearchLimit | undefined
   let requestGeneration = 0
+  const activeFiniteRequestIds = new Set<string>()
 
   const attachAnalysisHandler = (engine: PikafishEngine) => {
     if (infoHandler) {
@@ -149,7 +150,6 @@ wss.on('connection', async (ws) => {
         return
       }
       const msg = parsed.message
-
       switch (msg.type) {
         case 'init': {
           currentDifficulty = msg.difficulty || 'medium'
@@ -191,19 +191,25 @@ wss.on('connection', async (ws) => {
           try {
             const generation = requestGeneration
             const startedAt = Date.now()
-            const bestMove = await engine.getBestMove(fen, moves, requestDifficulty, getSearchLimit(msg))
-            if (bestMove && generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
+            if (requestId) activeFiniteRequestIds.add(requestId)
+            const result = await engine.getBestMove(fen, moves, requestDifficulty, getSearchLimit(msg))
+            if (!result.move) {
+              sendError(ws, 'Engine returned no move', requestId)
+            } else if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({
                 type: 'bestmove',
                 requestId,
-                move: bestMove,
+                move: result.move,
                 elapsedMs: Date.now() - startedAt,
                 requestKind: 'move',
+                searchCapped: result.searchCapped,
               }))
             }
           } catch (err) {
             console.error('Engine error:', err)
             sendError(ws, 'Engine error', requestId)
+          } finally {
+            if (requestId) activeFiniteRequestIds.delete(requestId)
           }
           break
         }
@@ -228,19 +234,25 @@ wss.on('connection', async (ws) => {
           try {
             const generation = requestGeneration
             const startedAt = Date.now()
-            const bestMove = await engine.getBestMove(fen, moves, msg.difficulty || 'master', getSearchLimit(msg))
-            if (bestMove && generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
+            if (requestId) activeFiniteRequestIds.add(requestId)
+            const result = await engine.getBestMove(fen, moves, msg.difficulty || 'master', getSearchLimit(msg))
+            if (!result.move) {
+              sendError(ws, 'Engine returned no hint', requestId)
+            } else if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({
                 type: 'bestmove',
                 requestId,
-                move: bestMove,
+                move: result.move,
                 elapsedMs: Date.now() - startedAt,
                 requestKind: 'hint',
+                searchCapped: result.searchCapped,
               }))
             }
           } catch (err) {
             console.error('Hint engine error:', err)
             sendError(ws, 'Hint engine error', requestId)
+          } finally {
+            if (requestId) activeFiniteRequestIds.delete(requestId)
           }
           break
         }
@@ -268,6 +280,7 @@ wss.on('connection', async (ws) => {
           }
           try {
             const generation = requestGeneration
+            if (requestId) activeFiniteRequestIds.add(requestId)
             const candidates = await engine.getCandidates(fen, moves, msg.difficulty || currentDifficulty, msg.count || 3, getSearchLimit(msg))
             if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'candidates', requestId, candidates }))
@@ -276,6 +289,7 @@ wss.on('connection', async (ws) => {
             console.error('Candidate engine error:', err)
             sendError(ws, 'Candidate engine error', requestId)
           } finally {
+            if (requestId) activeFiniteRequestIds.delete(requestId)
             if (resumeAnalysis && shouldResumeLocalAnalysis()) {
               try {
                 attachAnalysisHandler(engine)
@@ -304,6 +318,7 @@ wss.on('connection', async (ws) => {
 
           try {
             const generation = requestGeneration
+            if (requestId) activeFiniteRequestIds.add(requestId)
             const initialTurn = fen.trim().split(/\s+/)[1] === 'b' ? 'black' : 'red'
             const positions = []
 
@@ -344,6 +359,7 @@ wss.on('connection', async (ws) => {
             console.error('Review engine error:', err)
             sendError(ws, 'Review engine error', requestId)
           } finally {
+            if (requestId) activeFiniteRequestIds.delete(requestId)
             if (resumeAnalysis && shouldResumeLocalAnalysis()) {
               try {
                 attachAnalysisHandler(engine)
@@ -385,19 +401,23 @@ wss.on('connection', async (ws) => {
         }
 
         case 'stop': {
-          requestGeneration++
-          if (sharedEngine) {
-            detachAnalysisHandler(sharedEngine)
-          }
           const stopsOwnAnalysis =
             activeAnalysis?.sessionId === sessionId &&
             (!msg.requestId || activeAnalysis.requestId === msg.requestId)
+          const stopsFiniteRequest = msg.requestId
+            ? activeFiniteRequestIds.has(msg.requestId)
+            : activeFiniteRequestIds.size > 0
+
+          if (stopsFiniteRequest) {
+            requestGeneration++
+          }
           if (stopsOwnAnalysis) {
+            if (sharedEngine) detachAnalysisHandler(sharedEngine)
             activeAnalysis = null
             localAnalysisRequestId = undefined
             localAnalysisLimit = undefined
           }
-          if (sharedEngine && engineReady) {
+          if ((stopsFiniteRequest || stopsOwnAnalysis) && sharedEngine && engineReady) {
             sharedEngine.interruptSearch()
           }
           break

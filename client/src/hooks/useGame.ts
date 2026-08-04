@@ -232,6 +232,8 @@ export function useGame({
         return
       }
 
+      setEngineAvailable(true)
+
       const currentBoard = boardRef.current
       const move = buildMoveFromUci(msg.move, currentBoard)
       if (!move) {
@@ -253,6 +255,7 @@ export function useGame({
 
       if (pending.kind === 'hint') {
         setHintMove(move)
+        setEngineStatusMessage(msg.searchCapped ? '提示达到 60 秒上限，已采用当前最佳结果' : 'Engine ready')
         pendingRequestRef.current = null
         setHintThinking(false)
         return
@@ -279,6 +282,7 @@ export function useGame({
       setMoveCandidates([])
       setCandidateThinking(false)
       setAiThinking(false)
+      setEngineStatusMessage(msg.searchCapped ? '思考达到 60 秒上限，已采用当前最佳着法' : 'Engine ready')
       pendingRequestRef.current = null
       candidateRequestRef.current = null
 
@@ -365,6 +369,20 @@ export function useGame({
   }, [buildMoveFromUci, commitVariationMove, translatePv])
 
   const { send, connected, connectionState } = useWebSocket(handleWsMessage)
+
+  useEffect(() => {
+    if (connectionState !== 'disconnected') return
+
+    pendingRequestRef.current = null
+    analysisRequestRef.current = null
+    candidateRequestRef.current = null
+    reviewRequestRef.current = null
+    setAiThinking(false)
+    setHintThinking(false)
+    setCandidateThinking(false)
+    setReviewThinking(false)
+    setEngineStatusMessage('后端连接已断开，重连后将恢复计算')
+  }, [connectionState])
 
   // Initialize game when mode changes (not when connection flickers)
   const prevGameMode = useRef<GameMode | null | undefined>(undefined)
@@ -490,10 +508,7 @@ export function useGame({
   }, [connected, difficulty, engineRuntimeOptions, gameMode, send])
 
   useEffect(() => {
-    if (!gameMode || !connected || !analysisEnabled) {
-      if (connected) send({ type: 'stop' })
-      return
-    }
+    if (!gameMode || !connected || !analysisEnabled) return
 
     setEvaluation(null)
     setBestLine([])
@@ -516,9 +531,30 @@ export function useGame({
     }
   }, [analysisEnabled, connected, engineBaseFen, engineRuntimeOptions, gameMode, send, uciMoves, searchLimit])
 
+  useEffect(() => {
+    if (!aiThinking) return
+
+    const requestId = pendingRequestRef.current?.kind === 'move'
+      ? pendingRequestRef.current.id
+      : undefined
+    if (!requestId) return
+
+    const timer = window.setTimeout(() => {
+      if (pendingRequestRef.current?.id !== requestId) return
+      if (connected) send({ type: 'stop', requestId })
+      pendingRequestRef.current = null
+      candidateRequestRef.current = null
+      setAiThinking(false)
+      setEngineAvailable(false)
+      setEngineStatusMessage('AI 思考超时，已停止本次计算，请重试')
+    }, 70_000)
+
+    return () => window.clearTimeout(timer)
+  }, [aiThinking, connected, send])
+
   // Trigger AI move
   useEffect(() => {
-    if (reviewThinking || !shouldAutoRequestAiMove({
+    if (reviewThinking || engineAvailable === false || !shouldAutoRequestAiMove({
       gameStatus,
       aiThinking,
       gameMode,
@@ -546,7 +582,7 @@ export function useGame({
       candidateRequestRef.current = null
       setAiThinking(false)
     }
-  }, [gameStatus, aiThinking, reviewThinking, gameMode, currentPlayerConfig, connected, send, engineBaseFen, uciMoves, difficulty])
+  }, [gameStatus, aiThinking, reviewThinking, gameMode, currentPlayerConfig, connected, send, engineBaseFen, uciMoves, difficulty, engineAvailable])
 
   const handleCellClick = useCallback((pos: Position) => {
     if (gameStatus !== 'playing') return

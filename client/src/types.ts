@@ -146,7 +146,7 @@ export type WSMessage =
   | ({ type: 'candidates'; requestId?: string; fen?: string; moves?: string[]; difficulty?: Difficulty; count?: number; candidates?: MoveCandidate[] } & EngineSearchLimit)
   | { type: 'review'; requestId: string; fen: string; moves: string[]; searchDepth: number }
   | { type: 'stop'; requestId?: string }
-  | { type: 'bestmove'; requestId?: string; move: string; ponder?: string; elapsedMs?: number; requestKind?: 'move' | 'hint' }
+  | { type: 'bestmove'; requestId?: string; move: string; ponder?: string; elapsedMs?: number; requestKind?: 'move' | 'hint'; searchCapped?: boolean }
   | { type: 'info'; requestId?: string; data: EngineInfo }
   | { type: 'review-progress'; requestId: string; completed: number; total: number }
   | { type: 'review-result'; requestId: string; positions: ReviewPosition[] }

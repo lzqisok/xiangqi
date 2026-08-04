@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildGoCommand, getDifficultyDepth, normalizeEngineRuntimeOptions } from './engine.js'
+import { EventEmitter } from 'node:events'
+import {
+  buildGoCommand,
+  getDifficultyDepth,
+  normalizeEngineRuntimeOptions,
+  waitForBestMoveWithStop,
+} from './engine.js'
 
 test('buildGoCommand uses explicit depth limits', () => {
   assert.equal(buildGoCommand(14, { searchMode: 'depth', searchDepth: 18 }), 'go depth 18')
@@ -34,4 +40,35 @@ test('normalizeEngineRuntimeOptions keeps safe runtime ranges', () => {
     engineThreads: 1,
     engineHashMb: 512,
   })
+})
+
+test('waitForBestMoveWithStop returns a normal result before the deadline', async () => {
+  const emitter = new EventEmitter()
+  let stopCalls = 0
+  const pending = waitForBestMoveWithStop(emitter, () => { stopCalls++ }, 50, 20)
+
+  emitter.emit('line', 'bestmove h2e2')
+
+  assert.deepEqual(await pending, { line: 'bestmove h2e2', searchCapped: false })
+  assert.equal(stopCalls, 0)
+})
+
+test('waitForBestMoveWithStop stops at the deadline and keeps the current best move', async () => {
+  const emitter = new EventEmitter()
+  let stopCalls = 0
+  const pending = waitForBestMoveWithStop(emitter, () => {
+    stopCalls++
+    emitter.emit('line', 'bestmove b2e2')
+  }, 5, 20)
+
+  assert.deepEqual(await pending, { line: 'bestmove b2e2', searchCapped: true })
+  assert.equal(stopCalls, 1)
+})
+
+test('waitForBestMoveWithStop rejects when the engine ignores stop', async () => {
+  const emitter = new EventEmitter()
+  await assert.rejects(
+    waitForBestMoveWithStop(emitter, () => undefined, 5, 5),
+    /did not return bestmove after stop/,
+  )
 })

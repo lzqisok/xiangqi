@@ -160,6 +160,67 @@ body {
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
 }
 
+.jieqi-captured {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.jieqi-captured-side {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: rgba(10, 18, 14, 0.62);
+}
+
+.jieqi-captured-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.jieqi-captured-side.red .jieqi-captured-label { color: #ef7a69; }
+
+.jieqi-captured-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-height: 28px;
+  align-items: center;
+}
+
+.jieqi-captured-piece {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(216, 173, 91, 0.42);
+  border-radius: 50%;
+  background: #ead39d;
+  color: #202421;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.jieqi-captured-piece.red { color: #b9473b; }
+
+.jieqi-captured-piece.identity-hidden {
+  border-color: rgba(205, 190, 167, 0.34);
+  background: #3b342c;
+  color: #ded1bd;
+  font-size: 13px;
+}
+
+.jieqi-captured-empty {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .board-game-over-banner {
   position: absolute;
   /* River line: padding(40) + 4.5 * cell(64) */
@@ -730,6 +791,14 @@ body {
 
 .move-row.active {
   background: rgba(214, 166, 75, 0.16);
+}
+
+.move-row.navigation-disabled {
+  cursor: default;
+}
+
+.move-row.navigation-disabled:not(.active):hover {
+  background: transparent;
 }
 
 .move-number {
@@ -2162,6 +2231,16 @@ body {
   box-shadow: 0 18px 45px rgba(78, 57, 34, 0.2);
 }
 
+.jieqi-captured-side {
+  border-color: rgba(74, 61, 45, 0.16);
+  background: rgba(255, 250, 241, 0.72);
+}
+
+.jieqi-captured-side.black .jieqi-captured-label,
+.jieqi-captured-empty {
+  color: #766d61;
+}
+
 .board-canvas {
   box-shadow: 0 4px 14px rgba(83, 57, 29, 0.22);
 }
@@ -2507,6 +2586,20 @@ body {
 }
 
 .start-config-heading small { color: #8a8176; }
+
+.jieqi-mode-note,
+.jieqi-rule-note {
+  padding: 10px 12px;
+  border: 1px solid rgba(183, 132, 72, 0.28);
+  border-radius: 10px;
+  color: #756d64;
+  background: rgba(183, 132, 72, 0.08);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.jieqi-mode-note { margin-bottom: 14px; }
+.jieqi-rule-note { margin: 8px 0 12px; }
 
 .option-group label {
   color: #766d62;

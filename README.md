@@ -1,6 +1,6 @@
 # 棋境：中国象棋（Web + Pikafish）
 
-一个以本地 [Pikafish](https://github.com/official-pikafish/Pikafish) 为棋力核心的 Web 中国象棋应用，覆盖对弈、残局训练、局面研究、变招管理与整局复盘。前端使用 React + Canvas，后端通过 WebSocket 和 UCI 协议管理本地 Pikafish 进程；棋局与研究数据默认保存在浏览器本地。
+一个以本地 [Pikafish](https://github.com/official-pikafish/Pikafish) 为棋力核心的 Web 中国象棋应用，覆盖普通象棋、揭棋、残局训练、局面研究、变招管理与整局复盘。前端使用 React + Canvas，后端通过 WebSocket 和 UCI 协议管理本地 Pikafish 进程；棋局与研究数据默认保存在浏览器本地。
 
 ![Node](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-9.15.9-F69220?logo=pnpm&logoColor=white)
@@ -18,6 +18,16 @@
 - AI 对战：红黑双方独立设置难度，可单步推进，也可按快速、标准、慢速自动播放。
 - 完整对局操作：悔棋、重做、棋盘翻转、中文记谱、落子/吃子/将军/终局音效。
 - 规则与提醒：合法走子、将军、将死、困毙、将帅照面；重复局面和连续未吃子目前只提醒，不直接裁定。
+
+### 揭棋
+
+- 独立的人机揭棋入口：除将帅外，每方 15 枚棋子随机打乱并盖棋，支持执红或执黑及四档难度。
+- 暗子按初始位置对应的棋种行走，移动后翻开真实身份；翻开后的仕、相可离开九宫或过河。
+- 暗子未翻开前不构成将军；暗吃身份仅捕获方知晓，发送给 AI 的历史会隔离人类私有信息。
+- 棋盘下方分别展示双方已吃棋子；明子身份公开，暗吃只向捕获方显示真实棋种。
+- 使用官方 Pikafish `jieqi_old` 分支作为独立揭棋引擎，通过扩展 FEN 和 4～6 位 UCI 走法传递翻子信息。
+- 普通象棋和揭棋使用两套独立可执行文件；每个 WebSocket 会话按需持有自己的变体引擎，标签页之间不会互相停止搜索。
+- 为避免历史快照和分析变化泄露暗子身份，揭棋模式暂不开放悔棋、重做、历史跳转、候选、实时分析、变招与整局复盘。
 
 ### Pikafish 辅助
 
@@ -55,7 +65,7 @@
 
 ## 界面结构
 
-启动页提供五种入口：人机对弈、双人对弈、AI 对战、残局模式和研究局面。进入棋局后，主工作台由棋盘、走棋记录和工具区组成；工具区按用途分为：
+启动页提供六种入口：人机对弈、双人对弈、AI 对战、揭棋、残局模式和研究局面。进入棋局后，主工作台由棋盘、走棋记录和工具区组成；工具区按用途分为：
 
 - 对局：状态、常用操作、提示、回放控制和更多工具。
 - 分析：实时评估、分析曲线、候选走法与引擎参数。
@@ -74,10 +84,11 @@
 Node.js / Express / ws 服务
   ├─ 协议与局面校验
   ├─ 请求隔离、取消和过期结果丢弃
-  └─ 串行管理共享 Pikafish 进程
+  └─ 每会话、每变体独立管理 Pikafish 进程
              │ UCI
              ▼
-engine/pikafish + engine/pikafish.nnue
+engine/pikafish 或 engine/pikafish-jieqi
+                 + engine/pikafish.nnue
 ```
 
 ### 前端
@@ -90,7 +101,7 @@ engine/pikafish + engine/pikafish.nnue
 ### 后端与引擎
 
 - Express + `ws` 提供 WebSocket 服务，通过 UCI 驱动 Pikafish。
-- 所有引擎命令串行进入同一队列，防止多个搜索同时污染引擎状态。
+- 普通象棋与揭棋按协议中的 `variant` 选择对应引擎；每个 WebSocket 会话按需创建独立实例，实例内命令串行执行，避免跨标签页中断和搜索状态污染。
 - 支持运行时更新 Threads、Hash 和搜索限制。
 - 有限搜索最长 60 秒；到达上限后发送 `stop` 并等待 5 秒获取当前最佳着。AI 对局前端另有 70 秒最终保护，断线或异常不会永久停在“思考中”。
 - `stop` 按会话和请求标识处理，分析任务不会无条件取消正在进行的对局请求。
@@ -130,6 +141,7 @@ xiangqi/
 - pnpm 9.15.9（由根目录 `package.json#packageManager` 固定）
 - 与当前系统/CPU 匹配的 Pikafish 可执行文件
 - 与该 Pikafish 版本兼容的 `pikafish.nnue`
+- 使用揭棋时还需要官方 `jieqi_old` 分支编译出的 `pikafish-jieqi`
 
 ## 快速开始
 
@@ -146,6 +158,7 @@ pnpm install
 ```text
 engine/
 ├── pikafish          # macOS / Linux
+├── pikafish-jieqi    # 揭棋模式；Windows 对应 pikafish-jieqi.exe
 ├── pikafish.exe      # Windows 使用此文件名
 └── pikafish.nnue
 ```
@@ -154,9 +167,22 @@ engine/
 
 ```bash
 chmod +x engine/pikafish
+chmod +x engine/pikafish-jieqi
 ```
 
 这些运行文件体积较大且与平台相关，不应提交到仓库。
+
+揭棋引擎需从官方 [`jieqi_old` 分支](https://github.com/official-pikafish/Pikafish/tree/jieqi_old) 编译。该分支与项目当前权重格式兼容，macOS Apple Silicon 示例：
+
+```bash
+git clone --depth 1 --branch jieqi_old https://github.com/official-pikafish/Pikafish.git /tmp/pikafish-jieqi
+cp engine/pikafish.nnue /tmp/pikafish-jieqi/src/pikafish.nnue
+make -C /tmp/pikafish-jieqi/src -j4 build ARCH=apple-silicon
+cp /tmp/pikafish-jieqi/src/PikaJieQi engine/pikafish-jieqi
+chmod +x engine/pikafish-jieqi
+```
+
+Linux 请通过 `make -C /tmp/pikafish-jieqi/src help` 选择对应 `ARCH`；Windows 则将产物命名为 `engine/pikafish-jieqi.exe`。不要直接给该旧分支搭配滚动更新的最新 NNUE，架构不一致时引擎会拒绝启动。
 
 ### 3. 启动
 
@@ -214,7 +240,7 @@ pnpm --filter server start       # 运行已构建服务端
 
 客户端消息：
 
-- `init`：设置对局难度、Threads 和 Hash。
+- `init`：设置对局难度、Threads、Hash 和引擎变体。
 - `move` / `hint`：请求对局着法或提示。
 - `candidates`：请求 MultiPV 候选。
 - `analyze`：启动当前局面分析。
@@ -231,6 +257,8 @@ pnpm --filter server start       # 运行已构建服务端
 - `error`：校验或引擎错误。
 
 协议定义和校验分别位于 `client/src/types.ts`、`server/src/protocol.ts` 和 `server/src/validation.ts`。
+
+揭棋请求使用 `variant: "jieqi"`。扩展 UCI 走法的前四位仍是起止坐标，第五位可表示移动暗子翻开的身份或被暗吃棋子的身份，第六位用于二者同时发生；服务端仅将捕获方有权知道的身份传给对应 AI。
 
 ## 本地数据
 
@@ -256,6 +284,8 @@ pnpm --filter server start       # 运行已构建服务端
 2. macOS/Linux 可执行权限是否正确。
 3. 后端是否监听 3001，浏览器是否连接 `ws://localhost:3001/ws`。
 4. 后端终端是否出现 NNUE 不兼容、权限或进程启动错误。
+
+揭棋单独检查 `engine/pikafish-jieqi`（Windows 为 `.exe`）；普通引擎可用不代表揭棋引擎已经准备完成。
 
 ### 大师第一步为什么需要十几秒
 

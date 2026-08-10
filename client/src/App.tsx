@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Board, { BoardHandle } from './components/Board'
 import GamePanel from './components/GamePanel'
 import MoveHistory from './components/MoveHistory'
+import JieqiCapturedPieces from './components/JieqiCapturedPieces'
 import AnalysisBar from './components/AnalysisBar'
 import AnalysisCurve from './components/AnalysisCurve'
 import EndgameLibrary from './components/EndgameLibrary'
@@ -142,7 +143,7 @@ export default function App() {
     hintDifficulty: engineSettings.hintDifficulty,
     searchLimit,
     engineRuntimeOptions,
-    analysisEnabled: showAnalysis,
+    analysisEnabled: showAnalysis && gameMode !== 'jieqi',
     initialFen: gameMode === 'study' ? selectedStudy?.initialFen : selectedEndgame?.fen,
     initialMoveRecords: gameMode === 'study' ? selectedStudy?.moves : undefined,
     initialCurrentMoveIndex: gameMode === 'study' ? selectedStudy?.currentMoveIndex : undefined,
@@ -155,8 +156,8 @@ export default function App() {
   const trainingFeedback = getEndgameTrainingFeedback(selectedEndgame, game.moveRecords, game.gameStatus, game.evaluation)
   const trainingHint = getEndgameTrainingHint(selectedEndgame, game.moveRecords, game.board, trainingHintLevel)
   const trainingHintHistoryText = formatTrainingHintHistory(trainingHintHistory)
-  const naturalLimitReminder = getNaturalLimitReminder(game.moveRecords)
-  const repetitionReminder = getRepetitionReminder(game.initialFen, game.moveRecords)
+  const naturalLimitReminder = gameMode === 'jieqi' ? '' : getNaturalLimitReminder(game.moveRecords)
+  const repetitionReminder = gameMode === 'jieqi' ? '' : getRepetitionReminder(game.initialFen, game.moveRecords)
   const candidateAutoPositionKey = game.moveRecords[game.currentMoveIndex]?.fen || game.initialFen
   const candidatePreviewFrame = useMemo(
     () => candidatePreview
@@ -179,6 +180,14 @@ export default function App() {
   const selectedStudyIsPersisted = Boolean(selectedStudy && studies.some(study => study.id === selectedStudy.id))
   const lastSavedStudySignatureRef = useRef<string | null>(null)
   const canRequestTrainingHint = Boolean(selectedEndgame?.solution?.length) && game.gameStatus === 'playing'
+
+  useEffect(() => {
+    if (gameMode !== 'jieqi') return
+    setShowAnalysis(false)
+    setCandidateAutoRefresh(false)
+    setCandidatePreview(null)
+    if (workspaceTab === 'engine' || workspaceTab === 'variations') setWorkspaceTab('play')
+  }, [gameMode, workspaceTab])
 
   useEffect(() => {
     setTrainingHintLevel(0)
@@ -425,13 +434,14 @@ export default function App() {
             moves={game.historyRecords}
             currentIndex={game.currentMoveIndex}
             onJumpTo={game.jumpToMove}
+            navigationDisabled={gameMode === 'jieqi'}
             onToggleMark={game.toggleMoveMark}
             onUpdateNote={game.updateMoveNote}
             showOnlyAnnotated={showOnlyAnnotatedMoves}
             onShowOnlyAnnotatedChange={setShowOnlyAnnotatedMoves}
           />
         </div>
-        {showAnalysis && (
+        {showAnalysis && gameMode !== 'jieqi' && (
           <AnalysisBar
             evaluation={game.evaluation}
             bestLine={game.bestLine}
@@ -457,6 +467,9 @@ export default function App() {
             onCellClick={game.handleCellClick}
             onCancelSelection={game.cancelSelection}
           />
+          {gameMode === 'jieqi' && (
+            <JieqiCapturedPieces records={game.moveRecords} viewer={playerSide} />
+          )}
           {candidatePreview && candidatePreviewFrame && (
             <CandidatePreviewControls
               candidateLabel={candidatePreview.candidate.notation || candidatePreview.candidate.move}
@@ -478,13 +491,13 @@ export default function App() {
         <div className="side-panel">
           <nav className="workspace-tabs" aria-label="棋局工具">
             <button className={workspaceTab === 'play' ? 'active' : ''} onClick={() => setWorkspaceTab('play')}>对局</button>
-            <button className={workspaceTab === 'engine' ? 'active' : ''} onClick={() => setWorkspaceTab('engine')}>分析</button>
+            {gameMode !== 'jieqi' && <button className={workspaceTab === 'engine' ? 'active' : ''} onClick={() => setWorkspaceTab('engine')}>分析</button>}
             <button className={workspaceTab === 'review' ? 'active' : ''} onClick={() => setWorkspaceTab('review')}>
               复盘{moveReviews.length > 0 ? <span>{moveReviews.length}</span> : null}
             </button>
-            <button className={workspaceTab === 'variations' ? 'active' : ''} onClick={() => setWorkspaceTab('variations')}>
+            {gameMode !== 'jieqi' && <button className={workspaceTab === 'variations' ? 'active' : ''} onClick={() => setWorkspaceTab('variations')}>
               变招{game.variationBranchCount > 0 ? <span>{game.variationBranchCount}</span> : null}
-            </button>
+            </button>}
           </nav>
           <div className="workspace-tool-content">
           {workspaceTab === 'play' && <GamePanel
@@ -625,7 +638,7 @@ export default function App() {
             canStepAi={game.canStepAi}
             hintThinking={game.hintThinking}
           />}
-          {workspaceTab === 'engine' && <CandidateList
+          {gameMode !== 'jieqi' && workspaceTab === 'engine' && <CandidateList
             candidates={game.moveCandidates}
             selectedCandidateMove={candidatePreview?.candidate.move}
             onPreview={(candidate) => {
@@ -690,14 +703,14 @@ export default function App() {
             onCancel={game.cancelReview}
             onJumpToPosition={game.jumpToMove}
           />}
-          {workspaceTab === 'variations' && <VariationPanel
+          {gameMode !== 'jieqi' && workspaceTab === 'variations' && <VariationPanel
             children={game.variationChildren}
             mainChildId={game.mainVariationChildId}
             branchCount={game.variationBranchCount}
             onSelect={game.selectVariation}
             onSetMain={game.setMainVariationChild}
           />}
-          {workspaceTab === 'engine' && showAnalysis && <AnalysisCurve points={game.analysisPoints} />}
+          {gameMode !== 'jieqi' && workspaceTab === 'engine' && showAnalysis && <AnalysisCurve points={game.analysisPoints} />}
           </div>
         </div>
       </div>
@@ -740,6 +753,7 @@ function formatModeName(gameMode: GameMode): string {
   if (gameMode === 'human-vs-ai') return '人机对弈'
   if (gameMode === 'human-vs-human') return '双人对弈'
   if (gameMode === 'ai-vs-ai') return 'AI 对战'
+  if (gameMode === 'jieqi') return '揭棋对弈'
   if (gameMode === 'endgame') return '残局训练'
   return '研究局面'
 }
@@ -918,6 +932,10 @@ function StartScreen({ onStart }: {
               onClick={() => setMode('ai-vs-ai')}
             >AI 对战</button>
             <button
+              className={mode === 'jieqi' ? 'active' : ''}
+              onClick={() => setMode('jieqi')}
+            >揭棋</button>
+            <button
               className={mode === 'endgame' ? 'active' : ''}
               onClick={() => setMode('endgame')}
             >残局模式</button>
@@ -928,8 +946,13 @@ function StartScreen({ onStart }: {
           </div>
         </div>
 
-        {mode === 'human-vs-ai' && (
+        {(mode === 'human-vs-ai' || mode === 'jieqi') && (
           <>
+            {mode === 'jieqi' && (
+              <div className="jieqi-mode-note">
+                除将帅外随机盖棋。暗子先按原位置棋种行走，移动后翻开真实身份。
+              </div>
+            )}
             <div className="option-group">
               <label>难度等级</label>
               <div className="btn-group">

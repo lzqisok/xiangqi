@@ -17,6 +17,7 @@ const MODE_NAMES: Record<GameMode, string> = {
   'human-vs-ai': '人机对弈',
   'human-vs-human': '双人对弈',
   'ai-vs-ai': 'AI 对战',
+  jieqi: '揭棋对弈',
   endgame: '残局模式',
   study: '研究局面',
 }

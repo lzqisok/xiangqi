@@ -3,6 +3,7 @@ import test from 'node:test'
 import { isStaleEngineResponse, MAX_MOVE_COUNT, MAX_REVIEW_MOVE_COUNT, parseClientMessage } from './protocol.js'
 
 const VALID_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
+const JIEQI_FEN = 'xxxxkxxxx/9/1x5x1/x1x1x1x1x/9/9/X1X1X1X1X/1X5X1/9/XXXXKXXXX w R2A2C2P5N2B2r2a2c2p5n2b2 0 1'
 
 test('parseClientMessage accepts valid move requests', () => {
   const result = parseClientMessage(JSON.stringify({
@@ -28,6 +29,84 @@ test('parseClientMessage accepts valid move requests', () => {
     assert.equal(result.message.engineThreads, 'auto')
     assert.equal(result.message.engineHashMb, 256)
   }
+})
+
+test('parseClientMessage accepts extended reveal moves for the Jieqi engine only', () => {
+  const result = parseClientMessage(JSON.stringify({
+    type: 'move',
+    requestId: 'jieqi-1',
+    variant: 'jieqi',
+    fen: JIEQI_FEN,
+    moves: ['a3a4N', 'a6a5p'],
+    difficulty: 'hard',
+  }))
+
+  assert.equal(result.ok, true)
+  if (result.ok) {
+    assert.equal(result.message.variant, 'jieqi')
+    assert.deepEqual(result.message.moves, ['a3a4N', 'a6a5p'])
+  }
+
+  const standard = parseClientMessage(JSON.stringify({
+    type: 'move',
+    requestId: 'standard-extended',
+    fen: VALID_FEN,
+    moves: ['a3a4N'],
+  }))
+  assert.equal(standard.ok, false)
+})
+
+test('parseClientMessage validates Jieqi rank widths, kings, and reserve inventory', () => {
+  const request = (fen: string) => parseClientMessage(JSON.stringify({
+    type: 'move',
+    requestId: 'jieqi-invalid',
+    variant: 'jieqi',
+    fen,
+    moves: [],
+  }))
+
+  assert.equal(request('99/9/9/9/9/9/9/9/9/4K4 w R1r1 0 1').ok, false)
+  assert.equal(request('xxxx1xxxx/9/1x5x1/x1x1x1x1x/9/9/X1X1X1X1X/1X5X1/9/XXXXKXXXX w R2A2C2P5N2B2r2a2c2p5n2b2 0 1').ok, false)
+  assert.equal(request('xxxxkxxxx/9/1x5x1/x1x1x1x1x/9/9/X1X1X1X1X/1X5X1/9/XXXXKXXXX w R3A1C2P5N2B2r2a2c2p5n2b2 0 1').ok, false)
+  assert.equal(request('xxxxkxxxx/9/1x5x1/x1x1x1x1x/9/9/X1X1X1X1X/1X5X1/9/XXXXKXXXX w R2A2C2P4N2B2r2a2c2p5n2b2 0 1').ok, false)
+  assert.equal(request('1xxxkxxxx/9/1x5x1/x1x1x1x1x/9/9/X1X1X1X1X/1X5X1/9/XXXXKXXXX w R2A2C2P5N2B2r1a2c2p5n2b2 0 1').ok, false)
+  assert.equal(request('xxxxkxxxx/9/1x5x1/x1x1x1x1x/9/9/X1X1X1X1X/1X5X1/9/XXXXKXXXX w R1R1A2C2P5N2B2r2a2c2p5n2b2 0 1').ok, false)
+  assert.equal(request('xxxx1xxxx/9/1x5x1/x1x1x1x1x/3k5/5K3/X1X1X1X1X/1X5X1/9/XXXX1XXXX w R2A2C2P5N2B2r2a2c2p5n2b2 0 1').ok, false)
+})
+
+test('parseClientMessage replays Jieqi moves and validates identity suffixes', () => {
+  const request = (moves: string[]) => parseClientMessage(JSON.stringify({
+    type: 'move',
+    requestId: 'jieqi-replay',
+    variant: 'jieqi',
+    fen: JIEQI_FEN,
+    moves,
+  }))
+
+  assert.equal(request(['a0a1R', 'a6a5p']).ok, true)
+  assert.equal(request(['a0a9R']).ok, false)
+  assert.equal(request(['e0e1r']).ok, false)
+  assert.equal(request(['a0a1r']).ok, false)
+  assert.equal(request(['a0a1R', 'a6a5P']).ok, false)
+})
+
+test('parseClientMessage keeps captured hidden identities scoped to the current viewer', () => {
+  const request = (moves: string[]) => parseClientMessage(JSON.stringify({
+    type: 'hint',
+    requestId: 'jieqi-private-capture',
+    variant: 'jieqi',
+    fen: JIEQI_FEN,
+    moves,
+  }))
+  const beforeCapture = ['c3c4R', 'a6a5p', 'c4b4', 'c6c5p']
+
+  // After red captures, it is black's turn, so black must not receive the identity.
+  assert.equal(request([...beforeCapture, 'b2b7C']).ok, true)
+  assert.equal(request([...beforeCapture, 'b2b7Cn']).ok, false)
+
+  // Once black replies and red is the viewer again, red must receive its private capture.
+  assert.equal(request([...beforeCapture, 'b2b7Cn', 'a5a4']).ok, true)
+  assert.equal(request([...beforeCapture, 'b2b7C', 'a5a4']).ok, false)
 })
 
 test('parseClientMessage accepts candidate requests with bounded count', () => {

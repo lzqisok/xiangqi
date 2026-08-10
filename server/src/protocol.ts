@@ -1,4 +1,5 @@
 import { validateFenPosition, validateMoveSequence } from './validation.js'
+import { validateJieqiBoardPlacement, validateJieqiMoveSequence } from './jieqiValidation.js'
 
 export type RequestKind = 'move' | 'hint' | 'analyze' | 'candidates' | 'review' | 'stop' | 'init'
 
@@ -14,6 +15,7 @@ export interface EngineRequest {
   searchTimeMs?: number
   engineThreads?: 'auto' | number
   engineHashMb?: number
+  variant?: 'xiangqi' | 'jieqi'
 }
 
 export type ProtocolValidation =
@@ -23,8 +25,77 @@ export type ProtocolValidation =
 const DIFFICULTIES = new Set(['easy', 'medium', 'hard', 'master'])
 const SEARCH_MODES = new Set(['depth', 'time'])
 const UCI_MOVE_RE = /^[a-i][0-9][a-i][0-9]$/
+const JIEQI_MOVE_RE = /^[a-i][0-9][a-i][0-9](?:[RACPNBracpnb]{1,2})?$/
+const JIEQI_RESERVE_LIMITS: Record<string, number> = {
+  R: 2, A: 2, C: 2, P: 5, N: 2, B: 2,
+  r: 2, a: 2, c: 2, p: 5, n: 2, b: 2,
+}
 export const MAX_MOVE_COUNT = 600
 export const MAX_REVIEW_MOVE_COUNT = 120
+
+export function validateJieqiFen(fen: string): { ok: boolean; errors: string[] } {
+  const fields = fen.trim().split(/\s+/)
+  if (fields.length !== 5 || !/^[wb]$/.test(fields[1] || '') || !/^\d+$/.test(fields[3] || '') || !/^\d+$/.test(fields[4] || '')) {
+    return { ok: false, errors: ['Invalid Jieqi FEN'] }
+  }
+
+  const ranks = fields[0].split('/')
+  if (ranks.length !== 10) return { ok: false, errors: ['Jieqi FEN must contain 10 ranks'] }
+
+  let redHidden = 0
+  let blackHidden = 0
+  let redKings = 0
+  let blackKings = 0
+  for (const rank of ranks) {
+    let width = 0
+    for (const char of rank) {
+      if (/^[1-9]$/.test(char)) {
+        width += Number(char)
+      } else if (char === 'X' || char === 'x' || char === 'K' || char === 'k') {
+        width++
+        if (char === 'X') redHidden++
+        if (char === 'x') blackHidden++
+        if (char === 'K') redKings++
+        if (char === 'k') blackKings++
+      } else {
+        return { ok: false, errors: ['Invalid Jieqi FEN board'] }
+      }
+    }
+    if (width !== 9) return { ok: false, errors: ['Each Jieqi FEN rank must expand to 9 files'] }
+  }
+
+  if (redKings !== 1 || blackKings !== 1) {
+    return { ok: false, errors: ['Jieqi FEN must contain exactly one king per side'] }
+  }
+  if (redHidden !== 15 || blackHidden !== 15) {
+    return { ok: false, errors: ['Jieqi FEN must contain all fifteen hidden pieces per side'] }
+  }
+
+  const reserve = fields[2]
+  if (!/^(?:[RACPNBracpnb][0-5])+$/.test(reserve)) {
+    return { ok: false, errors: ['Invalid Jieqi FEN reserve'] }
+  }
+  const counts: Record<string, number> = {}
+  for (let index = 0; index < reserve.length; index += 2) {
+    const piece = reserve[index]
+    if (Object.hasOwn(counts, piece)) {
+      return { ok: false, errors: [`Jieqi FEN reserve repeats ${piece}`] }
+    }
+    counts[piece] = (counts[piece] || 0) + Number(reserve[index + 1])
+  }
+  for (const [piece, requiredCount] of Object.entries(JIEQI_RESERVE_LIMITS)) {
+    if (counts[piece] !== requiredCount) {
+      return { ok: false, errors: [`Jieqi FEN reserve must contain ${requiredCount} ${piece} pieces`] }
+    }
+  }
+  const redReserve = Object.entries(counts).reduce((total, [piece, count]) => total + (piece === piece.toUpperCase() ? count : 0), 0)
+  const blackReserve = Object.entries(counts).reduce((total, [piece, count]) => total + (piece === piece.toLowerCase() ? count : 0), 0)
+  if (redReserve !== redHidden || blackReserve !== blackHidden) {
+    return { ok: false, errors: ['Jieqi FEN reserve counts must match hidden pieces'] }
+  }
+
+  return validateJieqiBoardPlacement(fen)
+}
 
 export function parseClientMessage(raw: string): ProtocolValidation {
   let parsed: unknown
@@ -56,7 +127,14 @@ export function parseClientMessage(raw: string): ProtocolValidation {
     return { ok: false, requestId, error: 'difficulty is invalid' }
   }
 
-  if (msg.moves !== undefined && (!Array.isArray(msg.moves) || !msg.moves.every(item => typeof item === 'string' && UCI_MOVE_RE.test(item)))) {
+  if (msg.variant !== undefined && msg.variant !== 'xiangqi' && msg.variant !== 'jieqi') {
+    return { ok: false, requestId, error: 'variant is invalid' }
+  }
+
+  const variant = msg.variant === 'jieqi' ? 'jieqi' : 'xiangqi'
+  const movePattern = variant === 'jieqi' ? JIEQI_MOVE_RE : UCI_MOVE_RE
+
+  if (msg.moves !== undefined && (!Array.isArray(msg.moves) || !msg.moves.every(item => typeof item === 'string' && movePattern.test(item)))) {
     return { ok: false, requestId, error: 'moves must be an array of UCI strings' }
   }
 
@@ -108,7 +186,7 @@ export function parseClientMessage(raw: string): ProtocolValidation {
     if (typeof msg.fen !== 'string') {
       return { ok: false, requestId, error: 'fen must be a string' }
     }
-    const validation = validateFenPosition(msg.fen)
+    const validation = variant === 'jieqi' ? validateJieqiFen(msg.fen) : validateFenPosition(msg.fen)
     if (!validation.ok) {
       return { ok: false, requestId, error: validation.errors[0] || 'Invalid position' }
     }
@@ -120,7 +198,9 @@ export function parseClientMessage(raw: string): ProtocolValidation {
     msg.moves.length > 0 &&
     msg.moves.every(item => typeof item === 'string')
   ) {
-    const validation = validateMoveSequence(msg.fen, msg.moves)
+    const validation = variant === 'jieqi'
+      ? validateJieqiMoveSequence(msg.fen, msg.moves)
+      : validateMoveSequence(msg.fen, msg.moves)
     if (!validation.ok) {
       return { ok: false, requestId, error: validation.errors[0] || 'Illegal move sequence' }
     }
@@ -140,6 +220,7 @@ export function parseClientMessage(raw: string): ProtocolValidation {
       searchTimeMs: typeof msg.searchTimeMs === 'number' ? msg.searchTimeMs : undefined,
       engineThreads: msg.engineThreads === 'auto' || typeof msg.engineThreads === 'number' ? msg.engineThreads as EngineRequest['engineThreads'] : undefined,
       engineHashMb: typeof msg.engineHashMb === 'number' ? msg.engineHashMb : undefined,
+      variant,
     },
   }
 }

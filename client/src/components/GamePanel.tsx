@@ -138,10 +138,11 @@ export default function GamePanel({
   canUndo, canRedo, canRequestHint, canStepAi, hintThinking,
 }: Props) {
   const isAiVsAi = gameMode === 'ai-vs-ai'
-  const isHumanVsAi = gameMode === 'human-vs-ai'
+  const isJieqi = gameMode === 'jieqi'
+  const isHumanVsAi = gameMode === 'human-vs-ai' || isJieqi
   const canManualEnd = gameStatus === 'playing' && !aiThinking && !hintThinking
   const canDeclareDraw = canManualEnd && gameMode === 'human-vs-human'
-  const modeText = isHumanVsAi ? '人机对弈' : isAiVsAi ? 'AI 对战' : gameMode === 'endgame' ? '残局模式' : gameMode === 'study' ? '研究局面' : '双人对弈'
+  const modeText = isJieqi ? '揭棋对弈' : isHumanVsAi ? '人机对弈' : isAiVsAi ? 'AI 对战' : gameMode === 'endgame' ? '残局模式' : gameMode === 'study' ? '研究局面' : '双人对弈'
   const activeDifficulty = currentTurn === 'red'
     ? redPlayerConfig.difficulty
     : blackPlayerConfig.difficulty
@@ -159,6 +160,11 @@ export default function GamePanel({
           <div className="game-over">{formatStatus(gameStatus, gameStatusReason)}</div>
         )}
       </div>
+      {isJieqi && (
+        <div className="jieqi-rule-note">
+          暗子按棋盘原位走法移动，落子后翻开；暗吃身份仅捕获方知晓。
+        </div>
+      )}
 
       <div className="info-row">
         <span className="info-chip">{modeText}</span>
@@ -260,20 +266,22 @@ export default function GamePanel({
         <summary>更多工具</summary>
         <div className="panel-buttons">
           <button onClick={onFlip}>翻转棋盘</button>
-          <button
-            className={showAnalysis ? 'analysis-active' : ''}
-            onClick={onToggleAnalysis}
-          >
-            {showAnalysis ? '关闭分析' : '引擎分析'}
-          </button>
-          <button onClick={onExportFen}>导出 FEN</button>
-          <button onClick={onImportFen}>导入 FEN</button>
-          <button onClick={onSaveRecentFen}>保存局面</button>
-          <button onClick={onSaveStudy}>保存研究</button>
+          {!isJieqi && (
+            <button
+              className={showAnalysis ? 'analysis-active' : ''}
+              onClick={onToggleAnalysis}
+            >
+              {showAnalysis ? '关闭分析' : '引擎分析'}
+            </button>
+          )}
+          {!isJieqi && <button onClick={onExportFen}>导出 FEN</button>}
+          {!isJieqi && <button onClick={onImportFen}>导入 FEN</button>}
+          {!isJieqi && <button onClick={onSaveRecentFen}>保存局面</button>}
+          {!isJieqi && <button onClick={onSaveStudy}>保存研究</button>}
           <button onClick={onExportImage}>导出图片</button>
           <button onClick={onCopyMoveText}>复制棋谱</button>
-          <button onClick={onCopyReplayLink}>复制回放链接</button>
-          <button onClick={onSaveAsEndgame}>另存残局</button>
+          {!isJieqi && <button onClick={onCopyReplayLink}>复制回放链接</button>}
+          {!isJieqi && <button onClick={onSaveAsEndgame}>另存残局</button>}
           {gameMode === 'human-vs-human' && <button onClick={onDeclareDraw} disabled={!canDeclareDraw}>和棋</button>}
           {!isAiVsAi && <button className="new-game" onClick={onResign} disabled={!canManualEnd}>认输</button>}
           <button className="new-game" onClick={onNewGame}>新游戏</button>

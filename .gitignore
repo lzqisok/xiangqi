@@ -3,6 +3,8 @@ dist/
 .env
 *.log
 engine/pikafish
+engine/pikafish-jieqi
+engine/pikafish-jieqi.exe
 engine/*.nnue
 .DS_Store
 .cursor/

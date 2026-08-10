@@ -1,9 +1,8 @@
 import express from 'express'
 import { createServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
-import { PikafishEngine, EngineSearchLimit, EngineRuntimeOptions } from './engine.js'
+import { PikafishEngine, EngineSearchLimit, EngineRuntimeOptions, EngineVariant } from './engine.js'
 import { parseClientMessage } from './protocol.js'
-import { validateFenPosition } from './validation.js'
 
 const app = express()
 const server = createServer(app)
@@ -35,11 +34,15 @@ function getRuntimeOptions(msg: {
   }
 }
 
-let sharedEngine: PikafishEngine | null = null
-let engineReady = false
-let engineInitPromise: Promise<PikafishEngine | null> | null = null
-let activeAnalysis: { sessionId: string; requestId?: string } | null = null
-let currentRuntimeOptions: EngineRuntimeOptions | undefined
+type EngineSlot = {
+  engine: PikafishEngine | null
+  ready: boolean
+  initPromise: Promise<PikafishEngine | null> | null
+  runtimeOptions?: EngineRuntimeOptions
+  disposed: boolean
+}
+
+const liveEngines = new Set<PikafishEngine>()
 
 function makeSessionId(): string {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -57,90 +60,119 @@ function sendEngineStatus(ws: WebSocket, available: boolean, message?: string) {
   }
 }
 
-async function getEngine(): Promise<PikafishEngine | null> {
-  if (sharedEngine && engineReady) return sharedEngine
-  if (engineInitPromise) return engineInitPromise
+function createEngineSlots(): Record<EngineVariant, EngineSlot> {
+  return {
+    xiangqi: { engine: null, ready: false, initPromise: null, disposed: false },
+    jieqi: { engine: null, ready: false, initPromise: null, disposed: false },
+  }
+}
 
-  engineInitPromise = (async () => {
-    if (sharedEngine) {
-      sharedEngine.destroy()
+async function getEngine(slots: Record<EngineVariant, EngineSlot>, variant: EngineVariant = 'xiangqi'): Promise<PikafishEngine | null> {
+  const slot = slots[variant]
+  if (slot.disposed) return null
+  if (slot.engine && slot.ready) return slot.engine
+  if (slot.initPromise) return slot.initPromise
+
+  slot.initPromise = (async () => {
+    if (slot.engine) {
+      slot.engine.destroy()
+      liveEngines.delete(slot.engine)
     }
 
-    sharedEngine = new PikafishEngine()
-    engineReady = await sharedEngine.init(currentRuntimeOptions)
+    const engine = new PikafishEngine(variant)
+    liveEngines.add(engine)
+    slot.engine = engine
+    slot.ready = await engine.init(slot.runtimeOptions)
 
-    if (!engineReady) {
+    if (slot.disposed) {
+      engine.destroy()
+      liveEngines.delete(engine)
+      if (slot.engine === engine) slot.engine = null
+      slot.ready = false
+      return null
+    }
+
+    if (!slot.ready) {
       console.warn('Engine not available, running in local-only mode')
       return null
     }
 
-    sharedEngine.on('exit', () => {
-      engineReady = false
+    engine.on('exit', () => {
+      if (slot.engine === engine) slot.ready = false
     })
 
-    return sharedEngine
+    return engine
   })()
 
   try {
-    return await engineInitPromise
+    return await slot.initPromise
   } finally {
-    engineInitPromise = null
+    slot.initPromise = null
   }
 }
 
-// Pre-init engine on startup
-getEngine()
+function destroyEngineSlots(slots: Record<EngineVariant, EngineSlot>) {
+  for (const slot of Object.values(slots)) {
+    slot.disposed = true
+    if (!slot.engine) continue
+    slot.engine.destroy()
+    liveEngines.delete(slot.engine)
+    slot.engine = null
+    slot.ready = false
+  }
+}
 
 wss.on('connection', async (ws) => {
   console.log('Client connected')
 
   const sessionId = makeSessionId()
+  const engineSlots = createEngineSlots()
+  const activeAnalysis = new Map<EngineVariant, { sessionId: string; requestId?: string }>()
   let currentDifficulty: 'easy' | 'medium' | 'hard' | 'master' = 'medium'
   let infoHandler: ((info: unknown) => void) | null = null
   let localAnalysisRequestId: string | undefined
   let localAnalysisFen = INITIAL_FEN
   let localAnalysisMoves: string[] = []
   let localAnalysisLimit: EngineSearchLimit | undefined
+  let localAnalysisVariant: EngineVariant | null = null
+  let localAnalysisEngine: PikafishEngine | null = null
   let requestGeneration = 0
-  const activeFiniteRequestIds = new Set<string>()
+  const activeFiniteRequests = new Map<string, PikafishEngine>()
+  let infoEngine: PikafishEngine | null = null
 
   const attachAnalysisHandler = (engine: PikafishEngine) => {
-    if (infoHandler) {
-      engine.removeListener('info', infoHandler)
+    if (infoHandler && infoEngine) {
+      infoEngine.removeListener('info', infoHandler)
     }
     infoHandler = (info) => {
+      const analysis = localAnalysisVariant ? activeAnalysis.get(localAnalysisVariant) : undefined
       if (
-        activeAnalysis?.sessionId === sessionId &&
-        activeAnalysis.requestId === localAnalysisRequestId &&
+        analysis?.sessionId === sessionId &&
+        analysis.requestId === localAnalysisRequestId &&
         ws.readyState === WebSocket.OPEN
       ) {
         ws.send(JSON.stringify({ type: 'info', requestId: localAnalysisRequestId, data: info }))
       }
     }
+    infoEngine = engine
     engine.on('info', infoHandler)
   }
 
   const detachAnalysisHandler = (engine: PikafishEngine) => {
     if (infoHandler) {
-      engine.removeListener('info', infoHandler)
+      ;(infoEngine || engine).removeListener('info', infoHandler)
       infoHandler = null
+      infoEngine = null
     }
   }
 
-  const shouldResumeLocalAnalysis = () => (
+  const shouldResumeLocalAnalysis = (variant: EngineVariant) => (
     Boolean(localAnalysisRequestId) &&
-    activeAnalysis?.sessionId === sessionId &&
-    activeAnalysis.requestId === localAnalysisRequestId &&
+    localAnalysisVariant === variant &&
+    activeAnalysis.get(variant)?.sessionId === sessionId &&
+    activeAnalysis.get(variant)?.requestId === localAnalysisRequestId &&
     ws.readyState === WebSocket.OPEN
   )
-
-  getEngine()
-    .then(engine => sendEngineStatus(
-      ws,
-      Boolean(engine),
-      engine ? 'Engine ready' : 'Engine not available',
-    ))
-    .catch(() => sendEngineStatus(ws, false, 'Engine not available'))
 
   ws.on('message', async (data) => {
     try {
@@ -154,9 +186,9 @@ wss.on('connection', async (ws) => {
         case 'init': {
           currentDifficulty = msg.difficulty || 'medium'
           const runtimeOptions = getRuntimeOptions(msg)
+          const engine = await getEngine(engineSlots, msg.variant)
           if (runtimeOptions) {
-            currentRuntimeOptions = runtimeOptions
-            const engine = await getEngine()
+            engineSlots[msg.variant || 'xiangqi'].runtimeOptions = runtimeOptions
             if (engine) {
               try {
                 await engine.applyRuntimeOptions(runtimeOptions)
@@ -166,12 +198,12 @@ wss.on('connection', async (ws) => {
               }
             }
           }
-          sendEngineStatus(ws, Boolean(sharedEngine && engineReady), engineReady ? 'Engine ready' : 'Engine not available')
+          sendEngineStatus(ws, Boolean(engine), engine ? 'Engine ready' : 'Engine not available')
           break
         }
 
         case 'move': {
-          const engine = await getEngine()
+          const engine = await getEngine(engineSlots, msg.variant)
           if (!engine) {
             sendEngineStatus(ws, false, 'Engine not available')
             sendError(ws, 'Engine not available', msg.requestId)
@@ -182,16 +214,10 @@ wss.on('connection', async (ws) => {
           const requestId = msg.requestId
           const fen = msg.fen || INITIAL_FEN
           const moves: string[] = msg.moves || []
-          const validation = validateFenPosition(fen)
-          if (!validation.ok) {
-            sendError(ws, validation.errors[0] || 'Invalid position', requestId)
-            break
-          }
-
           try {
             const generation = requestGeneration
             const startedAt = Date.now()
-            if (requestId) activeFiniteRequestIds.add(requestId)
+            if (requestId) activeFiniteRequests.set(requestId, engine)
             const result = await engine.getBestMove(fen, moves, requestDifficulty, getSearchLimit(msg))
             if (!result.move) {
               sendError(ws, 'Engine returned no move', requestId)
@@ -209,13 +235,13 @@ wss.on('connection', async (ws) => {
             console.error('Engine error:', err)
             sendError(ws, 'Engine error', requestId)
           } finally {
-            if (requestId) activeFiniteRequestIds.delete(requestId)
+            if (requestId) activeFiniteRequests.delete(requestId)
           }
           break
         }
 
         case 'hint': {
-          const engine = await getEngine()
+          const engine = await getEngine(engineSlots, msg.variant)
           if (!engine) {
             sendEngineStatus(ws, false, 'Engine not available')
             sendError(ws, 'Engine not available', msg.requestId)
@@ -225,16 +251,10 @@ wss.on('connection', async (ws) => {
           const requestId = msg.requestId
           const fen = msg.fen || INITIAL_FEN
           const moves: string[] = msg.moves || []
-          const validation = validateFenPosition(fen)
-          if (!validation.ok) {
-            sendError(ws, validation.errors[0] || 'Invalid position', requestId)
-            break
-          }
-
           try {
             const generation = requestGeneration
             const startedAt = Date.now()
-            if (requestId) activeFiniteRequestIds.add(requestId)
+            if (requestId) activeFiniteRequests.set(requestId, engine)
             const result = await engine.getBestMove(fen, moves, msg.difficulty || 'master', getSearchLimit(msg))
             if (!result.move) {
               sendError(ws, 'Engine returned no hint', requestId)
@@ -252,13 +272,13 @@ wss.on('connection', async (ws) => {
             console.error('Hint engine error:', err)
             sendError(ws, 'Hint engine error', requestId)
           } finally {
-            if (requestId) activeFiniteRequestIds.delete(requestId)
+            if (requestId) activeFiniteRequests.delete(requestId)
           }
           break
         }
 
         case 'candidates': {
-          const engine = await getEngine()
+          const engine = await getEngine(engineSlots, msg.variant)
           if (!engine) {
             sendEngineStatus(ws, false, 'Engine not available')
             sendError(ws, 'Engine not available', msg.requestId)
@@ -268,19 +288,13 @@ wss.on('connection', async (ws) => {
           const requestId = msg.requestId
           const fen = msg.fen || INITIAL_FEN
           const moves: string[] = msg.moves || []
-          const validation = validateFenPosition(fen)
-          if (!validation.ok) {
-            sendError(ws, validation.errors[0] || 'Invalid position', requestId)
-            break
-          }
-
-          const resumeAnalysis = shouldResumeLocalAnalysis()
+          const resumeAnalysis = shouldResumeLocalAnalysis(msg.variant || 'xiangqi')
           if (resumeAnalysis) {
             detachAnalysisHandler(engine)
           }
           try {
             const generation = requestGeneration
-            if (requestId) activeFiniteRequestIds.add(requestId)
+            if (requestId) activeFiniteRequests.set(requestId, engine)
             const candidates = await engine.getCandidates(fen, moves, msg.difficulty || currentDifficulty, msg.count || 3, getSearchLimit(msg))
             if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'candidates', requestId, candidates }))
@@ -289,8 +303,8 @@ wss.on('connection', async (ws) => {
             console.error('Candidate engine error:', err)
             sendError(ws, 'Candidate engine error', requestId)
           } finally {
-            if (requestId) activeFiniteRequestIds.delete(requestId)
-            if (resumeAnalysis && shouldResumeLocalAnalysis()) {
+            if (requestId) activeFiniteRequests.delete(requestId)
+            if (resumeAnalysis && shouldResumeLocalAnalysis(msg.variant || 'xiangqi')) {
               try {
                 attachAnalysisHandler(engine)
                 await engine.analyze(localAnalysisFen, localAnalysisMoves, localAnalysisLimit)
@@ -303,7 +317,7 @@ wss.on('connection', async (ws) => {
         }
 
         case 'review': {
-          const engine = await getEngine()
+          const engine = await getEngine(engineSlots, msg.variant)
           if (!engine) {
             sendEngineStatus(ws, false, 'Engine not available')
             sendError(ws, 'Engine not available', msg.requestId)
@@ -313,12 +327,12 @@ wss.on('connection', async (ws) => {
           const requestId = msg.requestId
           const fen = msg.fen || INITIAL_FEN
           const moves: string[] = msg.moves || []
-          const resumeAnalysis = shouldResumeLocalAnalysis()
+          const resumeAnalysis = shouldResumeLocalAnalysis(msg.variant || 'xiangqi')
           if (resumeAnalysis) detachAnalysisHandler(engine)
 
           try {
             const generation = requestGeneration
-            if (requestId) activeFiniteRequestIds.add(requestId)
+            if (requestId) activeFiniteRequests.set(requestId, engine)
             const initialTurn = fen.trim().split(/\s+/)[1] === 'b' ? 'black' : 'red'
             const positions = []
 
@@ -359,8 +373,8 @@ wss.on('connection', async (ws) => {
             console.error('Review engine error:', err)
             sendError(ws, 'Review engine error', requestId)
           } finally {
-            if (requestId) activeFiniteRequestIds.delete(requestId)
-            if (resumeAnalysis && shouldResumeLocalAnalysis()) {
+            if (requestId) activeFiniteRequests.delete(requestId)
+            if (resumeAnalysis && shouldResumeLocalAnalysis(msg.variant || 'xiangqi')) {
               try {
                 attachAnalysisHandler(engine)
                 await engine.analyze(localAnalysisFen, localAnalysisMoves, localAnalysisLimit)
@@ -373,7 +387,7 @@ wss.on('connection', async (ws) => {
         }
 
         case 'analyze': {
-          const engine = await getEngine()
+          const engine = await getEngine(engineSlots, msg.variant)
           if (!engine) {
             sendEngineStatus(ws, false, 'Engine not available')
             sendError(ws, 'Engine not available', msg.requestId)
@@ -382,17 +396,13 @@ wss.on('connection', async (ws) => {
 
           const fen = msg.fen || INITIAL_FEN
           const moves: string[] = msg.moves || []
-          const validation = validateFenPosition(fen)
-          if (!validation.ok) {
-            sendError(ws, validation.errors[0] || 'Invalid position', msg.requestId)
-            break
-          }
-
           localAnalysisRequestId = msg.requestId
           localAnalysisFen = fen
           localAnalysisMoves = moves
           localAnalysisLimit = getSearchLimit(msg)
-          activeAnalysis = { sessionId, requestId: msg.requestId }
+          localAnalysisVariant = msg.variant || 'xiangqi'
+          localAnalysisEngine = engine
+          activeAnalysis.set(localAnalysisVariant, { sessionId, requestId: msg.requestId })
           attachAnalysisHandler(engine)
 
           engine.stopAnalysis()
@@ -401,25 +411,34 @@ wss.on('connection', async (ws) => {
         }
 
         case 'stop': {
+          const analysis = localAnalysisVariant ? activeAnalysis.get(localAnalysisVariant) : undefined
           const stopsOwnAnalysis =
-            activeAnalysis?.sessionId === sessionId &&
-            (!msg.requestId || activeAnalysis.requestId === msg.requestId)
+            analysis?.sessionId === sessionId &&
+            (!msg.requestId || analysis.requestId === msg.requestId)
           const stopsFiniteRequest = msg.requestId
-            ? activeFiniteRequestIds.has(msg.requestId)
-            : activeFiniteRequestIds.size > 0
+            ? activeFiniteRequests.has(msg.requestId)
+            : activeFiniteRequests.size > 0
 
           if (stopsFiniteRequest) {
             requestGeneration++
           }
           if (stopsOwnAnalysis) {
-            if (sharedEngine) detachAnalysisHandler(sharedEngine)
-            activeAnalysis = null
+            if (localAnalysisEngine) detachAnalysisHandler(localAnalysisEngine)
+            if (localAnalysisVariant) activeAnalysis.delete(localAnalysisVariant)
             localAnalysisRequestId = undefined
             localAnalysisLimit = undefined
+            localAnalysisVariant = null
           }
-          if ((stopsFiniteRequest || stopsOwnAnalysis) && sharedEngine && engineReady) {
-            sharedEngine.interruptSearch()
+          const enginesToInterrupt = new Set<PikafishEngine>()
+          if (msg.requestId) {
+            const finiteEngine = activeFiniteRequests.get(msg.requestId)
+            if (finiteEngine) enginesToInterrupt.add(finiteEngine)
+          } else {
+            for (const finiteEngine of activeFiniteRequests.values()) enginesToInterrupt.add(finiteEngine)
           }
+          if (stopsOwnAnalysis && localAnalysisEngine) enginesToInterrupt.add(localAnalysisEngine)
+          for (const engine of enginesToInterrupt) engine.interruptSearch()
+          if (stopsOwnAnalysis) localAnalysisEngine = null
           break
         }
       }
@@ -430,13 +449,12 @@ wss.on('connection', async (ws) => {
 
   ws.on('close', () => {
     console.log('Client disconnected')
-    if (sharedEngine) {
-      detachAnalysisHandler(sharedEngine)
+    if (localAnalysisEngine) detachAnalysisHandler(localAnalysisEngine)
+    if (localAnalysisVariant && activeAnalysis.get(localAnalysisVariant)?.sessionId === sessionId) {
+      activeAnalysis.delete(localAnalysisVariant)
+      localAnalysisEngine?.stopAnalysis()
     }
-    if (activeAnalysis?.sessionId === sessionId) {
-      activeAnalysis = null
-      if (sharedEngine && engineReady) sharedEngine.stopAnalysis()
-    }
+    destroyEngineSlots(engineSlots)
   })
 })
 
@@ -449,9 +467,8 @@ server.listen(PORT, () => {
 
 process.on('SIGINT', () => {
   console.log('\nShutting down...')
-  if (sharedEngine) {
-    sharedEngine.destroy()
-  }
+  for (const engine of liveEngines) engine.destroy()
+  liveEngines.clear()
   server.close()
   process.exit(0)
 })

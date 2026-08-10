@@ -1,6 +1,9 @@
 import { Board, Piece, PieceColor, Position, GameStatus, GameStatusReason } from '../types'
 import { ROWS, COLS, applyMove, findKing } from './board'
 import { validateBoardPosition } from './validation'
+import { applyJieqiMove, getJieqiMovementType } from './jieqi'
+
+export type RuleVariant = 'xiangqi' | 'jieqi'
 
 function inBounds(r: number, c: number): boolean {
   return r >= 0 && r < ROWS && c >= 0 && c < COLS
@@ -11,7 +14,7 @@ function isOwnPiece(board: Board, r: number, c: number, color: PieceColor): bool
   return p !== null && p.color === color
 }
 
-function getPseudoMoves(board: Board, pos: Position): Position[] {
+function getPseudoMoves(board: Board, pos: Position, variant: RuleVariant = 'xiangqi'): Position[] {
   const piece = board[pos.row][pos.col]
   if (!piece) return []
 
@@ -20,14 +23,17 @@ function getPseudoMoves(board: Board, pos: Position): Position[] {
   const color = piece.color
   const isRed = color === 'red'
 
-  switch (piece.type) {
+  const movementType = variant === 'jieqi' ? getJieqiMovementType(piece) : piece.type
+
+  switch (movementType) {
     case 'k': {
       // King: moves within palace, one step orthogonally
       const palaceRows = isRed ? [7, 8, 9] : [0, 1, 2]
       const palaceCols = [3, 4, 5]
       for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
         const nr = row + dr, nc = col + dc
-        if (palaceRows.includes(nr) && palaceCols.includes(nc) && !isOwnPiece(board, nr, nc, color)) {
+        const staysInPalace = palaceRows.includes(nr) && palaceCols.includes(nc)
+        if (staysInPalace && inBounds(nr, nc) && !isOwnPiece(board, nr, nc, color)) {
           moves.push({ row: nr, col: nc })
         }
       }
@@ -54,7 +60,9 @@ function getPseudoMoves(board: Board, pos: Position): Position[] {
       const palaceCols = [3, 4, 5]
       for (const [dr, dc] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
         const nr = row + dr, nc = col + dc
-        if (palaceRows.includes(nr) && palaceCols.includes(nc) && !isOwnPiece(board, nr, nc, color)) {
+        const staysInPalace = palaceRows.includes(nr) && palaceCols.includes(nc)
+        const canLeavePalace = variant === 'jieqi' && !piece.hidden
+        if (inBounds(nr, nc) && (canLeavePalace || staysInPalace) && !isOwnPiece(board, nr, nc, color)) {
           moves.push({ row: nr, col: nc })
         }
       }
@@ -67,7 +75,8 @@ function getPseudoMoves(board: Board, pos: Position): Position[] {
       for (const [dr, dc] of [[2, 2], [2, -2], [-2, 2], [-2, -2]]) {
         const nr = row + dr, nc = col + dc
         const blockR = row + dr / 2, blockC = col + dc / 2
-        if (inBounds(nr, nc) && homeRows(nr) && !isOwnPiece(board, nr, nc, color) && !board[blockR][blockC]) {
+        const canCrossRiver = variant === 'jieqi' && !piece.hidden
+        if (inBounds(nr, nc) && (canCrossRiver || homeRows(nr)) && !isOwnPiece(board, nr, nc, color) && !board[blockR][blockC]) {
           moves.push({ row: nr, col: nc })
         }
       }
@@ -153,7 +162,7 @@ function getPseudoMoves(board: Board, pos: Position): Position[] {
   return moves
 }
 
-export function isInCheck(board: Board, color: PieceColor): boolean {
+export function isInCheck(board: Board, color: PieceColor, variant: RuleVariant = 'xiangqi'): boolean {
   const kingPos = findKing(board, color)
   if (!kingPos) return true
 
@@ -162,7 +171,9 @@ export function isInCheck(board: Board, color: PieceColor): boolean {
     for (let c = 0; c < COLS; c++) {
       const p = board[r][c]
       if (p && p.color === opponent) {
-        const targets = getPseudoMoves(board, { row: r, col: c })
+        // 揭棋暗子未翻开前不构成将军；它移动后会先翻开，再按真实身份判断。
+        if (variant === 'jieqi' && p.hidden) continue
+        const targets = getPseudoMoves(board, { row: r, col: c }, variant)
         if (targets.some(t => t.row === kingPos.row && t.col === kingPos.col)) {
           return true
         }
@@ -185,23 +196,25 @@ export function isInCheck(board: Board, color: PieceColor): boolean {
   return false
 }
 
-export function getLegalMoves(board: Board, pos: Position): Position[] {
+export function getLegalMoves(board: Board, pos: Position, variant: RuleVariant = 'xiangqi'): Position[] {
   const piece = board[pos.row][pos.col]
   if (!piece) return []
 
-  const pseudoMoves = getPseudoMoves(board, pos)
+  const pseudoMoves = getPseudoMoves(board, pos, variant)
   return pseudoMoves.filter(to => {
-    const { newBoard } = applyMove(board, pos, to)
-    return !isInCheck(newBoard, piece.color)
+    const { newBoard } = variant === 'jieqi'
+      ? applyJieqiMove(board, pos, to)
+      : applyMove(board, pos, to)
+    return !isInCheck(newBoard, piece.color, variant)
   })
 }
 
-export function hasAnyLegalMove(board: Board, color: PieceColor): boolean {
+export function hasAnyLegalMove(board: Board, color: PieceColor, variant: RuleVariant = 'xiangqi'): boolean {
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const p = board[r][c]
       if (p && p.color === color) {
-        const moves = getLegalMoves(board, { row: r, col: c })
+        const moves = getLegalMoves(board, { row: r, col: c }, variant)
         if (moves.length > 0) return true
       }
     }
@@ -214,8 +227,14 @@ export interface GameStatusDetail {
   reason?: GameStatusReason
 }
 
-export function getGameStatusDetail(board: Board, currentTurn: PieceColor): GameStatusDetail {
-  const validation = validateBoardPosition(board)
+export function getGameStatusDetail(board: Board, currentTurn: PieceColor, variant: RuleVariant = 'xiangqi'): GameStatusDetail {
+  if (!findKing(board, currentTurn)) {
+    return {
+      status: currentTurn === 'red' ? 'black-wins' : 'red-wins',
+      reason: 'checkmate',
+    }
+  }
+  const validation = variant === 'jieqi' ? { ok: true, errors: [] } : validateBoardPosition(board)
   if (!validation.ok) {
     return {
       status: currentTurn === 'red' ? 'black-wins' : 'red-wins',
@@ -223,15 +242,15 @@ export function getGameStatusDetail(board: Board, currentTurn: PieceColor): Game
     }
   }
 
-  if (!hasAnyLegalMove(board, currentTurn)) {
+  if (!hasAnyLegalMove(board, currentTurn, variant)) {
     return {
       status: currentTurn === 'red' ? 'black-wins' : 'red-wins',
-      reason: isInCheck(board, currentTurn) ? 'checkmate' : 'stalemate',
+      reason: isInCheck(board, currentTurn, variant) ? 'checkmate' : 'stalemate',
     }
   }
   return { status: 'playing' }
 }
 
-export function getGameStatus(board: Board, currentTurn: PieceColor): GameStatus {
-  return getGameStatusDetail(board, currentTurn).status
+export function getGameStatus(board: Board, currentTurn: PieceColor, variant: RuleVariant = 'xiangqi'): GameStatus {
+  return getGameStatusDetail(board, currentTurn, variant).status
 }

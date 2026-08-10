@@ -4,6 +4,10 @@ export type PieceColor = 'red' | 'black'
 export interface Piece {
   type: PieceType
   color: PieceColor
+  /** 揭棋暗子在客户端保存真实身份，但在棋盘和引擎局面中保持隐藏。 */
+  hidden?: boolean
+  /** 暗子翻开前按初始落点对应的棋种行走。 */
+  darkType?: PieceType
 }
 
 export type Board = (Piece | null)[][]
@@ -28,9 +32,12 @@ export interface MoveRecord {
   source?: 'human' | 'ai-red' | 'ai-black'
   marked?: boolean
   note?: string
+  /** 揭棋回退/重做需要保留当时尚未公开的随机棋子身份。 */
+  snapshot?: { board: Board; turn: PieceColor }
 }
 
-export type GameMode = 'human-vs-ai' | 'human-vs-human' | 'ai-vs-ai' | 'endgame' | 'study'
+export type GameMode = 'human-vs-ai' | 'human-vs-human' | 'ai-vs-ai' | 'jieqi' | 'endgame' | 'study'
+export type EngineVariant = 'xiangqi' | 'jieqi'
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'master'
 export type EngineSearchMode = 'depth' | 'time'
 export type PlayerSide = 'red' | 'black'
@@ -139,11 +146,11 @@ export interface EngineRuntimeOptions {
 }
 
 export type WSMessage =
-  | ({ type: 'init'; difficulty: Difficulty } & EngineRuntimeOptions)
-  | ({ type: 'move'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty } & EngineSearchLimit)
-  | ({ type: 'hint'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty } & EngineSearchLimit)
-  | ({ type: 'analyze'; requestId: string; fen: string; moves: string[] } & EngineSearchLimit)
-  | ({ type: 'candidates'; requestId?: string; fen?: string; moves?: string[]; difficulty?: Difficulty; count?: number; candidates?: MoveCandidate[] } & EngineSearchLimit)
+  | ({ type: 'init'; difficulty: Difficulty; variant?: EngineVariant } & EngineRuntimeOptions)
+  | ({ type: 'move'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty; variant?: EngineVariant } & EngineSearchLimit)
+  | ({ type: 'hint'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty; variant?: EngineVariant } & EngineSearchLimit)
+  | ({ type: 'analyze'; requestId: string; fen: string; moves: string[]; variant?: EngineVariant } & EngineSearchLimit)
+  | ({ type: 'candidates'; requestId?: string; fen?: string; moves?: string[]; difficulty?: Difficulty; count?: number; candidates?: MoveCandidate[]; variant?: EngineVariant } & EngineSearchLimit)
   | { type: 'review'; requestId: string; fen: string; moves: string[]; searchDepth: number }
   | { type: 'stop'; requestId?: string }
   | { type: 'bestmove'; requestId?: string; move: string; ponder?: string; elapsedMs?: number; requestKind?: 'move' | 'hint'; searchCapped?: boolean }

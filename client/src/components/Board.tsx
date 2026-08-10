@@ -208,7 +208,7 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
         if (!piece) continue
         if (animating && animating.piece === piece) continue
         const [px, py] = getPixelPos(r, c)
-        drawPiece(ctx, px, py, piece.color, PIECE_CHARS[piece.color][piece.type])
+        drawPiece(ctx, px, py, piece.color, piece.hidden ? '暗' : PIECE_CHARS[piece.color][piece.type], piece.hidden)
       }
     }
 
@@ -217,7 +217,14 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
       const t = easeOutCubic(animating.progress)
       const x = animating.fromX + (animating.toX - animating.fromX) * t
       const y = animating.fromY + (animating.toY - animating.fromY) * t
-      drawPiece(ctx, x, y, animating.piece.color, PIECE_CHARS[animating.piece.color][animating.piece.type])
+      drawPiece(
+        ctx,
+        x,
+        y,
+        animating.piece.color,
+        animating.piece.hidden ? '暗' : PIECE_CHARS[animating.piece.color][animating.piece.type],
+        animating.piece.hidden,
+      )
     }
 
     ctx.restore()
@@ -328,7 +335,7 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
 
 export default Board
 
-function drawPiece(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, char: string) {
+function drawPiece(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, char: string, hidden = false) {
   // Shadow
   ctx.fillStyle = 'rgba(0,0,0,0.18)'
   ctx.beginPath()
@@ -337,8 +344,8 @@ function drawPiece(ctx: CanvasRenderingContext2D, x: number, y: number, color: s
 
   // Piece body
   const grad = ctx.createRadialGradient(x - 6, y - 6, 2, x, y, PIECE_RADIUS)
-  grad.addColorStop(0, '#fff4d8')
-  grad.addColorStop(1, '#e3c37d')
+  grad.addColorStop(0, hidden ? '#665846' : '#fff4d8')
+  grad.addColorStop(1, hidden ? '#2e2923' : '#e3c37d')
   ctx.fillStyle = grad
   ctx.beginPath()
   ctx.arc(x, y, PIECE_RADIUS, 0, Math.PI * 2)
@@ -352,15 +359,15 @@ function drawPiece(ctx: CanvasRenderingContext2D, x: number, y: number, color: s
   ctx.stroke()
 
   // Inner border
-  ctx.strokeStyle = color === 'red' ? '#d84938' : '#1d2421'
+  ctx.strokeStyle = hidden ? (color === 'red' ? '#d98c72' : '#c9bca8') : color === 'red' ? '#d84938' : '#1d2421'
   ctx.lineWidth = 1
   ctx.beginPath()
   ctx.arc(x, y, PIECE_RADIUS - 4, 0, Math.PI * 2)
   ctx.stroke()
 
   // Text
-  ctx.fillStyle = color === 'red' ? '#d84938' : '#1d2421'
-  ctx.font = 'bold 24px "Noto Serif SC", serif'
+  ctx.fillStyle = hidden ? (color === 'red' ? '#f0b09c' : '#e1d5c3') : color === 'red' ? '#d84938' : '#1d2421'
+  ctx.font = `${hidden ? '600' : 'bold'} ${hidden ? 20 : 24}px "Noto Serif SC", serif`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(char, x, y + 1)

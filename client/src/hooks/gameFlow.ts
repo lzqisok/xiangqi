@@ -30,6 +30,10 @@ export function getHistoryStepSize(gameMode: GameMode | null, players: { red: Pl
   return gameMode === 'human-vs-ai' || (gameMode === 'endgame' && hasSingleAiSide(players)) ? 2 : 1
 }
 
+export function canNavigateHistory(gameMode: GameMode | null): boolean {
+  return gameMode !== 'jieqi'
+}
+
 export function getUndoTargetIndex(
   currentMoveIndex: number,
   gameMode: GameMode | null,

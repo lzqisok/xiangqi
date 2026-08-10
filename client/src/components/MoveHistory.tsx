@@ -7,6 +7,7 @@ interface Props {
   onJumpTo: (index: number) => void
   onToggleMark: (index: number) => void
   onUpdateNote: (index: number, note: string) => void
+  navigationDisabled?: boolean
   showOnlyAnnotated?: boolean
   onShowOnlyAnnotatedChange?: (enabled: boolean) => void
 }
@@ -22,6 +23,7 @@ export default function MoveHistory({
   onJumpTo,
   onToggleMark,
   onUpdateNote,
+  navigationDisabled = false,
   showOnlyAnnotated = false,
   onShowOnlyAnnotatedChange,
 }: Props) {
@@ -79,8 +81,10 @@ export default function MoveHistory({
           return (
             <div
               key={i}
-              className={`move-row ${i === currentIndex ? 'active' : ''}`}
-              onClick={() => onJumpTo(i)}
+              className={`move-row ${i === currentIndex ? 'active' : ''} ${navigationDisabled ? 'navigation-disabled' : ''}`}
+              onClick={() => {
+                if (!navigationDisabled) onJumpTo(i)
+              }}
             >
               {isRed && <span className="move-number">{moveNum}.</span>}
               {!isRed && <span className="move-number" />}

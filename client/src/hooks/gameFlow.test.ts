@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getManualDrawStatus, getRedoTargetIndex, getResignationStatus, getUndoTargetIndex, sendStopForActiveEngineRequests, shouldAutoRequestAiMove } from './gameFlow'
+import { canNavigateHistory, getManualDrawStatus, getRedoTargetIndex, getResignationStatus, getUndoTargetIndex, sendStopForActiveEngineRequests, shouldAutoRequestAiMove } from './gameFlow'
 
 const human = { type: 'human' as const }
 const ai = { type: 'ai' as const, difficulty: 'medium' as const }
@@ -12,6 +12,11 @@ test('human-vs-ai undo and redo move in paired turns', () => {
   assert.equal(getUndoTargetIndex(1, 'human-vs-ai', players), -1)
   assert.equal(getRedoTargetIndex(-1, 4, 'human-vs-ai', players), 1)
   assert.equal(getRedoTargetIndex(1, 4, 'human-vs-ai', players), 3)
+})
+
+test('Jieqi disables history navigation to avoid revealing hidden identities', () => {
+  assert.equal(canNavigateHistory('jieqi'), false)
+  assert.equal(canNavigateHistory('human-vs-ai'), true)
 })
 
 test('human-vs-human undo and redo move one ply at a time', () => {

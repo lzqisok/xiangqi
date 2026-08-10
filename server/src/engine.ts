@@ -24,6 +24,7 @@ export interface EngineCandidate {
 }
 
 type Difficulty = 'easy' | 'medium' | 'hard' | 'master'
+export type EngineVariant = 'xiangqi' | 'jieqi'
 
 export interface EngineSearchLimit {
   searchMode?: 'depth' | 'time'
@@ -136,14 +137,16 @@ export class PikafishEngine extends EventEmitter {
   private searching = false
   private commandQueue: Promise<void> = Promise.resolve()
 
+  constructor(private readonly variant: EngineVariant = 'xiangqi') {
+    super()
+  }
+
   async init(options?: EngineRuntimeOptions): Promise<boolean> {
     this.terminateProcess()
     this.buffer = ''
     const engineDir = path.resolve(process.cwd(), '../engine')
-    const candidates = [
-      path.join(engineDir, 'pikafish'),
-      path.join(engineDir, 'pikafish.exe'),
-    ]
+    const binaryName = this.variant === 'jieqi' ? 'pikafish-jieqi' : 'pikafish'
+    const candidates = [path.join(engineDir, binaryName), path.join(engineDir, `${binaryName}.exe`)]
 
     let enginePath = ''
     for (const p of candidates) {
@@ -154,7 +157,7 @@ export class PikafishEngine extends EventEmitter {
     }
 
     if (!enginePath) {
-      console.error('Pikafish engine binary not found in engine/ directory')
+      console.error(`${this.variant === 'jieqi' ? 'Pikafish Jieqi' : 'Pikafish'} engine binary not found in engine/ directory`)
       console.error('Looked in:', engineDir)
       console.error('Please download from https://github.com/official-pikafish/Pikafish/releases')
       return false
@@ -166,7 +169,7 @@ export class PikafishEngine extends EventEmitter {
       return false
     }
 
-    console.log('Starting engine:', enginePath)
+    console.log(`Starting ${this.variant} engine:`, enginePath)
     console.log('Engine dir:', engineDir)
 
     try {

@@ -5,6 +5,16 @@ import { isStaleEngineResponse, MAX_MOVE_COUNT, MAX_REVIEW_MOVE_COUNT, parseClie
 const VALID_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 const JIEQI_FEN = 'xxxxkxxxx/9/1x5x1/x1x1x1x1x/9/9/X1X1X1X1X/1X5X1/9/XXXXKXXXX w R2A2C2P5N2B2r2a2c2p5n2b2 0 1'
 
+test('parseClientMessage validates game lease messages', () => {
+  const gameId = '123e4567-e89b-12d3-a456-426614174000'
+  const claim = parseClientMessage(JSON.stringify({ type: 'claim-game', requestId: 'lease-1', gameId }))
+  assert.equal(claim.ok, true)
+  const release = parseClientMessage(JSON.stringify({ type: 'release-game', gameId }))
+  assert.equal(release.ok, true)
+  assert.equal(parseClientMessage(JSON.stringify({ type: 'takeover-game', gameId })).ok, false)
+  assert.equal(parseClientMessage(JSON.stringify({ type: 'claim-game', requestId: 'lease-2', gameId: '../games.json' })).ok, false)
+})
+
 test('parseClientMessage accepts valid move requests', () => {
   const result = parseClientMessage(JSON.stringify({
     type: 'move',

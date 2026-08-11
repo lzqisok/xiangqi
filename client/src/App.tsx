@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Board, { BoardHandle } from './components/Board'
 import GamePanel from './components/GamePanel'
 import MoveHistory from './components/MoveHistory'
@@ -45,7 +45,10 @@ import { createReplayUrl, parseReplayStudyFromSearch } from './share/replayLink'
 import { buildCandidatePreview, getCandidatePreviewFrame } from './analysis/candidatePreview'
 import { buildMoveReviews } from './analysis/moveReview'
 import { createStudyContentSignature, createStudySaveInput } from './studies/autosave'
-import { EndgameDefinition, EndgameStartConfig, EndgameTarget, GameMode, Difficulty, MoveCandidate, MoveRecord, PlayerSide, StudyPosition } from './types'
+import { createGame, deleteGame, gameExportUrl, importGames, listGames, loadGame, renameGame } from './games/api'
+import { clearGameUrl, createInitialPersistedState, gameUrl } from './games/state'
+import { GameSaveStatus, useGamePersistence } from './games/useGamePersistence'
+import { EndgameDefinition, EndgameStartConfig, EndgameTarget, GameDocument, GameMode, Difficulty, GameSummary, LiveGameMode, MoveCandidate, MoveRecord, PersistedGameConfig, PersistedGameState, PlayerSide, StudyPosition } from './types'
 
 type EndgameDraft = {
   id: string | null
@@ -68,10 +71,18 @@ type WorkspaceTab = 'play' | 'engine' | 'review' | 'variations'
 
 export default function App() {
   const [initialReplay] = useState(() => (
-    typeof window === 'undefined' ? null : parseReplayStudyFromSearch(window.location.search)
+    typeof window === 'undefined' || new URLSearchParams(window.location.search).has('game')
+      ? null
+      : parseReplayStudyFromSearch(window.location.search)
   ))
   const boardRef = useRef<BoardHandle>(null)
   const [gameMode, setGameMode] = useState<GameMode | null>(() => initialReplay?.ok ? 'study' : null)
+  const [activeGame, setActiveGame] = useState<GameDocument | null>(null)
+  const [initialLiveState, setInitialLiveState] = useState<PersistedGameState | null>(null)
+  const [savedGames, setSavedGames] = useState<GameSummary[]>([])
+  const [gameStoreLoading, setGameStoreLoading] = useState(true)
+  const [gameStoreError, setGameStoreError] = useState('')
+  const [startingGame, setStartingGame] = useState(false)
   const [difficulty, setDifficulty] = useState<Difficulty>('medium')
   const [playerSide, setPlayerSide] = useState<PlayerSide>('red')
   const [aiRedDifficulty, setAiRedDifficulty] = useState<Difficulty>('medium')
@@ -98,6 +109,7 @@ export default function App() {
   const [trainingHintLevel, setTrainingHintLevel] = useState(0)
   const [trainingHintHistory, setTrainingHintHistory] = useState<TrainingHintHistoryEntry[]>([])
   const candidateAutoRequestRef = useRef<string | null>(null)
+  const historyNavigationRef = useRef(false)
   const [editorDraft, setEditorDraft] = useState<EndgameDraft>({
     id: null,
     name: '',
@@ -127,6 +139,53 @@ export default function App() {
     setStudies(loadStudyPositions())
   }, [])
 
+  const refreshSavedGames = useCallback(async () => {
+    try {
+      const games = await listGames()
+      setSavedGames(games)
+      setGameStoreError('')
+    } catch (error) {
+      setGameStoreError(error instanceof Error ? error.message : '无法读取已保存对局')
+    }
+  }, [])
+
+  const openGame = useCallback((document: GameDocument, updateUrl = true) => {
+    setActiveGame(document)
+    setInitialLiveState(document.state)
+    setDifficulty(document.config.difficulty)
+    setPlayerSide(document.config.playerSide)
+    setAiRedDifficulty(document.config.aiRedDifficulty)
+    setAiBlackDifficulty(document.config.aiBlackDifficulty)
+    setSelectedEndgame(null)
+    setSelectedStudy(null)
+    setEditingEndgame(false)
+    setGameMode(document.mode)
+    if (updateUrl) window.history.pushState(null, '', gameUrl(document.id))
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const boot = async () => {
+      setGameStoreLoading(true)
+      const gameId = new URLSearchParams(window.location.search).get('game')
+      const [gamesResult, gameResult] = await Promise.allSettled([
+        listGames(),
+        gameId ? loadGame(gameId) : Promise.resolve(null),
+      ])
+      if (cancelled) return
+      if (gamesResult.status === 'fulfilled') setSavedGames(gamesResult.value)
+      else setGameStoreError(gamesResult.reason instanceof Error ? gamesResult.reason.message : '无法读取已保存对局')
+      if (gameResult.status === 'fulfilled' && gameResult.value) {
+        openGame(gameResult.value, false)
+      } else if (gameResult.status === 'rejected') {
+        setGameStoreError(gameResult.reason instanceof Error ? `对局加载失败：${gameResult.reason.message}` : '对局加载失败')
+      }
+      setGameStoreLoading(false)
+    }
+    void boot()
+    return () => { cancelled = true }
+  }, [openGame])
+
   useEffect(() => {
     if (initialReplay && !initialReplay.ok) {
       window.alert(initialReplay.error)
@@ -134,6 +193,7 @@ export default function App() {
   }, [initialReplay])
 
   const game = useGame({
+    gameId: activeGame?.id,
     gameMode,
     difficulty,
     playerSide,
@@ -144,14 +204,91 @@ export default function App() {
     searchLimit,
     engineRuntimeOptions,
     analysisEnabled: showAnalysis && gameMode !== 'jieqi',
-    initialFen: gameMode === 'study' ? selectedStudy?.initialFen : selectedEndgame?.fen,
-    initialMoveRecords: gameMode === 'study' ? selectedStudy?.moves : undefined,
-    initialCurrentMoveIndex: gameMode === 'study' ? selectedStudy?.currentMoveIndex : undefined,
+    initialFen: initialLiveState?.initialFen || (gameMode === 'study' ? selectedStudy?.initialFen : selectedEndgame?.fen),
+    initialMoveRecords: initialLiveState?.historyRecords || (gameMode === 'study' ? selectedStudy?.moves : undefined),
+    initialCurrentMoveIndex: initialLiveState?.currentMoveIndex ?? (gameMode === 'study' ? selectedStudy?.currentMoveIndex : undefined),
     initialAnalysisPoints: gameMode === 'study' ? selectedStudy?.analysisPoints : undefined,
-    initialVariationTree: gameMode === 'study' ? selectedStudy?.variationTree : undefined,
+    initialVariationTree: initialLiveState?.variationTree || (gameMode === 'study' ? selectedStudy?.variationTree : undefined),
+    initialJieqiBoard: initialLiveState?.initialJieqiBoard,
+    initialGameStatus: initialLiveState?.gameStatus,
+    initialGameStatusReason: initialLiveState?.gameStatusReason,
     redPlayerConfig: gameMode === 'endgame' ? endgameConfig.red : undefined,
     blackPlayerConfig: gameMode === 'endgame' ? endgameConfig.black : undefined,
   })
+
+  const liveGameState = useMemo<PersistedGameState | null>(() => {
+    if (!activeGame || !isLiveGameMode(gameMode)) return null
+    return {
+      initialFen: game.initialFen,
+      initialJieqiBoard: gameMode === 'jieqi' ? game.initialJieqiBoard || initialLiveState?.initialJieqiBoard : undefined,
+      historyRecords: game.historyRecords,
+      currentMoveIndex: game.currentMoveIndex,
+      variationTree: game.variationTree,
+      gameStatus: game.gameStatus,
+      gameStatusReason: game.gameStatusReason,
+    }
+  }, [activeGame, game.currentMoveIndex, game.gameStatus, game.gameStatusReason, game.historyRecords, game.initialFen, game.initialJieqiBoard, game.variationTree, gameMode, initialLiveState?.initialJieqiBoard])
+
+  const handleGameSaved = useCallback((document: GameDocument) => {
+    setActiveGame(document)
+    setSavedGames(current => [toGameSummary(document), ...current.filter(item => item.id !== document.id)]
+      .sort((a, b) => b.updatedAt - a.updatedAt))
+  }, [])
+  const gamePersistence = useGamePersistence({
+    game: activeGame,
+    baselineState: initialLiveState,
+    state: liveGameState,
+    leaseToken: game.leaseToken,
+    enabled: Boolean(activeGame && game.canEditGame),
+    onSaved: handleGameSaved,
+  })
+
+  useEffect(() => {
+    const handlePopState = async () => {
+      if (historyNavigationRef.current) {
+        if (activeGame) window.history.pushState(null, '', gameUrl(activeGame.id))
+        return
+      }
+      historyNavigationRef.current = true
+      const destinationGameId = new URLSearchParams(window.location.search).get('game')
+      try {
+        if (activeGame && destinationGameId !== activeGame.id) {
+          const saved = await gamePersistence.flush(liveGameState)
+          if (!saved && !window.confirm('当前对局尚未成功保存，仍要离开吗？未保存的走棋可能丢失。')) {
+            window.history.pushState(null, '', gameUrl(activeGame.id))
+            return
+          }
+        }
+        if (!destinationGameId) {
+          setActiveGame(null)
+          setInitialLiveState(null)
+          setGameMode(null)
+          return
+        }
+        if (destinationGameId === activeGame?.id) return
+        try {
+          openGame(await loadGame(destinationGameId), false)
+        } catch (error) {
+          setGameStoreError(error instanceof Error ? error.message : '对局加载失败')
+          if (activeGame) window.history.pushState(null, '', gameUrl(activeGame.id))
+        }
+      } finally {
+        historyNavigationRef.current = false
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [activeGame, gamePersistence.flush, liveGameState, openGame])
+
+  useEffect(() => {
+    if (!activeGame || gamePersistence.status === 'saved' || gamePersistence.status === 'idle') return
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [activeGame, gamePersistence.status])
 
   const trainingFeedback = getEndgameTrainingFeedback(selectedEndgame, game.moveRecords, game.gameStatus, game.evaluation)
   const trainingHint = getEndgameTrainingHint(selectedEndgame, game.moveRecords, game.board, trainingHintLevel)
@@ -284,16 +421,89 @@ export default function App() {
   }, [gameMode, selectedStudy, selectedStudyIsPersisted, studyContent, studyContentSignature])
 
   if (!gameMode) {
-    return <StartScreen onStart={(mode, diff, side, redDiff, blackDiff) => {
-      setGameMode(mode)
-      setDifficulty(diff)
-      setPlayerSide(side)
-      setAiRedDifficulty(redDiff)
-      setAiBlackDifficulty(blackDiff)
-      setSelectedEndgame(null)
-      setSelectedStudy(null)
-      setEditingEndgame(false)
-    }} />
+    return <StartScreen
+      games={savedGames}
+      loading={gameStoreLoading}
+      storeError={gameStoreError}
+      starting={startingGame}
+      onRetry={refreshSavedGames}
+      onOpen={async id => {
+        try {
+          openGame(await loadGame(id))
+        } catch (error) {
+          setGameStoreError(error instanceof Error ? error.message : '对局加载失败')
+        }
+      }}
+      onRename={async (summary, name) => {
+        try {
+          const renamed = await renameGame(summary, name)
+          setSavedGames(current => current.map(item => item.id === renamed.id ? toGameSummary(renamed) : item))
+        } catch (error) {
+          setGameStoreError(error instanceof Error ? error.message : '重命名失败')
+        }
+      }}
+      onDelete={async summary => {
+        try {
+          await deleteGame(summary)
+          setSavedGames(current => current.filter(item => item.id !== summary.id))
+        } catch (error) {
+          setGameStoreError(error instanceof Error ? error.message : '删除失败')
+        }
+      }}
+      onImport={async file => {
+        try {
+          const payload = JSON.parse(await file.text()) as unknown
+          await importGames(payload)
+          await refreshSavedGames()
+        } catch (error) {
+          setGameStoreError(error instanceof Error ? error.message : '导入失败')
+        }
+      }}
+      onStart={async (mode, diff, side, redDiff, blackDiff) => {
+        setStartingGame(true)
+        setGameStoreError('')
+        const begin = (initialState: PersistedGameState | null, document: GameDocument | null) => {
+          setActiveGame(document)
+          setInitialLiveState(initialState)
+          setGameMode(mode)
+          setDifficulty(diff)
+          setPlayerSide(side)
+          setAiRedDifficulty(redDiff)
+          setAiBlackDifficulty(blackDiff)
+          setSelectedEndgame(null)
+          setSelectedStudy(null)
+          setEditingEndgame(false)
+        }
+        if (!isLiveGameMode(mode)) {
+          clearGameUrl()
+          begin(null, null)
+          setStartingGame(false)
+          return
+        }
+        const state = createInitialPersistedState(mode)
+        const config: PersistedGameConfig = {
+          difficulty: diff,
+          playerSide: side,
+          aiRedDifficulty: redDiff,
+          aiBlackDifficulty: blackDiff,
+        }
+        try {
+          const document = await createGame({ mode, config, state })
+          begin(document.state, document)
+          window.history.pushState(null, '', gameUrl(document.id))
+          setSavedGames(current => [toGameSummary(document), ...current.filter(item => item.id !== document.id)])
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '创建保存对局失败'
+          setGameStoreError(message)
+          if (window.confirm(`${message}\n\n是否改为开始临时对局？临时对局刷新后不会保留。`)) {
+            clearGameUrl()
+            begin(state, null)
+          }
+        } finally {
+          setStartingGame(false)
+        }
+      }}
+    />
   }
 
   if (editingEndgame) {
@@ -421,6 +631,7 @@ export default function App() {
         </div>
         <div className="workspace-context">
           <span>{formatModeName(gameMode)}</span>
+          {activeGame?.name && <strong>{activeGame.name}</strong>}
           {gameMode === 'endgame' && selectedEndgame?.name && <strong>{selectedEndgame.name}</strong>}
           {gameMode === 'study' && selectedStudy?.name && <strong>{selectedStudy.name}</strong>}
           <span className={`workspace-turn ${game.currentTurn}`}>
@@ -450,6 +661,17 @@ export default function App() {
           />
         )}
         <div className="board-stage">
+          {activeGame && game.leaseStatus !== 'granted' && (
+            <div className="game-access-banner">
+              <span>{game.leaseStatus === 'requesting' ? '正在获取编辑权…' : '此对局已在另一个页面编辑，当前为只读模式。'}</span>
+              {game.leaseStatus === 'readonly' && <button onClick={game.takeoverGame}>接管编辑</button>}
+            </div>
+          )}
+          {activeGame && game.leaseStatus === 'granted' && gamePersistence.status !== 'saved' && (
+            <div className={`game-save-banner ${gamePersistence.status}`}>
+              {formatSaveStatus(gamePersistence.status, gamePersistence.error)}
+            </div>
+          )}
           <Board
             ref={boardRef}
             board={candidatePreviewFrame?.board || game.board}
@@ -463,7 +685,7 @@ export default function App() {
             flipped={game.flipped}
             aiThinking={candidatePreview ? false : game.aiThinking}
             thinkingText={`${game.currentTurn === 'red' ? '红方' : '黑方'} AI 思考中...`}
-            interactionDisabled={Boolean(candidatePreview)}
+            interactionDisabled={Boolean(candidatePreview) || !game.canEditGame}
             onCellClick={game.handleCellClick}
             onCancelSelection={game.cancelSelection}
           />
@@ -531,15 +753,23 @@ export default function App() {
             canStudyReplay={gameMode === 'study' && game.canRedo}
             canJumpToPrevMarked={gameMode === 'study' && findPrevMarkedIndex(game.historyRecords, game.currentMoveIndex) !== null}
             canJumpToNextMarked={gameMode === 'study' && findNextMarkedIndex(game.historyRecords, game.currentMoveIndex) !== null}
-            onNewGame={() => {
+            onNewGame={async () => {
               setAiAutoPlaying(false)
               setStudyAutoPlaying(false)
+              if (activeGame) {
+                const saved = await gamePersistence.flush(liveGameState)
+                if (!saved && !window.confirm('当前对局尚未成功保存，仍要返回对局列表吗？')) return
+              }
               if (gameMode === 'endgame') {
                 setSelectedEndgame(null)
                 setEditingEndgame(false)
               } else if (gameMode === 'study') {
                 setSelectedStudy(null)
               } else {
+                setActiveGame(null)
+                setInitialLiveState(null)
+                clearGameUrl()
+                void refreshSavedGames()
                 setGameMode(null)
               }
             }}
@@ -742,6 +972,32 @@ export default function App() {
   )
 }
 
+function isLiveGameMode(mode: GameMode | null): mode is LiveGameMode {
+  return mode === 'human-vs-ai' || mode === 'human-vs-human' || mode === 'ai-vs-ai' || mode === 'jieqi'
+}
+
+function toGameSummary(game: GameDocument): GameSummary {
+  return {
+    id: game.id,
+    revision: game.revision,
+    name: game.name,
+    mode: game.mode,
+    config: game.config,
+    status: game.state.gameStatus,
+    moveCount: game.state.currentMoveIndex + 1,
+    createdAt: game.createdAt,
+    updatedAt: game.updatedAt,
+  }
+}
+
+function formatSaveStatus(status: GameSaveStatus, error: string): string {
+  if (status === 'dirty') return '有未保存的变更'
+  if (status === 'saving') return '正在保存…'
+  if (status === 'conflict') return `保存冲突，请返回对局列表后重新打开。${error ? ` ${error}` : ''}`
+  if (status === 'error') return `保存失败，将保留当前页面内容。${error ? ` ${error}` : ''}`
+  return ''
+}
+
 function scenarioNameFromState(gameMode: GameMode, selectedEndgame: EndgameDefinition | null): string {
   if (gameMode === 'endgame' && selectedEndgame) {
     return `${selectedEndgame.name}-副本`
@@ -886,7 +1142,16 @@ function FenDialog({ mode, fen, recentPositions, onClose, onLoad }: {
   )
 }
 
-function StartScreen({ onStart }: {
+function StartScreen({ games, loading, storeError, starting, onRetry, onOpen, onRename, onDelete, onImport, onStart }: {
+  games: GameSummary[]
+  loading: boolean
+  storeError: string
+  starting: boolean
+  onRetry: () => void
+  onOpen: (id: string) => void
+  onRename: (game: GameSummary, name: string) => void
+  onDelete: (game: GameSummary) => void
+  onImport: (file: File) => void
   onStart: (mode: GameMode, difficulty: Difficulty, side: PlayerSide, redDifficulty: Difficulty, blackDifficulty: Difficulty) => void
 }) {
   const [mode, setMode] = useState<GameMode>('human-vs-ai')
@@ -995,9 +1260,48 @@ function StartScreen({ onStart }: {
           </>
         )}
 
-        <button className="start-btn" onClick={() => onStart(mode, diff, side, redDiff, blackDiff)}>
-          开始游戏
+        <button className="start-btn" disabled={starting} onClick={() => onStart(mode, diff, side, redDiff, blackDiff)}>
+          {starting ? '正在创建…' : '开始游戏'}
         </button>
+
+        <div className="saved-games-section">
+          <div className="saved-games-heading">
+            <span>最近对局</span>
+            <div>
+              <a href={gameExportUrl()} download="xiangqi-games.json">导出全部</a>
+              <label className="saved-games-import">
+                导入
+                <input type="file" accept="application/json,.json" onChange={event => {
+                  const file = event.target.files?.[0]
+                  if (file) onImport(file)
+                  event.target.value = ''
+                }} />
+              </label>
+            </div>
+          </div>
+          {storeError && <div className="saved-games-error">{storeError} <button onClick={onRetry}>重试</button></div>}
+          {loading ? <div className="saved-games-empty">正在读取…</div> : games.length === 0 ? (
+            <div className="saved-games-empty">还没有保存的对局</div>
+          ) : (
+            <div className="saved-games-list">
+              {games.slice(0, 8).map(item => (
+                <div className="saved-game-item" key={item.id}>
+                  <button className="saved-game-open" onClick={() => onOpen(item.id)}>
+                    <strong>{item.name}</strong>
+                    <span>{formatModeName(item.mode)} · {item.moveCount} 回合 · {new Date(item.updatedAt).toLocaleString()}</span>
+                  </button>
+                  <button title="重命名" onClick={() => {
+                    const name = window.prompt('对局名称', item.name)
+                    if (name?.trim() && name.trim() !== item.name) onRename(item, name.trim())
+                  }}>改名</button>
+                  <button title="删除" onClick={() => {
+                    if (window.confirm(`确定删除“${item.name}”吗？`)) onDelete(item)
+                  }}>删除</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         </section>
       </div>
     </div>

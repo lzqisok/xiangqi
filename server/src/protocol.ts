@@ -1,7 +1,7 @@
 import { validateFenPosition, validateMoveSequence } from './validation.js'
 import { validateJieqiBoardPlacement, validateJieqiMoveSequence } from './jieqiValidation.js'
 
-export type RequestKind = 'move' | 'hint' | 'analyze' | 'candidates' | 'review' | 'stop' | 'init'
+export type RequestKind = 'move' | 'hint' | 'analyze' | 'candidates' | 'review' | 'stop' | 'init' | 'claim-game' | 'takeover-game' | 'release-game'
 
 export interface EngineRequest {
   type: RequestKind
@@ -16,6 +16,7 @@ export interface EngineRequest {
   engineThreads?: 'auto' | number
   engineHashMb?: number
   variant?: 'xiangqi' | 'jieqi'
+  gameId?: string
 }
 
 export type ProtocolValidation =
@@ -26,11 +27,12 @@ const DIFFICULTIES = new Set(['easy', 'medium', 'hard', 'master'])
 const SEARCH_MODES = new Set(['depth', 'time'])
 const UCI_MOVE_RE = /^[a-i][0-9][a-i][0-9]$/
 const JIEQI_MOVE_RE = /^[a-i][0-9][a-i][0-9](?:[RACPNBracpnb]{1,2})?$/
+const GAME_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const JIEQI_RESERVE_LIMITS: Record<string, number> = {
   R: 2, A: 2, C: 2, P: 5, N: 2, B: 2,
   r: 2, a: 2, c: 2, p: 5, n: 2, b: 2,
 }
-export const MAX_MOVE_COUNT = 600
+export const MAX_MOVE_COUNT = 2000
 export const MAX_REVIEW_MOVE_COUNT = 120
 
 export function validateJieqiFen(fen: string): { ok: boolean; errors: string[] } {
@@ -115,8 +117,18 @@ export function parseClientMessage(raw: string): ProtocolValidation {
     return { ok: false, requestId, error: 'Message type is required' }
   }
 
-  if (!['move', 'hint', 'analyze', 'candidates', 'review', 'stop', 'init'].includes(msg.type)) {
+  if (!['move', 'hint', 'analyze', 'candidates', 'review', 'stop', 'init', 'claim-game', 'takeover-game', 'release-game'].includes(msg.type)) {
     return { ok: false, requestId, error: `Unsupported message type: ${msg.type}` }
+  }
+
+  if (['claim-game', 'takeover-game', 'release-game'].includes(msg.type)) {
+    if (typeof msg.gameId !== 'string' || !GAME_ID_RE.test(msg.gameId)) {
+      return { ok: false, requestId, error: 'gameId is invalid' }
+    }
+    if ((msg.type === 'claim-game' || msg.type === 'takeover-game') && typeof msg.requestId !== 'string') {
+      return { ok: false, error: 'requestId is required' }
+    }
+    return { ok: true, message: { type: msg.type as RequestKind, requestId, gameId: msg.gameId } }
   }
 
   if (msg.requestId !== undefined && (typeof msg.requestId !== 'string' || msg.requestId.trim() === '')) {
@@ -221,6 +233,7 @@ export function parseClientMessage(raw: string): ProtocolValidation {
       engineThreads: msg.engineThreads === 'auto' || typeof msg.engineThreads === 'number' ? msg.engineThreads as EngineRequest['engineThreads'] : undefined,
       engineHashMb: typeof msg.engineHashMb === 'number' ? msg.engineHashMb : undefined,
       variant,
+      gameId: typeof msg.gameId === 'string' ? msg.gameId : undefined,
     },
   }
 }

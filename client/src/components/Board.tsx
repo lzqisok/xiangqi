@@ -41,7 +41,15 @@ const GAME_OVER_CLASS: Record<Exclude<GameStatus, 'playing'>, string> = {
 }
 
 function formatGameOverText(status: Exclude<GameStatus, 'playing'>, reason?: GameStatusReason): string {
-  if (status === 'draw') return '和棋'
+  if (status === 'draw') {
+    const drawReason: Partial<Record<GameStatusReason, string>> = {
+      repetition: '三次重复',
+      'natural-limit': '自然限着',
+      'move-limit': '回合上限',
+      manual: '双方议和',
+    }
+    return reason && drawReason[reason] ? `和棋 ${drawReason[reason]}` : '和棋'
+  }
   const winner = status === 'red-wins' ? '红方胜' : '黑方胜'
   const reasonText: Partial<Record<GameStatusReason, string>> = {
     checkmate: '将死',
@@ -49,6 +57,9 @@ function formatGameOverText(status: Exclude<GameStatus, 'playing'>, reason?: Gam
     'illegal-position': '非法局面',
     manual: '手动结束',
     resignation: '认输',
+    repetition: '重复局面',
+    'natural-limit': '自然限着',
+    'move-limit': '回合上限',
   }
   return reason && reasonText[reason] ? `${winner} ${reasonText[reason]}` : winner
 }

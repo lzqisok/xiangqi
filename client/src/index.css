@@ -2639,6 +2639,109 @@ body {
   box-shadow: 0 8px 18px rgba(125, 49, 40, 0.18);
 }
 
+.saved-games-section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(74, 61, 45, 0.12);
+}
+
+.saved-games-heading,
+.saved-game-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.saved-games-heading {
+  justify-content: space-between;
+  margin-bottom: 10px;
+  color: #51483e;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.saved-games-heading > div { display: flex; gap: 10px; }
+.saved-games-heading a,
+.saved-games-import {
+  color: #8f4339;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+}
+.saved-games-import input { display: none; }
+
+.saved-games-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 230px;
+  overflow: auto;
+}
+
+.saved-game-item {
+  padding: 6px;
+  border: 1px solid rgba(74, 61, 45, 0.1);
+  border-radius: 9px;
+  background: #f6f0e6;
+}
+
+.saved-game-item > button:not(.saved-game-open) {
+  padding: 5px 7px;
+  border: 0;
+  background: transparent;
+  color: #82776a;
+  font-size: 11px;
+}
+
+.saved-game-open {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: #40372e;
+  text-align: left;
+}
+
+.saved-game-open strong,
+.saved-game-open span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.saved-game-open span { color: #887e72; font-size: 11px; }
+.saved-games-empty { padding: 12px; color: #92887c; font-size: 12px; text-align: center; }
+.saved-games-error { margin-bottom: 8px; color: #a44337; font-size: 12px; }
+.saved-games-error button { border: 0; background: transparent; color: inherit; text-decoration: underline; }
+
+.game-access-banner,
+.game-save-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: rgba(255, 250, 241, 0.88);
+  color: #64594d;
+  font-size: 12px;
+}
+
+.game-access-banner button {
+  padding: 5px 10px;
+  border: 1px solid rgba(164, 67, 55, 0.25);
+  border-radius: 7px;
+  background: rgba(164, 67, 55, 0.08);
+  color: #9d3e33;
+}
+.game-save-banner.conflict,
+.game-save-banner.error { color: #9d3e33; }
+
 @media (max-width: 900px) {
   .start-card {
     grid-template-columns: 1fr;

@@ -11,3 +11,4 @@ engine/*.nnue
 client/dist/
 server/dist/
 *.tsbuildinfo
+data/

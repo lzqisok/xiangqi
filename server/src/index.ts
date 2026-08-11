@@ -3,10 +3,21 @@ import { createServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
 import { PikafishEngine, EngineSearchLimit, EngineRuntimeOptions, EngineVariant } from './engine.js'
 import { parseClientMessage } from './protocol.js'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { createGameRouter } from './games/routes.js'
+import { JsonGameRepository } from './games/repository.js'
+import { GameLeaseManager } from './games/leases.js'
 
 const app = express()
 const server = createServer(app)
 const wss = new WebSocketServer({ server, path: '/ws' })
+const serverDirectory = fileURLToPath(new URL('../', import.meta.url))
+const gameRepository = new JsonGameRepository(process.env.XIANGQI_DATA_DIR || path.resolve(serverDirectory, '../data/games'))
+const gameLeases = new GameLeaseManager()
+await gameRepository.init().catch(error => console.error('Game store initialization failed:', error))
+app.use(express.json({ limit: '10mb' }))
+app.use('/api/games', createGameRouter(gameRepository, gameLeases))
 
 const INITIAL_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
@@ -183,6 +194,20 @@ wss.on('connection', async (ws) => {
       }
       const msg = parsed.message
       switch (msg.type) {
+        case 'claim-game':
+        case 'takeover-game': {
+          const result = gameLeases.claim(msg.gameId!, ws, msg.type === 'takeover-game')
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'game-lease', requestId: msg.requestId, gameId: msg.gameId, ...result }))
+          }
+          break
+        }
+
+        case 'release-game': {
+          gameLeases.release(msg.gameId!, ws)
+          break
+        }
+
         case 'init': {
           currentDifficulty = msg.difficulty || 'medium'
           const runtimeOptions = getRuntimeOptions(msg)
@@ -455,20 +480,39 @@ wss.on('connection', async (ws) => {
       localAnalysisEngine?.stopAnalysis()
     }
     destroyEngineSlots(engineSlots)
+    gameLeases.releaseSocket(ws)
   })
 })
 
 const PORT = process.env.PORT || 3001
+const HOST = process.env.HOST || '127.0.0.1'
 
-server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`)
-  console.log(`WebSocket available at ws://localhost:${PORT}/ws`)
+server.listen(Number(PORT), HOST, () => {
+  console.log(`Server running on http://${HOST}:${PORT}`)
+  console.log(`WebSocket available at ws://${HOST}:${PORT}/ws`)
 })
 
-process.on('SIGINT', () => {
+let shuttingDown = false
+function shutdown() {
+  if (shuttingDown) return
+  shuttingDown = true
   console.log('\nShutting down...')
   for (const engine of liveEngines) engine.destroy()
   liveEngines.clear()
-  server.close()
-  process.exit(0)
-})
+  for (const client of wss.clients) client.terminate()
+  wss.close()
+  const serverClosed = new Promise<void>(resolve => server.close(() => resolve()))
+  Promise.allSettled([gameRepository.flush(), serverClosed]).then(results => {
+    const failed = results.some(result => result.status === 'rejected')
+    if (failed) console.error('Shutdown completed with errors:', results)
+    process.exit(failed ? 1 : 0)
+  })
+  const forcedExit = setTimeout(() => {
+    console.error('Shutdown timed out')
+    process.exit(1)
+  }, 5_000)
+  forcedExit.unref()
+}
+
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)

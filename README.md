@@ -1,6 +1,6 @@
 # 棋境：中国象棋（Web + Pikafish）
 
-一个以本地 [Pikafish](https://github.com/official-pikafish/Pikafish) 为棋力核心的 Web 中国象棋应用，覆盖普通象棋、揭棋、残局训练、局面研究、变招管理与整局复盘。前端使用 React + Canvas，后端通过 WebSocket 和 UCI 协议管理本地 Pikafish 进程；棋局与研究数据默认保存在浏览器本地。
+一个以本地 [Pikafish](https://github.com/official-pikafish/Pikafish) 为棋力核心的 Web 中国象棋应用，覆盖普通象棋、揭棋、残局训练、局面研究、变招管理与整局复盘。前端使用 React + Canvas，后端通过 WebSocket 和 UCI 协议管理本地 Pikafish 进程；实时对局保存在服务端本地 JSON 文件，研究与训练数据保存在浏览器本地。
 
 ![Node](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-9.15.9-F69220?logo=pnpm&logoColor=white)
@@ -17,7 +17,8 @@
 - 双人对弈：本地同屏轮流走棋，支持手动和棋与认输。
 - AI 对战：红黑双方独立设置难度，可单步推进，也可按快速、标准、慢速自动播放。
 - 完整对局操作：悔棋、重做、棋盘翻转、中文记谱、落子/吃子/将军/终局音效。
-- 规则与提醒：合法走子、将军、将死、困毙、将帅照面；重复局面和连续未吃子目前只提醒，不直接裁定。
+- 每局实时对局拥有独立 URL，刷新或在新标签页打开可恢复；启动页可管理、导入和导出最近对局。
+- 规则与裁定：合法走子、将军、将死、困毙、将帅照面；实时普通对局采用三次同局面、连续 60 回合未吃子及 300 回合安全上限的简化自动和棋规则。
 
 ### 揭棋
 
@@ -77,12 +78,14 @@
 ```text
 浏览器 React 应用
   ├─ 本地规则、棋盘、记谱、研究与训练状态
-  ├─ localStorage 持久化
-  └─ WebSocket 请求（requestId + FEN + UCI moves）
+  ├─ HTTP 对局读取、自动保存与 JSON 导入导出
+  └─ WebSocket 请求（引擎计算 + 单写者编辑租约）
              │
              ▼
 Node.js / Express / ws 服务
   ├─ 协议与局面校验
+  ├─ data/games/index.json 轻量索引
+  ├─ data/games/<id>.json 单局原子持久化与备份恢复
   ├─ 请求隔离、取消和过期结果丢弃
   └─ 每会话、每变体独立管理 Pikafish 进程
              │ UCI
@@ -105,6 +108,16 @@ engine/pikafish 或 engine/pikafish-jieqi
 - 支持运行时更新 Threads、Hash 和搜索限制。
 - 有限搜索最长 60 秒；到达上限后发送 `stop` 并等待 5 秒获取当前最佳着。AI 对局前端另有 70 秒最终保护，断线或异常不会永久停在“思考中”。
 - `stop` 按会话和请求标识处理，分析任务不会无条件取消正在进行的对局请求。
+
+### 对局持久化
+
+- 人机、双人、AI 对战和揭棋分别保存到 `data/games/<id>.json`，`data/games/index.json` 仅保存列表摘要；更新一盘棋不会重写其他对局。
+- 单局写入采用紧凑 JSON 和临时文件替换，并在对应的 `<id>.json.bak` 保留该局上一份有效数据。
+- 持久化只保存一份紧凑变招树。普通棋局不再重复保存主线，揭棋只保存 30 枚暗子的初始身份和 UCI 走棋，加载时重放生成棋盘快照。
+- URL 使用 `?game=<id>` 定位对局。相同对局同时打开时只有一个标签页可编辑，其余标签页只读，也可主动接管编辑权。
+- 每次更新携带 revision，版本不一致会拒绝覆盖；存储不可用时可由用户明确选择开始不持久化的临时对局。
+- 揭棋恢复所需的暗子布局属于本机私密数据。服务默认仅监听 `127.0.0.1`；除非明确部署了访问控制，不要把服务直接暴露到公网。
+- 可通过启动页导出完整 JSON 并在另一台机器导入。可用 `XIANGQI_DATA_DIR` 修改数据目录，或用 `HOST` 修改监听地址。
 
 ## 项目结构
 

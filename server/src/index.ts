@@ -5,19 +5,32 @@ import { PikafishEngine, EngineSearchLimit, EngineRuntimeOptions, EngineVariant 
 import { parseClientMessage } from './protocol.js'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import os from 'node:os'
 import { createGameRouter } from './games/routes.js'
 import { JsonGameRepository } from './games/repository.js'
 import { GameLeaseManager } from './games/leases.js'
+import { RoomRepository } from './rooms/repository.js'
+import { RoomManager } from './rooms/manager.js'
+import { createRoomRouter } from './rooms/routes.js'
+import { StoredRoom, RoomColor } from './rooms/types.js'
 
 const app = express()
 const server = createServer(app)
-const wss = new WebSocketServer({ server, path: '/ws' })
+const LAN_MODE = process.env.LAN_MODE === '1'
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 })
 const serverDirectory = fileURLToPath(new URL('../', import.meta.url))
 const gameRepository = new JsonGameRepository(process.env.XIANGQI_DATA_DIR || path.resolve(serverDirectory, '../data/games'))
+const roomRepository = new RoomRepository(process.env.XIANGQI_ROOM_DIR || path.resolve(serverDirectory, '../data/rooms'))
 const gameLeases = new GameLeaseManager()
 await gameRepository.init().catch(error => console.error('Game store initialization failed:', error))
+await roomRepository.init().catch(error => console.error('Room store initialization failed:', error))
 app.use(express.json({ limit: '10mb' }))
-app.use('/api/games', createGameRouter(gameRepository, gameLeases))
+app.use('/api/games', (req, res, next) => {
+  if (!LAN_MODE) return next()
+  const address = req.socket.remoteAddress || ''
+  if (address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1') return next()
+  res.status(403).json({ error: '局域网访客不能访问本机对局库' })
+}, createGameRouter(gameRepository, gameLeases))
 
 const INITIAL_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
@@ -133,7 +146,30 @@ function destroyEngineSlots(slots: Record<EngineVariant, EngineSlot>) {
   }
 }
 
-wss.on('connection', async (ws) => {
+const roomEngineSlots = createEngineSlots()
+const JIEQI_INITIAL_FEN = 'xxxxkxxxx/9/1x5x1/x1x1x1x1x/9/9/X1X1X1X1X/1X5X1/9/XXXXKXXXX w R2A2C2P5N2B2r2a2c2p5n2b2 0 1'
+function roomIdentity(type: string, color: RoomColor) { return color === 'red' ? type.toUpperCase() : type }
+async function getRoomHint(room: StoredRoom, viewer: RoomColor): Promise<string | null> {
+  const engine = await getEngine(roomEngineSlots, room.variant)
+  if (!engine) return null
+  const moves = room.moves.map(move => {
+    let text = move.uci
+    if (move.revealed) text += roomIdentity(move.revealed, move.color)
+    if (move.capturedHidden && move.captured && move.capturedColor && move.color === viewer) text += roomIdentity(move.captured, move.capturedColor)
+    return text
+  })
+  const result = await engine.getBestMove(room.variant === 'jieqi' ? JIEQI_INITIAL_FEN : INITIAL_FEN, moves, 'master')
+  return result.move?.slice(0, 4) || null
+}
+const roomManager = new RoomManager(roomRepository, getRoomHint)
+app.use('/api/rooms', createRoomRouter(roomManager))
+
+wss.on('connection', async (ws, request) => {
+  if (LAN_MODE && request.headers.origin) {
+    try {
+      if (new URL(request.headers.origin).host !== request.headers.host) return ws.close(1008, 'Origin not allowed')
+    } catch { return ws.close(1008, 'Origin not allowed') }
+  }
   console.log('Client connected')
 
   const sessionId = makeSessionId()
@@ -187,6 +223,12 @@ wss.on('connection', async (ws) => {
 
   ws.on('message', async (data) => {
     try {
+      const roomMessage = JSON.parse(data.toString()) as Record<string, unknown>
+      if (typeof roomMessage.type === 'string' && roomMessage.type.startsWith('room-')) {
+        try { await roomManager.handle(ws, roomMessage) }
+        catch (error) { sendError(ws, error instanceof Error ? error.message : '房间操作失败', typeof roomMessage.commandId === 'string' ? roomMessage.commandId : undefined) }
+        return
+      }
       const parsed = parseClientMessage(data.toString())
       if (!parsed.ok) {
         sendError(ws, parsed.error, parsed.requestId)
@@ -481,15 +523,28 @@ wss.on('connection', async (ws) => {
     }
     destroyEngineSlots(engineSlots)
     gameLeases.releaseSocket(ws)
+    roomManager.disconnect(ws)
   })
 })
 
+if (LAN_MODE) {
+  const clientDist = path.resolve(serverDirectory, '../client/dist')
+  app.use(express.static(clientDist))
+  app.get('*', (req, res, next) => req.path.startsWith('/api/') ? next() : res.sendFile(path.join(clientDist, 'index.html')))
+}
+
 const PORT = process.env.PORT || 3001
-const HOST = process.env.HOST || '127.0.0.1'
+const HOST = process.env.HOST || (LAN_MODE ? '0.0.0.0' : '127.0.0.1')
 
 server.listen(Number(PORT), HOST, () => {
   console.log(`Server running on http://${HOST}:${PORT}`)
   console.log(`WebSocket available at ws://${HOST}:${PORT}/ws`)
+  if (LAN_MODE) {
+    const addresses = Object.values(os.networkInterfaces()).flatMap(items => items || [])
+      .filter(item => item.family === 'IPv4' && !item.internal)
+      .map(item => `http://${item.address}:${PORT}/?lan=1`)
+    for (const address of addresses) console.log(`LAN lobby: ${address}`)
+  }
 })
 
 let shuttingDown = false
@@ -502,7 +557,7 @@ function shutdown() {
   for (const client of wss.clients) client.terminate()
   wss.close()
   const serverClosed = new Promise<void>(resolve => server.close(() => resolve()))
-  Promise.allSettled([gameRepository.flush(), serverClosed]).then(results => {
+  Promise.allSettled([gameRepository.flush(), roomManager.flush(), serverClosed]).then(results => {
     const failed = results.some(result => result.status === 'rejected')
     if (failed) console.error('Shutdown completed with errors:', results)
     process.exit(failed ? 1 : 0)

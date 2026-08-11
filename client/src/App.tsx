@@ -49,6 +49,7 @@ import { createGame, deleteGame, gameExportUrl, importGames, listGames, loadGame
 import { clearGameUrl, createInitialPersistedState, gameUrl } from './games/state'
 import { GameSaveStatus, useGamePersistence } from './games/useGamePersistence'
 import { EndgameDefinition, EndgameStartConfig, EndgameTarget, GameDocument, GameMode, Difficulty, GameSummary, LiveGameMode, MoveCandidate, MoveRecord, PersistedGameConfig, PersistedGameState, PlayerSide, StudyPosition } from './types'
+import LanApp from './lan/LanApp'
 
 type EndgameDraft = {
   id: string | null
@@ -70,6 +71,25 @@ type CandidatePreviewState = {
 type WorkspaceTab = 'play' | 'engine' | 'review' | 'variations'
 
 export default function App() {
+  const search = new URLSearchParams(window.location.search)
+  if (search.has('lan') || search.has('room')) return <LanApp />
+  if (search.has('local') || search.has('game') || search.has('replay')) return <LocalApp />
+  return <HomeScreen />
+}
+
+function HomeScreen() {
+  return <main className="home-screen">
+    <section className="home-card">
+      <div className="home-brand"><span aria-hidden="true">弈</span><div><small>PIKAFISH XIANGQI</small><h1>中国象棋</h1><p>选择一种方式开始</p></div></div>
+      <nav className="home-entries" aria-label="游戏入口">
+        <a href="?local=1"><span className="home-entry-mark">习</span><strong>本地练习</strong><small>人机对弈、双人练习、残局与复盘</small><b>进入练习 →</b></a>
+        <a href="?lan=1"><span className="home-entry-mark online">联</span><strong>在线对局</strong><small>局域网对战、邀请好友与实时观战</small><b>进入大厅 →</b></a>
+      </nav>
+    </section>
+  </main>
+}
+
+function LocalApp() {
   const [initialReplay] = useState(() => (
     typeof window === 'undefined' || new URLSearchParams(window.location.search).has('game')
       ? null
@@ -1173,6 +1193,7 @@ function StartScreen({ games, loading, storeError, starting, onRetry, onOpen, on
             <span>多级 AI</span>
             <span>研究与复盘</span>
           </div>
+          <a className="start-home-link" href="/">← 返回主页</a>
         </section>
 
         <section className="start-config">

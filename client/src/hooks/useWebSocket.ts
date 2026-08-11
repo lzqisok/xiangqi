@@ -17,9 +17,8 @@ export function useWebSocket(onMessage: (msg: WSMessage) => void) {
     }
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.hostname
     setConnectionState('connecting')
-    const ws = new WebSocket(`${protocol}//${host}:3001/ws`)
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`)
 
     ws.onopen = () => {
       setConnected(true)

@@ -8,6 +8,7 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export async function listLanRooms() { return (await json<{ rooms: LanRoomSummary[] }>('/api/rooms/lobby')).rooms }
+export async function listLanRoomHistory() { return (await json<{ rooms: LanRoomSummary[] }>('/api/rooms/history')).rooms }
 export async function createLanRoom(name: string, variant: 'xiangqi' | 'jieqi') {
   return json<{ room: LanRoomSummary; ownerToken: string; inviteToken: string }>('/api/rooms', { method: 'POST', body: JSON.stringify({ name, variant }) })
 }

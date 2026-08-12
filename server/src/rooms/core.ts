@@ -16,6 +16,30 @@ export function roomUci(from: { row: number; col: number }, to: { row: number; c
   return `${String.fromCharCode(97 + from.col)}${9 - from.row}${String.fromCharCode(97 + to.col)}${9 - to.row}`
 }
 
+const RED_FILES = ['九', '八', '七', '六', '五', '四', '三', '二', '一']
+const BLACK_FILES = ['1', '2', '3', '4', '5', '6', '7', '8', '9']
+const RED_NAMES: Record<RoomPiece['type'], string> = { k: '帅', a: '仕', b: '相', n: '马', r: '车', c: '炮', p: '兵' }
+const BLACK_NAMES: Record<RoomPiece['type'], string> = { k: '将', a: '士', b: '象', n: '馬', r: '車', c: '砲', p: '卒' }
+const CHINESE_NUMBERS = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九']
+
+function roomMoveNotation(board: RoomBoard, from: { row: number; col: number }, to: { row: number; col: number }) {
+  const piece = board[from.row][from.col]!
+  const type = piece.hidden ? piece.darkType || piece.type : piece.type
+  const files = piece.color === 'red' ? RED_FILES : BLACK_FILES
+  const names = piece.color === 'red' ? RED_NAMES : BLACK_NAMES
+  const sameColumn = board.flatMap((row, index) => row[from.col]?.color === piece.color && (row[from.col]!.hidden ? row[from.col]!.darkType || row[from.col]!.type : row[from.col]!.type) === type ? [index] : [])
+  let prefix = `${names[type]}${files[from.col]}`
+  if (!['k', 'a', 'b'].includes(type) && sameColumn.length === 2) {
+    const ordered = [...sameColumn].sort((a, b) => piece.color === 'red' ? a - b : b - a)
+    prefix = `${ordered.indexOf(from.row) === 0 ? '前' : '后'}${names[type]}`
+  }
+  const delta = to.row - from.row
+  if (delta === 0) return `${prefix}平${files[to.col]}`
+  const action = delta * (piece.color === 'red' ? -1 : 1) > 0 ? '进' : '退'
+  const target = ['n', 'a', 'b'].includes(type) ? files[to.col] : piece.color === 'red' ? CHINESE_NUMBERS[Math.abs(delta)] || String(Math.abs(delta)) : String(Math.abs(delta))
+  return `${prefix}${action}${target}`
+}
+
 export function parseRoomFen(fen = ROOM_INITIAL_FEN): { board: RoomBoard; turn: RoomColor } {
   const [placement, side] = fen.split(/\s+/)
   const board = placement.split('/').map(text => {
@@ -175,17 +199,17 @@ export function rebuildRoomBoard(variant: RoomVariant, layout: string | undefine
   return { board, turn }
 }
 
-export function executeRoomMove(variant: RoomVariant, layout: string | undefined, moves: RoomMove[], uci: string, color: RoomColor) {
+export function executeRoomMoveFromState(variant: RoomVariant, rebuilt: ReturnType<typeof rebuildRoomBoard>, moves: RoomMove[], uci: string, color: RoomColor) {
   if (!/^[a-i][0-9][a-i][0-9]$/.test(uci)) throw new Error('着法格式不正确')
-  const rebuilt = rebuildRoomBoard(variant, layout, moves)
   if (rebuilt.turn !== color) throw new Error('尚未轮到当前棋手')
   const from = pos(uci.slice(0, 2)), to = pos(uci.slice(2))
   const moving = rebuilt.board[from.row]?.[from.col]
   if (!moving || moving.color !== color || !legalRoomMoves(rebuilt.board, from, variant).some(item => item.row === to.row && item.col === to.col)) throw new Error('非法着法')
   const result = apply(rebuilt.board, from, to)
   const turn: RoomColor = color === 'red' ? 'black' : 'red'
-  const move: RoomMove = { uci, color }
+  const move: RoomMove = { uci, color, notation: roomMoveNotation(rebuilt.board, from, to) }
   if (result.revealed) move.revealed = result.revealed
+  if (result.revealed) move.notation += `（揭${color === 'red' ? RED_NAMES[result.revealed] : BLACK_NAMES[result.revealed]}）`
   if (result.captured) {
     move.captured = result.captured.type
     move.capturedColor = result.captured.color
@@ -201,6 +225,10 @@ export function executeRoomMove(variant: RoomVariant, layout: string | undefined
     else if (nextMoves.length >= 600) detail = { status: 'draw', reason: 'move-limit' }
   }
   return { ...result, turn, move, detail }
+}
+
+export function executeRoomMove(variant: RoomVariant, layout: string | undefined, moves: RoomMove[], uci: string, color: RoomColor) {
+  return executeRoomMoveFromState(variant, rebuildRoomBoard(variant, layout, moves), moves, uci, color)
 }
 
 export function projectBoard(board: RoomBoard): RoomBoard {

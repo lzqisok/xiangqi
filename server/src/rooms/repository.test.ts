@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -61,4 +61,19 @@ test('room repository rejects malformed persisted move data', async t => {
   const repository = new RoomRepository(directory)
   await repository.init()
   assert.equal(repository.get(stored.id), null)
+})
+
+test('room repository removes primary and backup snapshots', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-delete-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const stored = room()
+  const repository = new RoomRepository(directory)
+  await repository.init()
+  await repository.create(stored)
+  stored.revision++
+  await repository.save(stored)
+  await repository.delete(stored.id)
+  assert.equal(repository.get(stored.id), null)
+  await assert.rejects(() => access(path.join(directory, `${stored.id}.json`)))
+  await assert.rejects(() => access(path.join(directory, `${stored.id}.json.bak`)))
 })

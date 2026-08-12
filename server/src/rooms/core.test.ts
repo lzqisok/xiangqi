@@ -32,5 +32,6 @@ test('compact room moves still detect threefold repetition by replaying position
   }
   assert.equal(result?.detail.status, 'draw')
   assert.equal(result?.detail.reason, 'repetition')
-  assert.deepEqual(Object.keys(moves[0]).sort(), ['color', 'uci'])
+  assert.equal(moves[0].notation, '马八进七')
+  assert.deepEqual(Object.keys(moves[0]).sort(), ['color', 'notation', 'uci'])
 })

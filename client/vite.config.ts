@@ -13,6 +13,10 @@ export default defineConfig({
         target: 'ws://localhost:3001',
         ws: true,
       },
+      '/gomoku-ws': {
+        target: 'ws://localhost:3001',
+        ws: true,
+      },
     },
   },
 })

@@ -23,6 +23,49 @@ function chatMessages(messages: unknown[]) {
   return messages.filter(value => (value as { type?: string }).type === 'room-chat-message').map(value => (value as { message: Record<string, unknown> }).message)
 }
 
+test('Gomoku rooms reuse seats and revisions while keeping lobby and move rules isolated', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'gomoku-rooms-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory); await repository.init()
+  const manager = new RoomManager(repository, async () => null)
+  const created = await manager.createRoom('五子棋联机', 'gomoku', 'renju')
+  const blackMessages: unknown[] = [], whiteMessages: unknown[] = []
+  const black = socket(blackMessages), white = socket(whiteMessages)
+  await manager.handle(black, { type: 'room-subscribe', roomId: created.room.id, token: created.ownerToken, nickname: '先手' })
+  await manager.handle(black, { type: 'room-claim-seat', roomId: created.room.id, side: 'red', nickname: '先手', expectedRevision: snapshot(blackMessages).revision, commandId: 'g-seat-black' })
+  await manager.handle(white, { type: 'room-subscribe', roomId: created.room.id, nickname: '后手' })
+  await manager.handle(white, { type: 'room-invite-seat', roomId: created.room.id, inviteToken: created.inviteToken, side: 'black', nickname: '后手', expectedRevision: snapshot(whiteMessages).revision, commandId: 'g-seat-white' })
+  await manager.handle(black, { type: 'room-ready', roomId: created.room.id, ready: true, expectedRevision: snapshot(blackMessages).revision, commandId: 'g-ready-black' })
+  await manager.handle(white, { type: 'room-ready', roomId: created.room.id, ready: true, expectedRevision: snapshot(whiteMessages).revision, commandId: 'g-ready-white' })
+  assert.equal(snapshot(blackMessages).variant, 'gomoku')
+  assert.equal(snapshot(blackMessages).gomokuRule, 'renju')
+  assert.equal(snapshot(blackMessages).board.length, 15)
+  assert.equal(manager.lobby('xiangqi').some(room => room.id === created.room.id), false)
+  assert.equal(manager.lobby('gomoku').some(room => room.id === created.room.id), true)
+
+  const sequence: Array<[WebSocket, unknown[], number, number]> = [
+    [black, blackMessages, 7, 3], [white, whiteMessages, 0, 0],
+    [black, blackMessages, 7, 4], [white, whiteMessages, 0, 1],
+    [black, blackMessages, 7, 5], [white, whiteMessages, 0, 2],
+    [black, blackMessages, 7, 6], [white, whiteMessages, 0, 3],
+    [black, blackMessages, 7, 7],
+  ]
+  for (const [index, [ws, messages, row, col]] of sequence.entries()) {
+    await manager.handle(ws, { type: 'room-move', roomId: created.room.id, row, col, expectedRevision: snapshot(messages).revision, commandId: `g-move-${row}-${col}` })
+    if (index === 0) {
+      const revision = snapshot(whiteMessages).revision
+      await assert.rejects(() => manager.handle(white, { type: 'room-move', roomId: created.room.id, row, col, expectedRevision: revision, commandId: 'g-occupied' }), /已有棋子/)
+      assert.equal(snapshot(whiteMessages).revision, revision)
+      assert.equal(snapshot(whiteMessages).moves.length, 1)
+    }
+  }
+  assert.equal(snapshot(blackMessages).status, 'red-wins')
+  assert.equal(snapshot(blackMessages).statusReason, 'five')
+  assert.equal(snapshot(blackMessages).moves[8].notation, 'H8')
+  assert.equal(manager.history(20, 'gomoku')[0].id, created.room.id)
+  await manager.flush(); manager.dispose()
+})
+
 test('room chat supports every role without changing the gameplay revision', async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-chat-manager-'))
   t.after(() => rm(directory, { recursive: true, force: true }))

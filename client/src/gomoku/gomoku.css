@@ -1,0 +1,490 @@
+.gomoku-page {
+  --gomoku-ink: #332a20;
+  --gomoku-muted: #786d61;
+  --gomoku-accent: #8f392f;
+  --gomoku-green: #3f6b58;
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: clamp(8px, 1.8vh, 18px) 24px;
+  color: var(--gomoku-ink);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(164, 67, 55, .11), transparent 26%),
+    radial-gradient(circle at 94% 100%, rgba(63, 107, 88, .10), transparent 30%),
+    linear-gradient(145deg, #eee9df, #ddd3c4);
+}
+
+.gomoku-header {
+  width: min(100%, 1200px);
+  min-height: clamp(42px, 6.5vh, 58px);
+  margin: 0 auto clamp(7px, 1.4vh, 14px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.gomoku-brand { display: flex; align-items: center; gap: 11px; }
+.gomoku-brand > span {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--gomoku-accent);
+  color: #fff6e9;
+  font: 900 22px 'Noto Serif SC', serif;
+  box-shadow: 0 7px 16px rgba(120, 48, 39, .18);
+}
+.gomoku-brand > div { display: flex; flex-direction: column; }
+.gomoku-brand small { color: #856d52; font-size: 9px; font-weight: 700; letter-spacing: 2px; }
+.gomoku-brand strong { font: 900 21px 'Noto Serif SC', serif; letter-spacing: 4px; }
+.gomoku-home-link {
+  padding: 9px 14px;
+  border: 1px solid rgba(74, 61, 45, .16);
+  border-radius: 9px;
+  background: rgba(251, 248, 241, .68);
+  color: #674d34;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.gomoku-home-link:hover { border-color: rgba(143, 57, 47, .34); color: var(--gomoku-accent); }
+.gomoku-header-actions { display: flex; gap: 8px; }
+.gomoku-header-actions button { cursor: pointer; }
+.gomoku-history-modal { width: min(560px, calc(100% - 28px)); max-height: min(680px, calc(100dvh - 32px)); }
+.gomoku-history-list { width: 100%; min-height: 0; overflow: auto; display: grid; gap: 8px; margin: 12px 0; }
+.gomoku-history-list > button { display: grid; grid-template-columns: 1fr auto; gap: 3px 12px; padding: 11px 12px; border: 1px solid rgba(74,61,45,.14); border-radius: 8px; background: #f6efe4; text-align: left; cursor: pointer; }
+.gomoku-history-list > button strong { color: var(--gomoku-accent); }
+.gomoku-history-list > button span { grid-column: 1 / -1; color: var(--gomoku-muted); font-size: 11px; }
+.gomoku-history-list > button time { color: var(--gomoku-muted); font-size: 10px; }
+
+.gomoku-workspace {
+  width: min(100%, 1200px);
+  min-height: 0;
+  flex: 1;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 330px);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.gomoku-panel {
+  border: 1px solid rgba(74, 61, 45, .14);
+  background: rgba(251, 248, 241, .92);
+  box-shadow: 0 20px 48px rgba(75, 56, 36, .13);
+}
+.gomoku-board-column {
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gomoku-page button { font-family: 'Noto Sans SC', sans-serif; }
+.gomoku-btn-primary,
+.gomoku-btn-secondary {
+  min-height: 36px;
+  padding: 8px 13px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color .18s, background .18s, color .18s, transform .18s;
+}
+.gomoku-btn-primary { border: 1px solid #7b3028; background: #7b3028; color: #fff8ed; }
+.gomoku-btn-primary:hover:not(:disabled) { background: #913d33; transform: translateY(-1px); }
+.gomoku-btn-secondary { border: 1px solid rgba(74, 61, 45, .14); background: #eee6da; color: #5e5347; }
+.gomoku-btn-secondary:hover:not(:disabled) { border-color: rgba(143, 57, 47, .28); color: var(--gomoku-accent); }
+.gomoku-page button:disabled { opacity: .45; cursor: not-allowed; }
+
+.gomoku-board-stage {
+  width: 100%;
+  min-height: 0;
+  height: 100%;
+  container-type: size;
+  display: grid;
+  place-items: center;
+}
+.gomoku-board-container {
+  position: relative;
+  width: min(100%, 552px);
+  width: min(100cqw, 100cqh, 552px);
+  min-width: 0;
+  aspect-ratio: 1;
+  margin: 0 auto;
+  overflow: hidden;
+  border: 7px solid #6a4528;
+  border-radius: 12px;
+  background: #ddb974;
+  box-shadow: 0 14px 30px rgba(67, 43, 24, .25), inset 0 0 0 1px rgba(255,255,255,.18);
+}
+.gomoku-board-surface { position: relative; width: 100%; margin: 0 auto; line-height: 0; }
+.gomoku-board-canvas { display: block; width: 100%; height: auto; cursor: crosshair; touch-action: manipulation; }
+.gomoku-board-canvas--busy { cursor: wait; }
+.gomoku-forbidden-tip {
+  position: absolute;
+  z-index: 20;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: rgba(143, 57, 47, .94);
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  pointer-events: none;
+  animation: gomoku-forbidden-tip 1.5s ease-out forwards;
+}
+.gomoku-forbidden-tip::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 4px 4px 0;
+  border-style: solid;
+  border-color: rgba(143, 57, 47, .94) transparent transparent;
+}
+
+.gomoku-start-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  background: rgba(241, 222, 181, .62);
+  backdrop-filter: blur(2px);
+}
+.gomoku-start-overlay > div {
+  width: min(260px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px;
+  border: 1px solid rgba(87, 57, 29, .20);
+  border-radius: 14px;
+  background: rgba(251, 248, 241, .94);
+  box-shadow: 0 16px 38px rgba(67, 43, 24, .2);
+}
+.gomoku-start-overlay span {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 10px;
+  border-radius: 50%;
+  background: var(--gomoku-green);
+  color: white;
+  font: 900 20px 'Noto Serif SC', serif;
+}
+.gomoku-start-overlay strong { font: 900 20px 'Noto Serif SC', serif; letter-spacing: 2px; }
+.gomoku-start-overlay small { margin: 5px 0 16px; color: var(--gomoku-muted); }
+.gomoku-start-overlay button { min-width: 150px; }
+
+.gomoku-side-panels {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+}
+.gomoku-panel { padding: 17px; border-radius: 14px; }
+.gomoku-panel h3 { margin: 0 0 14px; color: var(--gomoku-ink); font: 900 17px 'Noto Serif SC', serif; letter-spacing: 1px; }
+.gomoku-status-main { margin: 0; color: var(--gomoku-accent); font: 900 22px 'Noto Serif SC', serif; }
+.gomoku-status-sub { min-height: 20px; margin: 6px 0 0; color: var(--gomoku-muted); font-size: 13px; }
+.gomoku-engine-source { display: inline-flex; margin: 9px 0 0; padding: 4px 8px; border-radius: 999px; background: #eee6da; color: #75695c; font-size: 10px; font-weight: 700; }
+.gomoku-engine-source.local { background: rgba(117, 105, 92, .1); color: #75695c; }
+.gomoku-engine-source.rapfi { background: rgba(63, 107, 88, .12); color: var(--gomoku-green); }
+.gomoku-engine-source.browser { background: rgba(143, 57, 47, .09); color: var(--gomoku-accent); }
+.gomoku-ai-match-meta { display: flex; gap: 5px; margin: 7px 0 0; color: var(--gomoku-muted); font-size: 11px; font-weight: 700; }
+.gomoku-status-actions { display: flex; gap: 7px; margin-top: 11px; }
+.gomoku-status-actions button { flex: 1; min-width: 0; }
+.gomoku-ai-match-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 7px;
+}
+.gomoku-ai-match-actions select {
+  grid-column: 1 / -1;
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid rgba(74, 61, 45, .14);
+  border-radius: 8px;
+  background: #eee6da;
+  color: #5e5347;
+  font: 700 11px 'Noto Sans SC', sans-serif;
+}
+.gomoku-control-group { margin-bottom: 14px; }
+.gomoku-control-label { display: block; margin-bottom: 7px; color: #665b50; font-size: 12px; font-weight: 700; }
+.gomoku-radio-group { display: flex; gap: 4px; padding: 4px; border-radius: 9px; background: #eee6da; }
+.gomoku-radio-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 3px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #6f6458;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.gomoku-difficulty-group { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.gomoku-difficulty-group .gomoku-radio-btn { width: 100%; padding-inline: 1px; }
+.gomoku-static-options span {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 3px;
+  color: #817568;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+}
+.gomoku-radio-btn:hover:not(:disabled) { color: var(--gomoku-accent); }
+.gomoku-radio-btn.active { border-color: rgba(143,57,47,.18); background: #fffaf2; color: var(--gomoku-accent); box-shadow: 0 2px 7px rgba(75,56,36,.09); }
+.gomoku-switch-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 15px;
+  border-top: 1px solid rgba(74,61,45,.11);
+  color: #665b50;
+  font-size: 12px;
+  font-weight: 700;
+}
+.gomoku-switch { position: relative; width: 40px; height: 22px; flex-shrink: 0; border-radius: 999px; background: #cfc4b6; cursor: pointer; transition: background .2s; }
+.gomoku-switch--on { background: var(--gomoku-green); }
+.gomoku-switch--disabled { opacity: .45; cursor: not-allowed; }
+.gomoku-switch-knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fffdf8; box-shadow: 0 2px 5px rgba(0,0,0,.16); transition: transform .2s; }
+.gomoku-switch--on .gomoku-switch-knob { transform: translateX(18px); }
+.gomoku-tip,
+.gomoku-review-empty { margin: 12px 0 0; color: #857a6e; font-size: 12px; line-height: 1.6; }
+.gomoku-settings-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 10px;
+}
+.gomoku-mode-config { display: grid; row-gap: 10px; }
+.gomoku-settings-panel > h3,
+.gomoku-settings-panel .gomoku-control-group { margin-bottom: 0; }
+.gomoku-settings-panel .gomoku-switch-control { margin-top: 0; }
+.gomoku-settings-panel > .gomoku-tip { margin-top: 0; }
+.gomoku-review-panel { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.gomoku-review-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gomoku-review-header h3 { margin: 0; }
+.gomoku-review-header-actions { display: flex; gap: 5px; }
+.gomoku-review-header button { min-height: 30px; padding: 5px 8px; }
+.gomoku-review-source { display: block; margin-top: 3px; color: var(--gomoku-green); font-size: 9px; font-weight: 700; }
+.gomoku-review-error { margin: 10px 0 0; color: var(--gomoku-accent); font-size: 12px; font-weight: 700; }
+.gomoku-review-progress { margin-top: 12px; padding: 10px; border-radius: 8px; background: #f6efe4; }
+.gomoku-review-progress > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #5d5348; font-size: 11px; }
+.gomoku-review-progress strong { color: var(--gomoku-accent); }
+.gomoku-review-progress progress { width: 100%; height: 7px; margin-top: 8px; accent-color: var(--gomoku-green); }
+.gomoku-review-progress p { margin: 6px 0 0; color: var(--gomoku-muted); font-size: 9px; line-height: 1.4; }
+.gomoku-review-content { min-height: 0; overflow-y: auto; padding-right: 3px; scrollbar-width: thin; scrollbar-color: rgba(117, 105, 92, .35) transparent; }
+.gomoku-review-nav { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 12px; }
+.gomoku-review-nav button { padding: 6px 8px; }
+.gomoku-review-nav span { color: var(--gomoku-muted); font-size: 11px; white-space: nowrap; }
+.gomoku-review-step,
+.gomoku-review-suggestions,
+.gomoku-review-summary { margin-top: 10px; padding: 9px 10px; border: 1px solid rgba(74,61,45,.1); border-radius: 8px; background: #f6efe4; }
+.gomoku-review-step strong,
+.gomoku-review-suggestions strong,
+.gomoku-review-summary strong { display: block; margin-bottom: 6px; color: var(--gomoku-ink); font-size: 12px; }
+.gomoku-review-step p,
+.gomoku-review-suggestions p,
+.gomoku-review-summary p { margin: 0 0 5px; color: #5d5348; font-size: 12px; line-height: 1.5; }
+.gomoku-review-suggestions ol { margin: 0; padding-left: 18px; }
+.gomoku-review-suggestions li { margin-bottom: 3px; color: #5d5348; font-size: 12px; }
+
+.gomoku-review-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(42, 32, 23, .46);
+  backdrop-filter: blur(4px);
+  animation: gomoku-fade-in .18s ease-out;
+}
+.gomoku-review-dialog {
+  width: min(760px, 100%);
+  max-height: calc(100dvh - 40px);
+  display: flex;
+  flex-direction: column;
+  padding: 22px;
+  overflow: hidden;
+  border: 1px solid rgba(74, 61, 45, .16);
+  border-radius: 16px;
+  background: #fbf8f1;
+  box-shadow: 0 28px 70px rgba(42, 32, 23, .34);
+}
+.gomoku-review-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex: 0 0 auto; }
+.gomoku-review-dialog h2 { margin: 0; color: var(--gomoku-ink); font: 900 22px 'Noto Serif SC', serif; letter-spacing: 2px; }
+.gomoku-review-dialog header p { margin: 5px 0 0; color: var(--gomoku-muted); font-size: 11px; }
+.gomoku-review-content--expanded { overflow-y: auto; padding-right: 5px; }
+.gomoku-review-content--expanded .gomoku-review-nav { position: sticky; top: 0; z-index: 1; padding: 12px 0 8px; background: #fbf8f1; }
+.gomoku-review-content--expanded .gomoku-review-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.gomoku-review-content--expanded .gomoku-review-step,
+.gomoku-review-content--expanded .gomoku-review-suggestions,
+.gomoku-review-content--expanded .gomoku-review-summary { margin-top: 0; padding: 14px; }
+.gomoku-review-content--expanded .gomoku-review-summary { grid-column: 1 / -1; }
+
+.gomoku-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(42, 32, 23, .42);
+  backdrop-filter: blur(3px);
+  animation: gomoku-fade-in .18s ease-out;
+}
+.gomoku-modal {
+  width: min(390px, 100%);
+  padding: 26px;
+  border: 1px solid rgba(74,61,45,.16);
+  border-radius: 16px;
+  background: #fbf8f1;
+  box-shadow: 0 24px 60px rgba(42,32,23,.28);
+  text-align: center;
+}
+.gomoku-modal-mark { width: 42px; height: 42px; display: grid; place-items: center; margin: 0 auto 10px; border-radius: 50%; background: var(--gomoku-accent); color: white; font: 900 18px 'Noto Serif SC', serif; }
+.gomoku-modal h2 { margin: 0; font: 900 22px 'Noto Serif SC', serif; letter-spacing: 2px; }
+.gomoku-modal p { margin: 9px 0 22px; color: var(--gomoku-muted); font-size: 13px; }
+.gomoku-modal > div { display: flex; justify-content: center; gap: 9px; }
+.gomoku-modal.gomoku-history-modal { width: min(560px, calc(100% - 28px)); max-height: min(680px, calc(100dvh - 32px)); display: flex; flex-direction: column; }
+.gomoku-modal > .gomoku-history-list { display: grid; justify-content: stretch; }
+
+@keyframes gomoku-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes gomoku-forbidden-tip {
+  0% { transform: translate(-50%, -100%); opacity: 0; }
+  15% { transform: translate(-50%, -130%); opacity: 1; }
+  80% { transform: translate(-50%, -160%); opacity: 1; }
+  100% { transform: translate(-50%, -180%); opacity: 0; }
+}
+
+@media (min-width: 761px) and (max-height: 760px) {
+  .gomoku-page { padding: 8px 16px; }
+  .gomoku-header { min-height: 40px; margin-bottom: 7px; }
+  .gomoku-brand { gap: 9px; }
+  .gomoku-brand > span { width: 36px; height: 36px; font-size: 19px; }
+  .gomoku-brand strong { font-size: 18px; }
+  .gomoku-home-link { padding: 7px 11px; }
+  .gomoku-workspace { gap: 12px; }
+  .gomoku-side-panels { gap: 8px; }
+  .gomoku-panel { padding: 10px 12px; border-radius: 11px; }
+  .gomoku-panel h3 { margin-bottom: 8px; font-size: 15px; }
+  .gomoku-status-main { font-size: 18px; }
+  .gomoku-status-sub { min-height: 17px; margin-top: 3px; font-size: 11px; }
+  .gomoku-engine-source { margin-top: 5px; padding: 3px 7px; }
+  .gomoku-ai-match-meta { margin-top: 4px; font-size: 9px; }
+  .gomoku-status-actions { margin-top: 6px; }
+  .gomoku-status-actions button { min-height: 28px; padding: 4px 7px; font-size: 10px; }
+  .gomoku-ai-match-actions { gap: 5px; margin-top: 5px; }
+  .gomoku-ai-match-actions button { min-height: 28px; padding: 4px 7px; font-size: 10px; }
+  .gomoku-ai-match-actions select { min-height: 27px; padding: 3px 7px; font-size: 10px; }
+  .gomoku-settings-panel { row-gap: 6px; }
+  .gomoku-control-label { margin-bottom: 4px; font-size: 10px; }
+  .gomoku-radio-group { padding: 3px; }
+  .gomoku-radio-btn { padding: 5px 2px; font-size: 10px; }
+  .gomoku-static-options span { padding: 6px 2px; font-size: 10px; }
+  .gomoku-mode-config { row-gap: 6px; }
+  .gomoku-switch-control { padding-top: 7px; font-size: 10px; }
+  .gomoku-switch { width: 34px; height: 19px; }
+  .gomoku-switch-knob { width: 15px; height: 15px; }
+  .gomoku-switch--on .gomoku-switch-knob { transform: translateX(15px); }
+  .gomoku-tip,
+  .gomoku-review-empty { margin-top: 5px; font-size: 10px; line-height: 1.35; }
+  .gomoku-review-header button,
+  .gomoku-review-nav button { padding: 4px 7px; font-size: 10px; min-height: 28px; }
+  .gomoku-review-nav { margin-top: 7px; }
+  .gomoku-review-step,
+  .gomoku-review-suggestions,
+  .gomoku-review-summary { margin-top: 6px; padding: 6px 8px; }
+  .gomoku-review-step p,
+  .gomoku-review-suggestions p,
+  .gomoku-review-summary p,
+  .gomoku-review-suggestions li { font-size: 10px; line-height: 1.35; }
+}
+
+@media (min-width: 761px) and (max-height: 640px) {
+  .gomoku-side-panels { gap: 6px; }
+  .gomoku-panel { padding: 6px 8px; }
+  .gomoku-panel h3 { margin-bottom: 4px; font-size: 14px; line-height: 1.2; }
+  .gomoku-settings-panel > h3 { margin-bottom: 0; }
+  .gomoku-status-main { font-size: 17px; line-height: 1.2; }
+  .gomoku-status-sub { min-height: 13px; margin-top: 2px; font-size: 9px; line-height: 1.25; }
+  .gomoku-engine-source { margin-top: 3px; padding: 2px 5px; font-size: 9px; }
+  .gomoku-ai-match-meta { margin-top: 2px; }
+  .gomoku-status-actions { margin-top: 4px; }
+  .gomoku-ai-match-actions { gap: 3px; margin-top: 3px; }
+  .gomoku-ai-match-actions button { min-height: 24px; padding: 3px 5px; font-size: 9px; }
+  .gomoku-ai-match-actions select { min-height: 24px; padding: 2px 5px; font-size: 9px; }
+  .gomoku-settings-panel { column-gap: 5px; row-gap: 3px; }
+  .gomoku-control-label { margin-bottom: 2px; font-size: 9px; line-height: 1.2; }
+  .gomoku-radio-group { gap: 2px; padding: 2px; }
+  .gomoku-radio-btn { min-height: 0; padding: 3px 1px; font-size: 9px; line-height: 1.2; }
+  .gomoku-static-options span { padding: 4px 1px; font-size: 9px; line-height: 1.2; }
+  .gomoku-mode-config { row-gap: 3px; }
+  .gomoku-switch-control { min-height: 20px; padding-top: 3px; font-size: 9px; }
+  .gomoku-tip,
+  .gomoku-review-empty { font-size: 9px; line-height: 1.2; }
+  .gomoku-review-header button,
+  .gomoku-review-nav button { min-height: 24px; padding: 3px 6px; font-size: 9px; }
+  .gomoku-review-nav { margin-top: 4px; }
+  .gomoku-review-nav span { font-size: 9px; }
+  .gomoku-review-step,
+  .gomoku-review-suggestions,
+  .gomoku-review-summary { margin-top: 4px; padding: 4px 6px; }
+  .gomoku-review-step p,
+  .gomoku-review-suggestions p,
+  .gomoku-review-summary p { margin-bottom: 2px; font-size: 9px; line-height: 1.25; }
+  .gomoku-review-suggestions li { margin-bottom: 1px; font-size: 9px; line-height: 1.25; }
+}
+
+@media (max-width: 760px) {
+  .gomoku-page { height: auto; min-height: 100dvh; overflow: auto; }
+  .gomoku-workspace { grid-template-columns: 1fr; max-width: 660px; }
+  .gomoku-board-column { min-height: 0; }
+  .gomoku-board-stage { min-height: 0; flex: 0 0 auto; container-type: normal; }
+  .gomoku-board-container { width: min(100%, 552px); }
+  .gomoku-side-panels { display: grid; grid-template-columns: 1fr 1fr; }
+  .gomoku-side-panels .gomoku-panel:last-child { grid-column: 1 / -1; }
+}
+
+@media (max-width: 620px) {
+  .gomoku-page { padding: 12px; }
+  .gomoku-header { margin-bottom: 10px; }
+  .gomoku-brand strong { font-size: 18px; }
+  .gomoku-home-link { padding: 8px 10px; }
+  .gomoku-panel { padding: 11px; }
+  .gomoku-panel h3 { margin-bottom: 9px; font-size: 16px; }
+  .gomoku-board-container { border-width: 5px; }
+  .gomoku-side-panels { display: flex; flex-direction: column; }
+  .gomoku-settings-panel { display: grid; row-gap: 7px; }
+  .gomoku-mode-config { row-gap: 7px; }
+  .gomoku-settings-panel > h3 { margin-bottom: 0; }
+  .gomoku-settings-panel .gomoku-radio-btn { padding: 6px 2px; }
+  .gomoku-settings-panel .gomoku-static-options span { padding: 7px 2px; }
+  .gomoku-settings-panel .gomoku-switch-control { padding-top: 9px; }
+  .gomoku-settings-panel > .gomoku-tip { font-size: 10px; line-height: 1.4; }
+  .gomoku-review-overlay { padding: 10px; }
+  .gomoku-review-dialog { max-height: calc(100dvh - 20px); padding: 15px; }
+  .gomoku-review-dialog h2 { font-size: 19px; }
+  .gomoku-review-content--expanded .gomoku-review-details { grid-template-columns: 1fr; }
+  .gomoku-review-content--expanded .gomoku-review-summary { grid-column: auto; }
+}

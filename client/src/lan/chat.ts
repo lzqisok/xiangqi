@@ -5,8 +5,8 @@ export function mergeLanChatMessage(current: LanChatMessage[], message: LanChatM
   return [...current, message].sort((left, right) => left.sequence - right.sequence).slice(-100)
 }
 
-export function getLanChatRole(message: LanChatMessage) {
-  const role = message.role === 'red' ? '红方' : message.role === 'black' ? '黑方' : message.role === 'owner' ? '房主' : '观众'
+export function getLanChatRole(message: LanChatMessage, sideLabels: { red: string; black: string } = { red: '红方', black: '黑方' }) {
+  const role = message.role === 'red' ? sideLabels.red : message.role === 'black' ? sideLabels.black : message.role === 'owner' ? '房主' : '观众'
   return message.isOwner && message.role !== 'owner' ? `房主·${role}` : role
 }
 

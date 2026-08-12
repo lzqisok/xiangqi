@@ -2792,7 +2792,7 @@ body {
 }
 /* Home */
 .home-screen { min-height: 100vh; display: grid; place-items: center; padding: 28px; background: radial-gradient(circle at 20% 10%, rgba(164,67,55,.12), transparent 30%), linear-gradient(135deg, #eee9df, #d8cdbd); }
-.home-card { width: min(900px, 100%); padding: 46px; border: 1px solid rgba(74,61,45,.14); border-radius: 24px; background: rgba(251,248,241,.94); box-shadow: 0 28px 70px rgba(75,56,36,.18); }
+.home-card { width: min(1080px, 100%); padding: 46px; border: 1px solid rgba(74,61,45,.14); border-radius: 24px; background: rgba(251,248,241,.94); box-shadow: 0 28px 70px rgba(75,56,36,.18); }
 .home-brand { display: flex; align-items: center; gap: 18px; margin-bottom: 36px; }
 .home-brand > span { width: 62px; height: 62px; display: grid; place-items: center; border-radius: 12px; background: #a44337; color: #fff6e9; font: 900 32px 'Noto Serif SC', serif; box-shadow: 0 8px 18px rgba(120,48,39,.22); }
 .home-brand small { color: #8b6a47; font-size: 10px; font-weight: 700; letter-spacing: 2.5px; }
@@ -2803,10 +2803,87 @@ body {
 .home-entries a:hover { transform: translateY(-3px); border-color: rgba(164,67,55,.36); box-shadow: 0 15px 32px rgba(75,56,36,.12); }
 .home-entry-mark { width: 46px; height: 46px; display: grid; place-items: center; margin-bottom: 24px; border-radius: 50%; background: #7b3028; color: white; font: 900 21px 'Noto Serif SC', serif; }
 .home-entry-mark.online { background: #3f6b58; }
+.home-entry-mark.gomoku { background: #8b6338; }
 .home-entries strong { font: 900 24px 'Noto Serif SC', serif; }
 .home-entries small { margin-top: 8px; color: #776a5d; font-size: 13px; line-height: 1.7; }
 .home-entries b { margin-top: auto; color: #8f392f; font-size: 13px; }
-.home-entries a:last-child b { color: #3f6b58; }
+.home-entries a:nth-child(2) b { color: #3f6b58; }
+.home-entries a:nth-child(3) b { color: #7b572f; }
+.home-mode-entries a { min-height: 205px; }
+.home-back-link { display: inline-block; margin-top: 24px; color: #6f6153; text-decoration: none; font-weight: 700; }
+.home-back-link:hover { color: #8f392f; }
+.gomoku-lan-shell { --room-accent: #8f392f; --room-green: #3f6b58; --room-ink: #332a20; background: radial-gradient(circle at 8% 0%, rgba(164,67,55,.09), transparent 27%), radial-gradient(circle at 100% 100%, rgba(63,107,88,.08), transparent 32%), linear-gradient(145deg, #eee9df, #ddd3c4); }
+.gomoku-room-header { width: min(1500px, 100%); min-height: 66px; margin: 0 auto 10px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.gomoku-room-brand { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.gomoku-room-brand > span { width: 44px; height: 44px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 10px; background: var(--room-accent); color: #fff8ed; font: 900 22px 'Noto Serif SC', serif; box-shadow: 0 7px 16px rgba(120,48,39,.18); }
+.gomoku-room-brand > div { min-width: 0; }
+.gomoku-room-brand small { display: block; color: #8b6a47; font-size: 9px; font-weight: 800; letter-spacing: 2px; }
+.gomoku-room-brand h1 { overflow: hidden; margin: 1px 0 2px; color: var(--room-ink); font: 900 24px 'Noto Serif SC', serif; text-overflow: ellipsis; white-space: nowrap; }
+.gomoku-room-brand p { display: flex; gap: 6px; margin: 0; }
+.gomoku-room-brand p b,
+.gomoku-room-brand p em { padding: 2px 7px; border-radius: 999px; background: rgba(117,105,92,.11); color: #74685c; font-size: 10px; font-style: normal; font-weight: 700; }
+.gomoku-room-brand p b.online { background: rgba(63,107,88,.12); color: var(--room-green); }
+.gomoku-room-header > a { flex: 0 0 auto; padding: 9px 14px; border: 1px solid rgba(74,61,45,.16); border-radius: 9px; background: rgba(251,248,241,.72); color: #674d34; font-size: 12px; font-weight: 700; text-decoration: none; }
+.gomoku-lan-game { width: min(1480px, 100%); margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 410px); gap: 20px; align-items: start; }
+.gomoku-lan-board-wrap { position: relative; width: min(100%, 860px); aspect-ratio: 1; display: grid; place-items: center; margin: 0 auto; }
+.gomoku-lan-board { box-sizing: border-box; display: block; width: min(100%, 860px); height: auto; border: 8px solid #6a4528; border-radius: 12px; box-shadow: 0 16px 34px rgba(67,43,24,.22), inset 0 0 0 1px rgba(255,255,255,.16); cursor: crosshair; }
+.gomoku-board-state { position: absolute; top: 17px; left: 17px; display: flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid rgba(91,63,34,.16); border-radius: 999px; background: rgba(251,248,241,.84); color: #665748; font-size: 11px; font-weight: 700; box-shadow: 0 5px 16px rgba(67,43,24,.12); backdrop-filter: blur(5px); pointer-events: none; }
+.gomoku-board-state i { width: 7px; height: 7px; border-radius: 50%; background: #b9aa98; }
+.gomoku-board-state i.playing { background: var(--room-green); box-shadow: 0 0 0 4px rgba(63,107,88,.12); }
+.gomoku-board-state i.finished { background: var(--room-accent); }
+.gomoku-lan-game > .lan-side { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 12px; }
+.gomoku-room-panel { min-width: 0; display: grid; gap: 10px; padding: 15px; border: 1px solid rgba(74,61,45,.14); border-radius: 15px; background: rgba(251,248,241,.93); box-shadow: 0 18px 42px rgba(75,56,36,.12); }
+.gomoku-room-summary { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.gomoku-room-summary small { color: #8a7a6b; font-size: 10px; font-weight: 700; }
+.gomoku-room-summary h2 { margin: 1px 0 0; color: var(--room-ink); font: 900 20px 'Noto Serif SC', serif; }
+.gomoku-room-summary > span { max-width: 50%; overflow: hidden; padding: 5px 8px; border-radius: 999px; background: rgba(63,107,88,.1); color: var(--room-green); font-size: 10px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.gomoku-seat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.gomoku-seat-card { position: relative; min-width: 0; display: grid; grid-template-columns: 32px minmax(0,1fr); gap: 9px; align-items: center; padding: 11px; border: 1px solid rgba(74,61,45,.12); border-radius: 11px; background: #f1e9dd; }
+.gomoku-seat-card.mine { border-color: rgba(143,57,47,.25); background: #fff8ef; box-shadow: inset 0 0 0 1px rgba(143,57,47,.07); }
+.gomoku-seat-stone { width: 30px; height: 30px; border-radius: 50%; background: radial-gradient(circle at 35% 28%, #5d5d5d, #111 68%); box-shadow: 0 3px 7px rgba(0,0,0,.22); }
+.gomoku-seat-card.black .gomoku-seat-stone { border: 1px solid #d2cbc1; background: radial-gradient(circle at 35% 28%, #fff, #ddd 70%); }
+.gomoku-seat-card > div { min-width: 0; }
+.gomoku-seat-card strong { display: flex; align-items: center; gap: 5px; color: var(--room-ink); font-size: 13px; }
+.gomoku-seat-card strong em { padding: 1px 4px; border-radius: 4px; background: rgba(117,105,92,.1); color: #8a7a6b; font-size: 8px; font-style: normal; }
+.gomoku-seat-card small,
+.gomoku-seat-card > div > i { display: block; overflow: hidden; margin-top: 2px; color: #75695c; font-size: 9px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.gomoku-seat-card > div > i { color: #9b8a78; }
+.gomoku-seat-card > button:not(.remove) { grid-column: 1 / -1; min-height: 30px; padding: 5px 7px; border: 1px solid rgba(74,61,45,.14); border-radius: 7px; background: rgba(255,253,248,.84); color: #635649; font-size: 10px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.gomoku-seat-card.mine > button:not(.remove) { border-color: var(--room-green); background: var(--room-green); color: white; }
+.gomoku-seat-card button:disabled { opacity: .46; cursor: not-allowed; }
+.gomoku-seat-card button.remove { position: absolute; top: 7px; right: 7px; padding: 2px 4px; border: 0; background: transparent; color: #9a4038; font-size: 8px; cursor: pointer; }
+.gomoku-waiting-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding-top: 10px; border-top: 1px solid rgba(74,61,45,.1); }
+.gomoku-waiting-tools label { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 8px; color: #726456; font-size: 10px; font-weight: 700; }
+.gomoku-waiting-tools input,
+.gomoku-manual-copy input { min-width: 0; padding: 7px 8px; border: 1px solid #d4c3aa; border-radius: 7px; background: #fffdf8; color: #3d3329; }
+.gomoku-waiting-tools > button,
+.gomoku-playing-actions button,
+.gomoku-rematch-button,
+.gomoku-room-request button { min-height: 31px; padding: 6px 8px; border: 1px solid #c8b69c; border-radius: 7px; background: #fffaf1; color: #5f5245; font-size: 10px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.gomoku-waiting-tools button.primary,
+.gomoku-rematch-button { border-color: var(--room-accent); background: var(--room-accent); color: #fff; }
+.gomoku-waiting-tools button.danger,
+.gomoku-playing-actions button.danger { color: #9a352d; }
+.gomoku-waiting-tools button:disabled,
+.gomoku-playing-actions button:disabled { opacity: .46; cursor: not-allowed; }
+.gomoku-waiting-tools details { grid-column: 1 / -1; }
+.gomoku-waiting-tools summary,
+.gomoku-move-records summary { color: #7b6d5f; font-size: 10px; font-weight: 700; cursor: pointer; }
+.gomoku-waiting-tools details > div { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 7px; }
+.gomoku-waiting-tools details button { padding: 6px; border: 1px solid #c8b69c; border-radius: 7px; background: #fffaf1; color: #685a4c; font-size: 10px; }
+.gomoku-playing-actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
+.gomoku-room-request { display: flex; align-items: center; gap: 6px; padding: 8px; border-radius: 8px; background: #f3e6d2; font-size: 10px; }
+.gomoku-room-request > span { min-width: 0; flex: 1; }
+.gomoku-room-request button { min-height: 26px; padding: 4px 6px; }
+.gomoku-copy-state { color: var(--room-green); font-size: 10px; font-weight: 700; }
+.gomoku-manual-copy { display: grid; gap: 4px; color: #765e43; font-size: 9px; }
+.gomoku-move-records { min-height: 0; padding-top: 7px; border-top: 1px solid rgba(74,61,45,.1); }
+.gomoku-move-records summary { display: flex; justify-content: space-between; }
+.gomoku-move-records .lan-moves { max-height: 105px; margin-top: 6px; }
+.gomoku-rematch-button { width: 100%; }
+.gomoku-room-toast { position: fixed; z-index: 20; top: 76px; left: 50%; max-width: min(520px, calc(100% - 28px)); transform: translateX(-50%); padding: 9px 14px; border: 1px solid rgba(164,74,66,.24); border-radius: 9px; background: rgba(255,241,239,.96); color: #8b241c; font-size: 11px; font-weight: 700; box-shadow: 0 9px 25px rgba(75,56,36,.15); }
+.gomoku-room-toast.warning { border-color: rgba(151,113,39,.22); background: rgba(255,246,218,.97); color: #745200; }
+.gomoku-lan-shell .lan-chat-panel { border-radius: 15px; background: rgba(251,248,241,.93); box-shadow: 0 18px 42px rgba(75,56,36,.12); }
 .start-home-link { align-self: flex-start; margin-top: 22px; color: #684e34; font-size: 13px; text-decoration: none; }
 
 /* LAN room */
@@ -2937,5 +3014,18 @@ body {
 .lan-copy-fallback { display: grid; gap: 6px; margin-top: 10px; color: #745200; }
 .lan-copy-fallback input { width: 100%; }
 @media (max-width: 1000px) { .lan-room-shell { min-height: 100vh; padding: 14px; } .lan-room-shell .lan-header { margin-bottom: 18px; } .lan-game { display: block; } .lan-game > .board-stage { width: 592px; max-width: 100%; margin: 0 auto; } .lan-side { width: 100%; height: auto; contain: none; display: flex; flex-direction: column; gap: 18px; margin-top: 18px; } .lan-room-shell .lan-panel { width: 100%; max-width: 592px; margin: 0 auto; padding: 20px; } .lan-chat-panel { min-height: 430px; max-height: none; } .lan-chat-list { flex: none; height: 280px; } .lan-chat-management { position: static; max-height: none; box-shadow: none; } .lan-shell { padding: 14px; } .lan-seats { grid-template-columns: 1fr; } }
+@media (min-width: 1001px) {
+  .gomoku-lan-shell.lan-room-shell { height: 100dvh; min-height: 0; overflow: hidden; }
+  .gomoku-lan-shell .gomoku-lan-game { height: calc(100dvh - 94px); min-height: 0; align-items: stretch; }
+  .gomoku-lan-shell .gomoku-lan-board-wrap { width: 100%; height: 100%; aspect-ratio: auto; container-type: size; }
+  .gomoku-lan-shell .gomoku-lan-board { width: min(100cqw, 100cqh, 860px); max-height: 100%; aspect-ratio: 1; }
+  .gomoku-lan-shell .gomoku-board-state { left: calc((100% - min(100cqw, 100cqh, 860px)) / 2 + 17px); }
+  .gomoku-lan-shell .lan-side { grid-column: 2; grid-row: 1; width: auto; height: 100%; margin: 0; contain: size; }
+  .gomoku-lan-shell .gomoku-room-panel { max-height: 100%; overflow: auto; scrollbar-width: thin; }
+  .gomoku-lan-shell .lan-chat-panel { min-height: 0; }
+}
+@media (max-width: 1180px) and (min-width: 1001px) { .gomoku-lan-game { grid-template-columns: minmax(0,1fr) 355px; gap: 14px; } .gomoku-seat-card { padding: 8px; } }
+@media (max-width: 1000px) { .gomoku-room-header { margin-bottom: 16px; } .gomoku-lan-game { display: block; } .gomoku-lan-board-wrap { width: min(680px,100%); } .gomoku-lan-game > .lan-side { width: min(680px,100%); margin: 18px auto 0; display: grid; grid-template-columns: 1fr; } .gomoku-lan-shell .gomoku-room-panel { width: 100%; } }
+@media (max-width: 620px) { .gomoku-room-brand > span { width: 38px; height: 38px; } .gomoku-room-brand h1 { font-size: 18px; } .gomoku-room-brand p em:last-child { display: none; } .gomoku-room-header > a { padding: 8px 10px; } .gomoku-seat-grid { grid-template-columns: 1fr; } .gomoku-waiting-tools { grid-template-columns: 1fr; } .gomoku-waiting-tools > button { grid-column: 1 / -1; } .gomoku-board-state { top: 10px; left: 10px; } }
 @media (max-width: 520px) { .lan-board-seat { min-height: 90px; gap: 6px; padding: 7px; } .lan-board-seat > div { display: block; padding-right: 0; } .lan-board-seat strong { display: block; font-size: 14px; } .lan-board-seat span { display: block; margin-top: 2px; font-size: 9px; } .lan-board-seat button { min-height: 34px; padding: 5px; font-size: 11px; } .lan-board-seat button.remove { top: 4px; right: 4px; width: auto; min-height: 0; } }
 @media (max-width: 640px) { .home-screen { padding: 14px; } .home-card { padding: 26px 20px; } .home-brand { margin-bottom: 24px; } .home-brand h1 { font-size: 28px; } .home-entries { grid-template-columns: 1fr; } .home-entries a { min-height: 180px; } .lan-header { align-items: flex-start; } .lan-create-heading { display: block; } .lan-create-heading > span { display: inline-block; margin-top: 10px; } .lan-form-grid, .lan-variant-picker { grid-template-columns: 1fr; } }

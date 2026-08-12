@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createLanCommandId } from './browser'
 import { mergeLanChatMessage } from './chat'
-import { LanChatMessage, LanChatSettings, LanRoomSnapshot } from './types'
+import { AnyLanRoomSnapshot, LanChatMessage, LanChatSettings, LanRoomSnapshot } from './types'
 
 const COMMAND_TIMEOUT_MS = 10_000
 const HINT_TIMEOUT_MS = 70_000
@@ -30,8 +30,8 @@ export function getLanRecentRooms(): LanRecentRoom[] {
   } catch { return [] }
 }
 
-export function useLanRoom(roomId: string, nickname: string) {
-  const [room, setRoom] = useState<LanRoomSnapshot | null>(null)
+export function useLanRoom<T extends AnyLanRoomSnapshot = LanRoomSnapshot>(roomId: string, nickname: string) {
+  const [room, setRoom] = useState<T | null>(null)
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState('')
   const [privateHint, setPrivateHint] = useState<string | null>(null)
@@ -88,7 +88,7 @@ export function useLanRoom(roomId: string, nickname: string) {
         let message: Record<string, unknown>
         try { message = JSON.parse(event.data) as Record<string, unknown> } catch { setError('收到无法识别的服务端消息'); return }
         if (message.type === 'room-snapshot') {
-          const snapshot = message.room as LanRoomSnapshot
+          const snapshot = message.room as T
           setRoom(snapshot)
           try {
             localStorage.setItem('xiangqi-lan-recent', JSON.stringify([
@@ -129,7 +129,7 @@ export function useLanRoom(roomId: string, nickname: string) {
         } else if (message.type === 'room-chat-ack') {
           finishChatCommand(String(message.commandId || ''))
         } else if (message.type === 'room-closed') {
-          location.href = '?lan=1'
+          location.href = roomRef.current?.variant === 'gomoku' ? '?gomoku=1&lan=1' : '?lan=1'
         } else if (message.type === 'error') {
           const requestId = String(message.requestId || '')
           if (chatCommandIdsRef.current.has(requestId)) { finishChatCommand(requestId); setChatError(String(message.message || '发送失败')) }

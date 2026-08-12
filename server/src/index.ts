@@ -13,17 +13,31 @@ import { RoomRepository } from './rooms/repository.js'
 import { RoomManager } from './rooms/manager.js'
 import { createRoomRouter } from './rooms/routes.js'
 import { StoredRoom, RoomColor } from './rooms/types.js'
+import { RapfiEngine } from './gomoku/rapfiEngine.js'
+import { registerRapfiWebSocketServer, type RapfiWebSocket } from './gomoku/websocket.js'
 
 const app = express()
 const server = createServer(app)
 const LAN_MODE = process.env.LAN_MODE === '1'
-const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 })
+const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 })
+const gomokuWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 })
+server.on('upgrade', (request, socket, head) => {
+  const pathname = new URL(request.url || '/', 'http://localhost').pathname
+  const target = pathname === '/ws' ? wss : pathname === '/gomoku-ws' ? gomokuWss : null
+  if (!target) {
+    socket.destroy()
+    return
+  }
+  target.handleUpgrade(request, socket, head, ws => target.emit('connection', ws, request))
+})
 type LiveWebSocket = WebSocket & { isAlive?: boolean }
 const heartbeatTimer = setInterval(() => {
-  for (const client of wss.clients as Set<LiveWebSocket>) {
-    if (client.isAlive === false) { client.terminate(); continue }
-    client.isAlive = false
-    client.ping()
+  for (const socketServer of [wss, gomokuWss]) {
+    for (const client of socketServer.clients as Set<LiveWebSocket | RapfiWebSocket>) {
+      if (client.isAlive === false) { client.terminate(); continue }
+      client.isAlive = false
+      client.ping()
+    }
   }
 }, 15_000)
 heartbeatTimer.unref()
@@ -159,6 +173,7 @@ const roomEngineSlots = createEngineSlots()
 const JIEQI_INITIAL_FEN = 'xxxxkxxxx/9/1x5x1/x1x1x1x1x/9/9/X1X1X1X1X/1X5X1/9/XXXXKXXXX w R2A2C2P5N2B2r2a2c2p5n2b2 0 1'
 function roomIdentity(type: string, color: RoomColor) { return color === 'red' ? type.toUpperCase() : type }
 async function getRoomHint(room: StoredRoom, viewer: RoomColor): Promise<string | null> {
+  if (room.variant === 'gomoku') return null
   const engine = await getEngine(roomEngineSlots, room.variant)
   if (!engine) return null
   const moves = room.moves.map(move => {
@@ -175,6 +190,9 @@ void roomManager.cleanup().catch(error => console.error('Room cleanup failed:', 
 const roomCleanupTimer = setInterval(() => void roomManager.cleanup().catch(error => console.error('Room cleanup failed:', error)), 60 * 60 * 1000)
 roomCleanupTimer.unref()
 app.use('/api/rooms', createRoomRouter(roomManager))
+
+const liveRapfiEngines = new Set<RapfiEngine>()
+registerRapfiWebSocketServer(gomokuWss, { lanMode: LAN_MODE, liveEngines: liveRapfiEngines })
 
 wss.on('connection', async (ws, request) => {
   if (LAN_MODE && request.headers.origin) {
@@ -553,6 +571,7 @@ const HOST = process.env.HOST || (LAN_MODE ? '0.0.0.0' : '127.0.0.1')
 server.listen(Number(PORT), HOST, () => {
   console.log(`Server running on http://${HOST}:${PORT}`)
   console.log(`WebSocket available at ws://${HOST}:${PORT}/ws`)
+  console.log(`Rapfi WebSocket available at ws://${HOST}:${PORT}/gomoku-ws`)
   if (LAN_MODE) {
     const addresses = Object.values(os.networkInterfaces()).flatMap(items => items || [])
       .filter(item => item.family === 'IPv4' && !item.internal)
@@ -570,8 +589,12 @@ function shutdown() {
   clearInterval(roomCleanupTimer)
   for (const engine of liveEngines) engine.destroy()
   liveEngines.clear()
+  for (const engine of liveRapfiEngines) engine.destroy()
+  liveRapfiEngines.clear()
   for (const client of wss.clients) client.terminate()
+  for (const client of gomokuWss.clients) client.terminate()
   wss.close()
+  gomokuWss.close()
   roomManager.dispose()
   const serverClosed = new Promise<void>(resolve => server.close(() => resolve()))
   Promise.allSettled([gameRepository.flush(), roomManager.flush(), serverClosed]).then(results => {

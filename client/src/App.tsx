@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Board, { BoardHandle } from './components/Board'
 import GamePanel from './components/GamePanel'
 import MoveHistory from './components/MoveHistory'
@@ -51,6 +51,9 @@ import { GameSaveStatus, useGamePersistence } from './games/useGamePersistence'
 import { EndgameDefinition, EndgameStartConfig, EndgameTarget, GameDocument, GameMode, Difficulty, GameSummary, LiveGameMode, MoveCandidate, MoveRecord, PersistedGameConfig, PersistedGameState, PlayerSide, StudyPosition } from './types'
 import LanApp from './lan/LanApp'
 
+const GomokuApp = lazy(() => import('./gomoku/GomokuApp'))
+const GomokuLanApp = lazy(() => import('./gomoku/lan/GomokuLanApp'))
+
 type EndgameDraft = {
   id: string | null
   name: string
@@ -72,21 +75,37 @@ type WorkspaceTab = 'play' | 'engine' | 'review' | 'variations'
 
 export default function App() {
   const search = new URLSearchParams(window.location.search)
+  if (search.has('gomoku') && (search.has('lan') || search.has('room'))) return <Suspense fallback={<main className="home-screen">正在载入五子棋大厅…</main>}><GomokuLanApp /></Suspense>
+  if (search.has('gomoku') && search.has('local')) return <Suspense fallback={<main className="home-screen">正在载入五子棋…</main>}><GomokuApp /></Suspense>
+  if (search.has('gomoku') || search.get('type') === 'gomoku') return <GameModeScreen game="gomoku" />
   if (search.has('lan') || search.has('room')) return <LanApp />
   if (search.has('local') || search.has('game') || search.has('replay')) return <LocalApp />
+  if (search.get('type') === 'xiangqi') return <GameModeScreen game="xiangqi" />
   return <HomeScreen />
 }
 
 function HomeScreen() {
   return <main className="home-screen">
     <section className="home-card">
-      <div className="home-brand"><span aria-hidden="true">弈</span><div><small>PIKAFISH XIANGQI</small><h1>中国象棋</h1><p>选择一种方式开始</p></div></div>
+      <div className="home-brand"><span aria-hidden="true">弈</span><div><small>BOARD GAME STUDIO</small><h1>棋局空间</h1><p>选择棋类与对弈方式</p></div></div>
       <nav className="home-entries" aria-label="游戏入口">
-        <a href="?local=1"><span className="home-entry-mark">习</span><strong>本地练习</strong><small>人机对弈、双人练习、残局与复盘</small><b>进入练习 →</b></a>
-        <a href="?lan=1"><span className="home-entry-mark online">联</span><strong>在线对局</strong><small>局域网对战、邀请好友与实时观战</small><b>进入大厅 →</b></a>
+        <a href="?type=xiangqi"><span className="home-entry-mark">象</span><strong>中国象棋</strong><small>标准象棋、揭棋、残局训练与局域网对决</small><b>选择模式 →</b></a>
+        <a href="?type=gomoku"><span className="home-entry-mark gomoku">五</span><strong>五子棋</strong><small>本地练习、人机与 AI 对决、局域网房间</small><b>选择模式 →</b></a>
       </nav>
     </section>
   </main>
+}
+
+function GameModeScreen({ game }: { game: 'xiangqi' | 'gomoku' }) {
+  const gomoku = game === 'gomoku'
+  return <main className="home-screen"><section className="home-card">
+    <div className="home-brand"><span className={gomoku ? 'gomoku' : ''} aria-hidden="true">{gomoku ? '五' : '象'}</span><div><small>{gomoku ? 'GOMOKU' : 'XIANGQI'} STUDIO</small><h1>{gomoku ? '五子棋' : '中国象棋'}</h1><p>选择对弈方式</p></div></div>
+    <nav className="home-entries home-mode-entries" aria-label="对弈方式">
+      <a href={gomoku ? '?gomoku=1&local=1' : '?local=1'}><span className="home-entry-mark">练</span><strong>本地</strong><small>{gomoku ? '双人练习、人机挑战、AI 对决与局后复盘' : '人机对弈、双人练习、残局与复盘'}</small><b>进入练习 →</b></a>
+      <a href={gomoku ? '?gomoku=1&lan=1' : '?lan=1'}><span className="home-entry-mark online">联</span><strong>在线</strong><small>创建局域网房间、邀请棋友、实时聊天与观战</small><b>进入大厅 →</b></a>
+    </nav>
+    <a className="home-back-link" href="?">← 返回棋类选择</a>
+  </section></main>
 }
 
 function LocalApp() {
@@ -1193,7 +1212,7 @@ function StartScreen({ games, loading, storeError, starting, onRetry, onOpen, on
             <span>多级 AI</span>
             <span>研究与复盘</span>
           </div>
-          <a className="start-home-link" href="/">← 返回主页</a>
+          <a className="start-home-link" href="?type=xiangqi">← 返回模式选择</a>
         </section>
 
         <section className="start-config">

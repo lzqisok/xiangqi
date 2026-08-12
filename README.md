@@ -1,6 +1,6 @@
-# 棋境：中国象棋（Web + Pikafish）
+# 棋境：象棋与五子棋（Web）
 
-一个以本地 [Pikafish](https://github.com/official-pikafish/Pikafish) 为棋力核心的 Web 中国象棋应用，覆盖普通象棋、揭棋、残局训练、局面研究、变招管理与整局复盘。前端使用 React + Canvas，后端通过 WebSocket 和 UCI 协议管理本地 Pikafish 进程；实时对局保存在服务端本地 JSON 文件，研究与训练数据保存在浏览器本地。
+一个以本地 [Pikafish](https://github.com/official-pikafish/Pikafish) 为象棋棋力核心的 Web 棋类应用，覆盖普通象棋、揭棋、残局训练、局面研究、变招管理与整局复盘，并提供完全独立的本地五子棋模块。前端使用 React + Canvas，象棋后端通过 WebSocket 和 UCI 协议管理本地 Pikafish 进程；实时象棋对局保存在服务端本地 JSON 文件，研究与训练数据保存在浏览器本地。
 
 ![Node](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-9.15.9-F69220?logo=pnpm&logoColor=white)
@@ -10,6 +10,14 @@
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
 
 ## 功能概览
+
+### 五子棋
+
+- 从统一首页的五子棋入口进入；本地规则、AI 状态和 Rapfi 会话与象棋隔离，在线模式复用经过版本校验的房间、聊天及持久化基础设施。
+- 15×15 Canvas 棋盘，支持本地双人、人机及 AI 对战，可选择执黑/执白，并提供简单、中等、高等、大师四档 AI。
+- 支持自由规则及仅约束黑方的长连、四四、三三禁手规则。
+- 人机对战优先通过独立 `/gomoku-ws` 会话调用 Rapfi，服务不可用时自动切换至浏览器内置 AI；复盘分析继续在独立 Web Worker 中运行。
+- Rapfi 自由规则与有禁手模式分别使用 freestyle、Renju 规则，支持悔棋、重开及局后复盘与推荐着法。
 
 ### 局域网对战与观战
 
@@ -81,7 +89,7 @@
 
 ## 界面结构
 
-启动页提供六种入口：人机对弈、双人对弈、AI 对战、揭棋、残局模式和研究局面。进入棋局后，主工作台由棋盘、走棋记录和工具区组成；工具区按用途分为：
+统一首页提供“中国象棋”和“五子棋”两个入口，进入后分别选择本地或在线模式；本地象棋内再提供人机对弈、双人对弈、AI 对战、揭棋、残局模式和研究局面。进入象棋棋局后，主工作台由棋盘、走棋记录和工具区组成；工具区按用途分为：
 
 - 对局：状态、常用操作、提示、回放控制和更多工具。
 - 分析：实时评估、分析曲线、候选走法与引擎参数。
@@ -94,7 +102,8 @@
 浏览器 React 应用
   ├─ 本地规则、棋盘、记谱、研究与训练状态
   ├─ HTTP 对局读取、自动保存与 JSON 导入导出
-  └─ WebSocket 请求（引擎计算 + 单写者编辑租约）
+  ├─ /ws：象棋引擎计算 + 单写者编辑租约
+  └─ /gomoku-ws：五子棋 Rapfi 计算
              │
              ▼
 Node.js / Express / ws 服务
@@ -102,11 +111,11 @@ Node.js / Express / ws 服务
   ├─ data/games/index.json 轻量索引
   ├─ data/games/<id>.json 单局原子持久化与备份恢复
   ├─ 请求隔离、取消和过期结果丢弃
-  └─ 每会话、每变体独立管理 Pikafish 进程
-             │ UCI
-             ▼
-engine/pikafish 或 engine/pikafish-jieqi
-                 + engine/pikafish.nnue
+  ├─ 象棋会话按变体独立管理 Pikafish 进程（UCI）
+  └─ 五子棋会话独立管理 Rapfi 进程（Piskvork）
+             │
+             ├─ engine/pikafish / engine/pikafish-jieqi + pikafish.nnue
+             └─ engine/rapfi + config.toml + Rapfi 权重
 ```
 
 ### 前端
@@ -120,6 +129,8 @@ engine/pikafish 或 engine/pikafish-jieqi
 
 - Express + `ws` 提供 WebSocket 服务，通过 UCI 驱动 Pikafish。
 - 普通象棋与揭棋按协议中的 `variant` 选择对应引擎；每个 WebSocket 会话按需创建独立实例，实例内命令串行执行，避免跨标签页中断和搜索状态污染。
+- 五子棋使用独立 `/gomoku-ws` 协议及 Rapfi 进程，通过 Piskvork `BOARD` 命令传递完整局面；不会复用或中断象棋 `/ws` 下的 Pikafish 实例。
+- Rapfi 简单、中等、高等、大师档默认每步最多分别计算 300ms、1000ms、5000ms、10000ms，并分别使用最多 2、4、6、8 个线程；每个会话内存上限为 256MB。
 - 支持运行时更新 Threads、Hash 和搜索限制。
 - 有限搜索最长 60 秒；到达上限后发送 `stop` 并等待 5 秒获取当前最佳着。AI 对局前端另有 70 秒最终保护，断线或异常不会永久停在“思考中”。
 - `stop` 按会话和请求标识处理，分析任务不会无条件取消正在进行的对局请求。
@@ -146,6 +157,7 @@ xiangqi/
 │       ├── engine/          # 棋盘、规则、FEN、记谱、重复/限着提醒
 │       ├── export/          # 棋盘图片导出
 │       ├── fen/             # 最近局面
+│       ├── gomoku/          # 独立五子棋规则、AI Worker、状态与页面
 │       ├── hooks/           # useGame、useWebSocket、状态流辅助
 │       ├── share/           # 回放链接
 │       ├── studies/         # 研究存储、导入导出与自动保存
@@ -154,6 +166,7 @@ xiangqi/
 ├── server/
 │   └── src/
 │       ├── engine.ts        # Pikafish 进程、UCI、搜索队列与超时
+│       ├── gomoku/          # Rapfi 进程、Piskvork 协议与独立 WebSocket
 │       ├── index.ts         # WebSocket 会话和消息分发
 │       ├── protocol.ts      # 消息解析
 │       └── validation.ts    # 服务端局面校验
@@ -170,6 +183,7 @@ xiangqi/
 - 与当前系统/CPU 匹配的 Pikafish 可执行文件
 - 与该 Pikafish 版本兼容的 `pikafish.nnue`
 - 使用揭棋时还需要官方 `jieqi_old` 分支编译出的 `pikafish-jieqi`
+- 使用 Rapfi 五子棋 AI 时还需要对应平台的 Rapfi 可执行文件、配置和权重；缺失时页面会自动使用内置 AI
 
 ## 快速开始
 
@@ -179,7 +193,9 @@ xiangqi/
 pnpm install
 ```
 
-### 2. 准备 Pikafish
+### 2. 准备引擎
+
+#### Pikafish
 
 项目运行时要求：
 
@@ -212,6 +228,23 @@ chmod +x engine/pikafish-jieqi
 
 Linux 请通过 `make -C /tmp/pikafish-jieqi/src help` 选择对应 `ARCH`；Windows 则将产物命名为 `engine/pikafish-jieqi.exe`。不要直接给该旧分支搭配滚动更新的最新 NNUE，架构不一致时引擎会拒绝启动。
 
+#### Rapfi
+
+从 [Rapfi Releases](https://github.com/dhbloo/rapfi/releases) 下载官方引擎包，并从 [Rapfi Networks](https://github.com/dhbloo/rapfi-networks) 获取或核对配置与权重。将适合当前平台的可执行文件改名为 `rapfi`（Windows 为 `rapfi.exe`），和以下运行文件放在同一目录：
+
+```text
+engine/
+├── rapfi
+├── config.toml
+├── model210901.bin
+├── mix9svqfreestyle_bsmix.bin.lz4
+├── mix9svqstandard_bs15.bin.lz4
+├── mix9svqrenju_bs15_black.bin.lz4
+└── mix9svqrenju_bs15_white.bin.lz4
+```
+
+macOS Apple Silicon 对应官方包内的 `pbrain-rapfi-macos-apple-silicon`；macOS/Linux 还需执行 `chmod +x engine/rapfi`。这些平台相关的大体积文件已加入 `.gitignore`，不应提交到仓库。若引擎放在其他目录，可设置 `RAPFI_PATH=/absolute/path/to/rapfi`，配置与权重仍须和可执行文件放在一起。
+
 ### 3. 启动
 
 ```bash
@@ -220,7 +253,8 @@ pnpm dev
 
 - 前端：http://localhost:5173
 - 后端：http://localhost:3001
-- WebSocket：ws://localhost:3001/ws
+- 象棋 WebSocket：ws://localhost:3001/ws
+- 五子棋 Rapfi WebSocket：ws://localhost:3001/gomoku-ws
 
 ## 开发命令
 
@@ -315,6 +349,8 @@ pnpm --filter server start       # 运行已构建服务端
 
 揭棋单独检查 `engine/pikafish-jieqi`（Windows 为 `.exe`）；普通引擎可用不代表揭棋引擎已经准备完成。
 
+五子棋单独检查 `engine/rapfi`、`config.toml` 和 Rapfi 权重。Rapfi 缺失、启动失败或返回异常时，人机对战会自动切换至浏览器内置 AI，不会影响象棋功能。
+
 ### 大师第一步为什么需要十几秒
 
 大师档使用 D26，且项目当前没有开局库，第一步同样需要完整搜索。CPU 在搜索期间明显升高、返回着法后下降是正常现象。若超过服务端上限，会采用 `stop` 后返回的当前最佳着；若引擎失去响应，页面会结束思考状态并显示错误。
@@ -367,4 +403,4 @@ git diff --check
 
 ## 许可证
 
-本项目采用 GPL-3.0，详见 [`LICENSE`](./LICENSE)。Pikafish 同样遵循 GPL-3.0；复制或分发引擎及其衍生程序时，请遵守相应许可证要求。
+本项目采用 GPL-3.0，详见 [`LICENSE`](./LICENSE)。Pikafish 与 Rapfi 同样遵循 GPL-3.0；复制或分发引擎及其衍生程序时，请遵守相应许可证要求。Rapfi 官方权重仓库中的权重文件采用 CC0。

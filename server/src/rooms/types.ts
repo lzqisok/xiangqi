@@ -1,9 +1,9 @@
-export type RoomVariant = 'xiangqi' | 'jieqi'
+export type RoomVariant = 'xiangqi' | 'jieqi' | 'gomoku'
 export type RoomColor = 'red' | 'black'
 export type RoomPhase = 'waiting' | 'playing' | 'finished'
 export type RoomRole = 'owner' | RoomColor | 'spectator'
 export type RoomStatus = 'playing' | 'red-wins' | 'black-wins' | 'draw'
-export type RoomStatusReason = 'checkmate' | 'stalemate' | 'resignation' | 'agreement' | 'repetition' | 'natural-limit' | 'move-limit' | 'disconnect' | 'abandoned'
+export type RoomStatusReason = 'checkmate' | 'stalemate' | 'resignation' | 'agreement' | 'repetition' | 'natural-limit' | 'move-limit' | 'disconnect' | 'abandoned' | 'five' | 'forbidden' | 'full-board'
 
 export type RoomChatMessage = {
   id: string
@@ -35,6 +35,8 @@ export type RoomPiece = {
   darkType?: RoomPiece['type']
 }
 export type RoomBoard = (RoomPiece | null)[][]
+export type GomokuRoomCell = RoomColor | null
+export type GomokuRoomBoard = GomokuRoomCell[][]
 
 export type RoomMove = {
   uci: string
@@ -44,6 +46,8 @@ export type RoomMove = {
   captured?: RoomPiece['type']
   capturedColor?: RoomColor
   capturedHidden?: boolean
+  row?: number
+  col?: number
 }
 
 export type RoomSeat = {
@@ -58,6 +62,7 @@ export type StoredRoom = {
   id: string
   name: string
   variant: RoomVariant
+  gomokuRule?: 'freestyle' | 'renju'
   phase: RoomPhase
   revision: number
   ownerHash: string
@@ -77,6 +82,7 @@ export type RoomSummary = {
   id: string
   name: string
   variant: RoomVariant
+  gomokuRule?: 'freestyle' | 'renju'
   phase: RoomPhase
   red: string | null
   black: string | null
@@ -94,15 +100,16 @@ export type RoomSnapshot = {
   id: string
   name: string
   variant: RoomVariant
+  gomokuRule?: 'freestyle' | 'renju'
   phase: RoomPhase
   revision: number
   role: RoomRole
   isOwner: boolean
   inviteAvailable: boolean
   seats: Partial<Record<RoomColor, { nickname: string; ready: boolean; online: boolean; hintsRemaining: number }>>
-  board: RoomBoard
+  board: RoomBoard | GomokuRoomBoard
   turn: RoomColor
-  moves: Array<{ uci: string; color: RoomColor; revealed?: RoomPiece['type']; captured?: RoomPiece['type'] | null; capturedHidden?: boolean }>
+  moves: Array<{ uci: string; color: RoomColor; row?: number; col?: number; notation?: string; revealed?: RoomPiece['type']; captured?: RoomPiece['type'] | null; capturedHidden?: boolean }>
   captured: PublicCapturedPiece[]
   status: RoomStatus
   statusReason?: RoomStatusReason

@@ -7,20 +7,31 @@ import { StoredRoom } from './types.js'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const HASH = /^[0-9a-f]{64}$/
 const UCI = /^[a-i][0-9][a-i][0-9]$/
+const GOMOKU_MOVE = /^[a-o]{2}$/
 const PIECES = new Set(['k', 'a', 'b', 'n', 'r', 'c', 'p'])
 const STATUSES = new Set(['playing', 'red-wins', 'black-wins', 'draw'])
-const REASONS = new Set(['checkmate', 'stalemate', 'resignation', 'agreement', 'repetition', 'natural-limit', 'move-limit', 'disconnect', 'abandoned'])
+const REASONS = new Set(['checkmate', 'stalemate', 'resignation', 'agreement', 'repetition', 'natural-limit', 'move-limit', 'disconnect', 'abandoned', 'five', 'forbidden', 'full-board'])
 function validLayout(layout: string) {
   if (!/^[rabncp]{30}$/.test(layout)) return false
   return [layout.slice(0, 15), layout.slice(15)].every(side => [...side].sort().join('') === [...'rraabbnnccppppp'].sort().join(''))
 }
+function validGomokuMoveSequence(moves: StoredRoom['moves']) {
+  const occupied = new Set<string>()
+  return moves.length <= 225 && moves.every((move, index) => {
+    const point = `${move.row},${move.col}`
+    if (move.color !== (index % 2 === 0 ? 'red' : 'black') || occupied.has(point)) return false
+    occupied.add(point)
+    return true
+  })
+}
 function validRoom(value: unknown): value is StoredRoom {
   if (!value || typeof value !== 'object') return false
   const room = value as StoredRoom
-  if (room.schemaVersion !== 1 || !UUID.test(room.id) || typeof room.name !== 'string' || room.name.length > 60 || !['xiangqi', 'jieqi'].includes(room.variant) || !['waiting', 'playing', 'finished'].includes(room.phase)) return false
+  if (room.schemaVersion !== 1 || !UUID.test(room.id) || typeof room.name !== 'string' || room.name.length > 60 || !['xiangqi', 'jieqi', 'gomoku'].includes(room.variant) || !['waiting', 'playing', 'finished'].includes(room.phase)) return false
+  if (room.variant === 'gomoku' ? room.gomokuRule !== 'freestyle' && room.gomokuRule !== 'renju' : room.gomokuRule !== undefined) return false
   if (!Number.isInteger(room.revision) || room.revision < 0 || !HASH.test(room.ownerHash) || room.inviteHash !== undefined && !HASH.test(room.inviteHash)) return false
   if (!Array.isArray(room.moves) || room.moves.length > 2000 || !room.moves.every(move => (
-    move && UCI.test(move.uci) && (move.color === 'red' || move.color === 'black') &&
+    move && (room.variant === 'gomoku' ? GOMOKU_MOVE.test(move.uci) && Number.isInteger(move.row) && Number.isInteger(move.col) && move.row! >= 0 && move.row! < 15 && move.col! >= 0 && move.col! < 15 && move.uci === `${String.fromCharCode(97 + move.col!)}${String.fromCharCode(97 + move.row!)}` : UCI.test(move.uci) && move.row === undefined && move.col === undefined) && (move.color === 'red' || move.color === 'black') &&
     (move.notation === undefined || typeof move.notation === 'string' && move.notation.length <= 20) &&
     (move.revealed === undefined || PIECES.has(move.revealed)) &&
     (move.captured === undefined || PIECES.has(move.captured)) &&
@@ -29,6 +40,8 @@ function validRoom(value: unknown): value is StoredRoom {
   ))) return false
   if (room.variant === 'jieqi' && room.phase !== 'waiting' && !validLayout(room.initialLayout || '')) return false
   if (room.variant === 'xiangqi' && room.initialLayout !== undefined) return false
+  if (room.variant === 'gomoku' && room.initialLayout !== undefined) return false
+  if (room.variant === 'gomoku' && !validGomokuMoveSequence(room.moves)) return false
   for (const seat of Object.values(room.seats || {})) {
     if (!seat || typeof seat.nickname !== 'string' || seat.nickname.length > 20 || !HASH.test(seat.credentialHash) || typeof seat.ready !== 'boolean' || !Number.isInteger(seat.hintsUsed) || seat.hintsUsed < 0 || seat.hintsUsed > 3) return false
   }

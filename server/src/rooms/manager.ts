@@ -3,6 +3,7 @@ import { WebSocket } from 'ws'
 import { containsSensitiveWord, normalizeRoomSensitiveWords } from './chatPolicy.js'
 import { MAX_ROOM_CHAT_CONTENT_LENGTH } from './chatRepository.js'
 import { createRoomInitialState, executeRoomMoveFromState, projectBoard, rebuildRoomBoard } from './core.js'
+import { executeGomokuMove, rebuildGomokuRoom, RebuiltGomokuRoom } from './gomokuCore.js'
 import { RoomRepository } from './repository.js'
 import { RoomColor, RoomRole, RoomSnapshot, RoomSummary, StoredRoom } from './types.js'
 
@@ -17,7 +18,7 @@ type Runtime = {
   pendingSwap?: Proposal
   disconnect?: { color: RoomColor; deadline: number; timer: NodeJS.Timeout }
   bothOfflineSince?: number
-  cached?: { revision: number; layout?: string; moveCount: number; lastMove?: string; rebuilt: ReturnType<typeof rebuildRoomBoard> }
+  cached?: { revision: number; layout?: string; moveCount: number; lastMove?: string; rebuilt: ReturnType<typeof rebuildRoomBoard> | RebuiltGomokuRoom }
   commands: Map<string, { revision: number }>
   chatCommands: Map<string, { messageId?: string }>
   queue: Promise<void>
@@ -65,26 +66,26 @@ export class RoomManager {
     private readonly options: RoomManagerOptions = {},
   ) {}
 
-  async createRoom(name: string, variant: 'xiangqi' | 'jieqi') {
+  async createRoom(name: string, variant: 'xiangqi' | 'jieqi' | 'gomoku', gomokuRule: 'freestyle' | 'renju' = 'freestyle') {
     if (this.repository.list().filter(room => room.phase !== 'finished').length >= 100) {
       await this.cleanup()
       if (this.repository.list().filter(room => room.phase !== 'finished').length >= 100) throw new Error('活跃房间数量已达到上限')
     }
     const ownerToken = randomUUID(), inviteToken = randomUUID(), now = Date.now()
     const room: StoredRoom = {
-      schemaVersion: 1, id: randomUUID(), name: name.trim().slice(0, 60) || (variant === 'jieqi' ? '揭棋房间' : '象棋房间'),
-      variant, phase: 'waiting', revision: 0, ownerHash: hash(ownerToken), inviteHash: hash(inviteToken), seats: {}, moves: [], status: 'playing', createdAt: now, updatedAt: now,
+      schemaVersion: 1, id: randomUUID(), name: name.trim().slice(0, 60) || (variant === 'jieqi' ? '揭棋房间' : variant === 'gomoku' ? '五子棋房间' : '象棋房间'),
+      variant, gomokuRule: variant === 'gomoku' ? gomokuRule : undefined, phase: 'waiting', revision: 0, ownerHash: hash(ownerToken), inviteHash: hash(inviteToken), seats: {}, moves: [], status: 'playing', createdAt: now, updatedAt: now,
     }
     const saved = await this.repository.create(room)
     return { room: saved, ownerToken, inviteToken }
   }
 
-  lobby(): RoomSummary[] {
-    return this.repository.list().filter(room => room.phase !== 'finished').sort((a, b) => b.createdAt - a.createdAt).map(room => this.summary(room))
+  lobby(game?: 'xiangqi' | 'gomoku'): RoomSummary[] {
+    return this.repository.list().filter(room => room.phase !== 'finished' && (!game || (game === 'gomoku') === (room.variant === 'gomoku'))).sort((a, b) => b.createdAt - a.createdAt).map(room => this.summary(room))
   }
 
-  history(limit = 20): RoomSummary[] {
-    return this.repository.list().filter(room => room.phase === 'finished').sort((a, b) => b.updatedAt - a.updatedAt).slice(0, Math.max(1, Math.min(limit, 100))).map(room => this.summary(room))
+  history(limit = 20, game?: 'xiangqi' | 'gomoku'): RoomSummary[] {
+    return this.repository.list().filter(room => room.phase === 'finished' && (!game || (game === 'gomoku') === (room.variant === 'gomoku'))).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, Math.max(1, Math.min(limit, 100))).map(room => this.summary(room))
   }
 
   publicRoom(id: string) {
@@ -145,7 +146,7 @@ export class RoomManager {
       case 'room-ready': await this.ready(ws, room, Boolean(message.ready)); break
       case 'room-swap-request': await this.propose(room, connection, 'swap'); break
       case 'room-swap-response': await this.respondSwap(room, connection, Boolean(message.accept)); break
-      case 'room-move': await this.move(room, connection, String(message.uci || '')); break
+      case 'room-move': await this.move(room, connection, String(message.uci || ''), Number(message.row), Number(message.col)); break
       case 'room-hint': await this.hint(ws, room, connection); break
       case 'room-undo-request': await this.propose(room, connection, 'undo'); break
       case 'room-undo-response': await this.respondUndo(room, connection, Boolean(message.accept)); break
@@ -390,8 +391,8 @@ export class RoomManager {
     if (room.phase !== 'waiting') throw new Error('对局已经开始')
     room.seats[color]!.ready = ready
     if (room.seats.red?.ready && room.seats.black?.ready) {
-      const initial = createRoomInitialState(room.variant)
-      room.initialLayout = initial.layout
+      if (room.variant === 'gomoku') room.initialLayout = undefined
+      else room.initialLayout = createRoomInitialState(room.variant).layout
       room.phase = 'playing'; room.startedAt = Date.now(); room.moves = []; room.status = 'playing'
     }
     this.touch(room); await this.repository.save(room); this.updateDisconnect(room); this.broadcast(room)
@@ -424,20 +425,22 @@ export class RoomManager {
     this.broadcast(room)
   }
 
-  private async move(room: StoredRoom, connection: Connection, uci: string) {
+  private async move(room: StoredRoom, connection: Connection, uci: string, row: number, col: number) {
     const color = this.color(connection)
     if (room.phase !== 'playing' || room.status !== 'playing') throw new Error('对局未在进行')
-    const result = executeRoomMoveFromState(room.variant, this.rebuilt(room), room.moves, uci, color)
+    const result = room.variant === 'gomoku'
+      ? executeGomokuMove(this.rebuilt(room) as RebuiltGomokuRoom, room.moves, row, col, color, room.gomokuRule || 'freestyle')
+      : executeRoomMoveFromState(room.variant, this.rebuilt(room) as ReturnType<typeof rebuildRoomBoard>, room.moves, uci, color)
     room.moves.push(result.move); room.status = result.detail.status; room.statusReason = result.detail.reason
     this.clearProposal(room.id, 'draw'); this.clearProposal(room.id, 'undo')
     if (room.status !== 'playing') { room.phase = 'finished'; room.finishedAt = Date.now(); this.clearDisconnect(room.id) }
     this.touch(room)
-    this.getRuntime(room.id).cached = { revision: room.revision, layout: room.initialLayout, moveCount: room.moves.length, lastMove: room.moves.at(-1)?.uci, rebuilt: { board: result.board, turn: result.turn } }
     await this.repository.save(room); this.broadcast(room)
   }
 
   private async hint(ws: WebSocket, room: StoredRoom, connection: Connection) {
     const color = this.color(connection), seat = room.seats[color]!
+    if (room.variant === 'gomoku') throw new Error('五子棋在线对局暂不提供提示')
     if (room.phase !== 'playing' || room.status !== 'playing' || seat.hintsUsed >= 3) throw new Error('提示次数已用完或对局未进行')
     if (this.rebuilt(room).turn !== color) throw new Error('只能在自己的回合请求提示')
     const move = await this.hintProvider(room, color)
@@ -572,10 +575,10 @@ export class RoomManager {
     const online = (color: RoomColor) => [...runtime.sockets].some(socket => this.connections.get(socket)?.role === color)
     const roleColor = connection.role === 'red' || connection.role === 'black' ? connection.role : null
     return {
-      id: room.id, name: room.name, variant: room.variant, phase: room.phase, revision: room.revision, role: connection.role, isOwner: connection.isOwner, inviteAvailable: Boolean(room.inviteHash),
+      id: room.id, name: room.name, variant: room.variant, gomokuRule: room.gomokuRule, phase: room.phase, revision: room.revision, role: connection.role, isOwner: connection.isOwner, inviteAvailable: Boolean(room.inviteHash),
       seats: Object.fromEntries((['red', 'black'] as const).flatMap(color => room.seats[color] ? [[color, { nickname: room.seats[color]!.nickname, ready: room.seats[color]!.ready, online: online(color), hintsRemaining: roleColor === color ? 3 - room.seats[color]!.hintsUsed : 0 }]] : [])),
-      board: projectBoard(rebuilt.board), turn: rebuilt.turn,
-      moves: room.moves.map(move => ({ uci: move.uci, color: move.color, notation: move.notation, revealed: move.revealed, captured: !move.capturedHidden || roleColor === move.color ? move.captured : null, capturedHidden: move.capturedHidden })),
+      board: room.variant === 'gomoku' ? rebuilt.board : projectBoard(rebuilt.board as ReturnType<typeof rebuildRoomBoard>['board']), turn: rebuilt.turn,
+      moves: room.moves.map(move => ({ uci: move.uci, color: move.color, row: move.row, col: move.col, notation: move.notation, revealed: move.revealed, captured: !move.capturedHidden || roleColor === move.color ? move.captured : null, capturedHidden: move.capturedHidden })),
       captured: room.moves.flatMap(move => move.capturedColor ? [{ color: move.capturedColor, type: !move.capturedHidden || roleColor === move.color ? move.captured || null : null, hidden: Boolean(move.capturedHidden), capturedBy: move.color }] : []),
       status: room.status, statusReason: room.statusReason, spectatorCount: [...runtime.sockets].filter(socket => this.connections.get(socket)?.role === 'spectator').length,
       pendingDrawBy: runtime.pendingDraw?.by, pendingDrawDeadline: runtime.pendingDraw?.deadline,
@@ -588,7 +591,7 @@ export class RoomManager {
 
   private broadcast(room: StoredRoom) { for (const ws of this.getRuntime(room.id).sockets) this.sendSnapshot(ws, room) }
   private sendSnapshot(ws: WebSocket, room: StoredRoom, warning?: string) { send(ws, { type: 'room-snapshot', room: this.snapshot(room, ws), warning }) }
-  private summary(room: StoredRoom): RoomSummary { const runtime = this.runtime.get(room.id); return { id: room.id, name: room.name, variant: room.variant, phase: room.phase, red: room.seats.red?.nickname || null, black: room.seats.black?.nickname || null, spectatorCount: runtime ? [...runtime.sockets].filter(ws => this.connections.get(ws)?.role === 'spectator').length : 0, moveCount: room.moves.length, status: room.status, statusReason: room.statusReason, createdAt: room.createdAt, updatedAt: room.updatedAt } }
+  private summary(room: StoredRoom): RoomSummary { const runtime = this.runtime.get(room.id); return { id: room.id, name: room.name, variant: room.variant, gomokuRule: room.gomokuRule, phase: room.phase, red: room.seats.red?.nickname || null, black: room.seats.black?.nickname || null, spectatorCount: runtime ? [...runtime.sockets].filter(ws => this.connections.get(ws)?.role === 'spectator').length : 0, moveCount: room.moves.length, status: room.status, statusReason: room.statusReason, createdAt: room.createdAt, updatedAt: room.updatedAt } }
   private requireRoom(id: string) { const room = this.repository.get(id); if (!room) throw new Error('房间不存在'); return room }
   private color(connection: Connection): RoomColor { if (connection.role !== 'red' && connection.role !== 'black') throw new Error('当前不是棋手'); return connection.role }
   private touch(room: StoredRoom) { room.revision++; room.updatedAt = Date.now(); this.getRuntime(room.id).cached = undefined }
@@ -599,7 +602,7 @@ export class RoomManager {
     const runtime = this.getRuntime(room.id)
     const lastMove = room.moves.at(-1)?.uci
     if (!runtime.cached || runtime.cached.revision !== room.revision || runtime.cached.layout !== room.initialLayout || runtime.cached.moveCount !== room.moves.length || runtime.cached.lastMove !== lastMove) {
-      runtime.cached = { revision: room.revision, layout: room.initialLayout, moveCount: room.moves.length, lastMove, rebuilt: rebuildRoomBoard(room.variant, room.initialLayout, room.moves) }
+      runtime.cached = { revision: room.revision, layout: room.initialLayout, moveCount: room.moves.length, lastMove, rebuilt: room.variant === 'gomoku' ? rebuildGomokuRoom(room.moves) : rebuildRoomBoard(room.variant, room.initialLayout, room.moves) }
     }
     return runtime.cached.rebuilt
   }

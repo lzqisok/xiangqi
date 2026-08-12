@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
+import { RoomChatRepository } from './chatRepository.js'
 import { StoredRoom } from './types.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -42,8 +43,9 @@ function validRoom(value: unknown): value is StoredRoom {
 export class RoomRepository {
   private rooms = new Map<string, StoredRoom>()
   private queues = new Map<string, Promise<void>>()
+  readonly chat: RoomChatRepository
 
-  constructor(private readonly directory: string) {}
+  constructor(private readonly directory: string) { this.chat = new RoomChatRepository(directory) }
 
   async init() {
     await mkdir(this.directory, { recursive: true })
@@ -53,6 +55,7 @@ export class RoomRepository {
       const room = await this.read(path.join(this.directory, file)) || await this.read(path.join(this.directory, `${match[1]}.json.bak`))
       if (room) this.rooms.set(room.id, room)
     }
+    await this.chat.init(new Set(this.rooms.keys()))
   }
 
   list() { return [...this.rooms.values()].map(room => structuredClone(room)) }
@@ -77,10 +80,11 @@ export class RoomRepository {
       const target = path.join(this.directory, `${id}.json`)
       await Promise.all([unlink(target).catch(() => undefined), unlink(`${target}.bak`).catch(() => undefined)])
       this.rooms.delete(id)
+      await this.chat.delete(id)
     })
   }
 
-  async flush() { await Promise.all([...this.queues.values()]) }
+  async flush() { await Promise.all([...this.queues.values()]); await this.chat.flush() }
 
   private async mutate(id: string, action: () => Promise<void>) {
     const previous = this.queues.get(id) || Promise.resolve()

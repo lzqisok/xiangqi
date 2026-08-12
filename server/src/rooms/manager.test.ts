@@ -19,6 +19,113 @@ function snapshot(messages: unknown[]): RoomSnapshot {
 function message(messages: unknown[], type: string) {
   return [...messages].reverse().find(value => (value as { type?: string }).type === type) as Record<string, unknown> | undefined
 }
+function chatMessages(messages: unknown[]) {
+  return messages.filter(value => (value as { type?: string }).type === 'room-chat-message').map(value => (value as { message: Record<string, unknown> }).message)
+}
+
+test('room chat supports every role without changing the gameplay revision', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-chat-manager-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory); await repository.init()
+  const manager = new RoomManager(repository, async () => null)
+  const created = await manager.createRoom('聊天测试', 'xiangqi')
+  const ownerMessages: unknown[] = [], redMessages: unknown[] = [], blackMessages: unknown[] = [], spectatorMessages: unknown[] = []
+  const owner = socket(ownerMessages), red = socket(redMessages), black = socket(blackMessages), spectator = socket(spectatorMessages)
+  await manager.handle(owner, { type: 'room-subscribe', roomId: created.room.id, token: created.ownerToken, nickname: '房主' })
+  await manager.handle(red, { type: 'room-subscribe', roomId: created.room.id, nickname: '红方' })
+  await manager.handle(red, { type: 'room-invite-seat', roomId: created.room.id, inviteToken: created.inviteToken, side: 'red', nickname: '红\n方', expectedRevision: snapshot(redMessages).revision, commandId: 'chat-seat-red' })
+  await manager.handle(black, { type: 'room-subscribe', roomId: created.room.id, nickname: '黑方' })
+  await manager.handle(black, { type: 'room-seat-request', roomId: created.room.id, side: 'black', nickname: '黑方', expectedRevision: snapshot(blackMessages).revision, commandId: 'chat-apply-black' })
+  const application = snapshot(ownerMessages).applications?.[0]
+  assert.ok(application)
+  await manager.handle(owner, { type: 'room-seat-approve', roomId: created.room.id, applicationId: application.id, accept: true, expectedRevision: snapshot(ownerMessages).revision, commandId: 'chat-approve-black' })
+  await manager.handle(spectator, { type: 'room-subscribe', roomId: created.room.id, nickname: '观众' })
+  const gameplayRevision = snapshot(redMessages).revision
+
+  await manager.handle(owner, { type: 'room-chat-send', roomId: created.room.id, commandId: 'chat-owner', content: '房主消息', role: 'red', nickname: '新\n房主昵称' })
+  await manager.handle(red, { type: 'room-chat-send', roomId: created.room.id, commandId: 'chat-red', content: '红方消息', nickname: '伪造棋手昵称' })
+  await manager.handle(black, { type: 'room-chat-send', roomId: created.room.id, commandId: 'chat-black', content: '黑方消息' })
+  await manager.handle(spectator, { type: 'room-chat-send', roomId: created.room.id, commandId: 'chat-spectator', content: '观众消息', nickname: '新\n观众昵称' })
+
+  assert.equal(snapshot(redMessages).revision, gameplayRevision)
+  assert.equal(chatMessages(redMessages).length, 4)
+  assert.deepEqual(chatMessages(redMessages).map(item => item.role), ['owner', 'red', 'black', 'spectator'])
+  assert.equal(chatMessages(redMessages)[0].nickname, '新房主昵称')
+  assert.equal(chatMessages(redMessages)[0].isOwner, true)
+  assert.equal(chatMessages(redMessages)[1].nickname, '红方')
+  assert.equal(chatMessages(redMessages)[3].nickname, '新观众昵称')
+  assert.deepEqual(chatMessages(spectatorMessages).map(item => item.sequence), [1, 2, 3, 4])
+  await assert.rejects(() => manager.handle(spectator, { type: 'room-chat-send', roomId: created.room.id, commandId: 'chat-empty', content: '   ' }), /不能为空/)
+  await assert.rejects(() => manager.handle(spectator, { type: 'room-chat-send', roomId: created.room.id, commandId: 'chat-long', content: '字'.repeat(201) }), /不能超过/)
+
+  const isolated = await manager.createRoom('隔离房间', 'xiangqi')
+  const isolatedMessages: unknown[] = [], isolatedSocket = socket(isolatedMessages)
+  await manager.handle(isolatedSocket, { type: 'room-subscribe', roomId: isolated.room.id, nickname: '另一房间观众' })
+  assert.equal(chatMessages(isolatedMessages).length, 0)
+
+  await manager.handle(red, { type: 'room-chat-send', roomId: created.room.id, commandId: 'chat-red', content: '不应重复' })
+  assert.equal(chatMessages(spectatorMessages).length, 4)
+  await manager.handle(red, { type: 'room-ready', roomId: created.room.id, ready: true, expectedRevision: gameplayRevision, commandId: 'chat-ready-after-message' })
+
+  const targetId = String(chatMessages(ownerMessages)[3].id)
+  await assert.rejects(() => manager.handle(spectator, { type: 'room-chat-delete', roomId: created.room.id, commandId: 'chat-delete-denied', messageId: targetId }), /只有房主/)
+  await manager.handle(owner, { type: 'room-chat-delete', roomId: created.room.id, commandId: 'chat-delete-owner', messageId: targetId })
+  assert.equal(message(redMessages, 'room-chat-delete')?.messageId, targetId)
+  assert.equal(repository.chat.list(created.room.id).length, 3)
+
+  for (let index = 0; index < 4; index++) await manager.handle(black, { type: 'room-chat-send', roomId: created.room.id, commandId: `chat-rate-${index}`, content: `限流 ${index}` })
+  await assert.rejects(() => manager.handle(black, { type: 'room-chat-send', roomId: created.room.id, commandId: 'chat-rate-reject', content: '过量' }), /发言过于频繁/)
+
+  const reconnectMessages: unknown[] = [], reconnect = socket(reconnectMessages)
+  await manager.handle(reconnect, { type: 'room-subscribe', roomId: created.room.id, nickname: '重连观众' })
+  const history = message(reconnectMessages, 'room-chat-history')?.messages as unknown[]
+  assert.equal(history.length, 7)
+  manager.disconnect(isolatedSocket)
+  await manager.flush(); manager.dispose()
+})
+
+test('room owner can mute members, mute everyone, and filter sensitive messages', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-chat-moderation-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory); await repository.init()
+  const manager = new RoomManager(repository, async () => null)
+  const created = await manager.createRoom('治理测试', 'xiangqi')
+  const ownerMessages: unknown[] = [], spectatorMessages: unknown[] = []
+  const owner = socket(ownerMessages), spectator = socket(spectatorMessages)
+  await manager.handle(owner, { type: 'room-subscribe', roomId: created.room.id, token: created.ownerToken, nickname: '房主', clientId: '00000000-0000-4000-8000-000000000001' })
+  await manager.handle(spectator, { type: 'room-subscribe', roomId: created.room.id, nickname: '观众', clientId: '00000000-0000-4000-8000-000000000002' })
+  const initialRevision = created.room.revision
+  await manager.handle(spectator, { type: 'room-chat-send', roomId: created.room.id, commandId: 'moderation-intro', content: '大家好', nickname: '观众' })
+  const authorId = String(chatMessages(ownerMessages)[0].authorId)
+
+  await assert.rejects(() => manager.handle(spectator, { type: 'room-chat-mute', roomId: created.room.id, commandId: 'moderation-denied', authorId, muted: true }), /只有房主/)
+  await manager.handle(owner, { type: 'room-chat-mute', roomId: created.room.id, commandId: 'moderation-mute', authorId, muted: true })
+  assert.equal((message(spectatorMessages, 'room-chat-settings')?.settings as { muted: boolean }).muted, true)
+  assert.deepEqual((message(ownerMessages, 'room-chat-settings')?.settings as { mutedAuthorIds: string[] }).mutedAuthorIds, [authorId])
+  const reconnectMessages: unknown[] = [], reconnect = socket(reconnectMessages)
+  await manager.handle(reconnect, { type: 'room-subscribe', roomId: created.room.id, nickname: '观众', clientId: '00000000-0000-4000-8000-000000000002' })
+  assert.equal((message(reconnectMessages, 'room-chat-settings')?.settings as { muted: boolean }).muted, true)
+  await assert.rejects(() => manager.handle(spectator, { type: 'room-chat-send', roomId: created.room.id, commandId: 'moderation-muted-send', content: '发不出去' }), /已被房主禁言/)
+
+  const introMessageId = String(chatMessages(ownerMessages)[0].id)
+  await manager.handle(owner, { type: 'room-chat-delete', roomId: created.room.id, commandId: 'moderation-delete-muted', messageId: introMessageId })
+  await manager.handle(owner, { type: 'room-chat-mute', roomId: created.room.id, commandId: 'moderation-unmute', authorId, muted: false })
+  await manager.handle(owner, { type: 'room-chat-settings-update', roomId: created.room.id, commandId: 'moderation-everyone', everyoneMuted: true, roomSensitiveWords: ['坏词'] })
+  assert.equal((message(spectatorMessages, 'room-chat-settings')?.settings as { everyoneMuted: boolean }).everyoneMuted, true)
+  await assert.rejects(() => manager.handle(spectator, { type: 'room-chat-send', roomId: created.room.id, commandId: 'moderation-all-muted', content: '仍然发不出去' }), /全面禁言/)
+  await manager.handle(owner, { type: 'room-chat-send', roomId: created.room.id, commandId: 'moderation-owner-send', content: '房主仍可发言' })
+
+  await manager.handle(owner, { type: 'room-chat-settings-update', roomId: created.room.id, commandId: 'moderation-filter', everyoneMuted: false, roomSensitiveWords: ['坏词'] })
+  const beforeFiltered = chatMessages(ownerMessages).length
+  await manager.handle(spectator, { type: 'room-chat-send', roomId: created.room.id, commandId: 'moderation-room-word', content: '这是坏_词' })
+  assert.equal(message(spectatorMessages, 'room-chat-ack')?.filtered, true)
+  await manager.handle(spectator, { type: 'room-chat-send', roomId: created.room.id, commandId: 'moderation-system-word', content: '赌 博 平台' })
+  assert.equal(chatMessages(ownerMessages).length, beforeFiltered)
+  assert.equal(repository.chat.list(created.room.id).length, 1)
+  assert.equal(repository.get(created.room.id)?.revision, initialRevision)
+
+  await manager.flush(); manager.dispose()
+})
 
 test('room manager authorizes two seats and redacts hidden captures per recipient', async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-rooms-'))
@@ -145,6 +252,13 @@ test('owner can approve a spectator seat request and players can swap before sta
   await manager.handle(owner, { type: 'room-subscribe', roomId: created.room.id, token: created.ownerToken, nickname: '房主' })
   await assert.rejects(() => manager.handle(owner, { type: 'room-claim-seat', roomId: created.room.id, side: 'red', expectedRevision: snapshot(ownerMessages).revision }), /操作标识无效/)
   await manager.handle(owner, { type: 'room-claim-seat', roomId: created.room.id, side: 'red', nickname: '房主', expectedRevision: snapshot(ownerMessages).revision, commandId: 'owner-seat' })
+  await manager.handle(owner, { type: 'room-ready', roomId: created.room.id, ready: true, expectedRevision: snapshot(ownerMessages).revision, commandId: 'owner-ready-before-switch' })
+  await manager.handle(owner, { type: 'room-switch-seat', roomId: created.room.id, side: 'black', expectedRevision: snapshot(ownerMessages).revision, commandId: 'owner-switch-black' })
+  assert.equal(snapshot(ownerMessages).role, 'black')
+  assert.equal(snapshot(ownerMessages).seats.red, undefined)
+  assert.equal(snapshot(ownerMessages).seats.black?.nickname, '房主')
+  assert.equal(snapshot(ownerMessages).seats.black?.ready, false)
+  await manager.handle(owner, { type: 'room-switch-seat', roomId: created.room.id, side: 'red', expectedRevision: snapshot(ownerMessages).revision, commandId: 'owner-switch-red' })
   await assert.rejects(() => manager.handle(owner, { type: 'room-claim-seat', roomId: created.room.id, side: 'black', nickname: '房主', expectedRevision: snapshot(ownerMessages).revision, commandId: 'owner-seat-again' }), /已经占用一个席位/)
   await manager.handle(applicant, { type: 'room-subscribe', roomId: created.room.id, nickname: '申请者' })
   await manager.handle(applicant, { type: 'room-seat-request', roomId: created.room.id, side: 'black', nickname: '申请者', expectedRevision: snapshot(applicantMessages).revision, commandId: 'apply' })
@@ -152,6 +266,7 @@ test('owner can approve a spectator seat request and players can swap before sta
   assert.ok(application)
   await manager.handle(owner, { type: 'room-seat-approve', roomId: created.room.id, applicationId: application.id, accept: true, expectedRevision: snapshot(ownerMessages).revision, commandId: 'approve' })
   assert.equal(snapshot(applicantMessages).role, 'black')
+  await assert.rejects(() => manager.handle(owner, { type: 'room-switch-seat', roomId: created.room.id, side: 'black', expectedRevision: snapshot(ownerMessages).revision, commandId: 'switch-occupied' }), /已有棋手/)
 
   await manager.handle(owner, { type: 'room-swap-request', roomId: created.room.id, expectedRevision: snapshot(ownerMessages).revision, commandId: 'swap-request' })
   await manager.handle(applicant, { type: 'room-swap-response', roomId: created.room.id, accept: true, expectedRevision: snapshot(applicantMessages).revision, commandId: 'swap-accept' })
@@ -242,8 +357,12 @@ test('seat credentials can move devices and owners can manage waiting rooms', as
   await manager.handle(restored, { type: 'room-subscribe', roomId: created.room.id, token: guestToken })
   assert.equal(snapshot(restoredMessages).role, 'black')
   assert.equal(snapshot(guestMessages).role, 'spectator')
+  await manager.handle(owner, { type: 'room-swap-request', roomId: created.room.id, expectedRevision: snapshot(ownerMessages).revision, commandId: 'manage-swap-request' })
+  await manager.handle(restored, { type: 'room-swap-response', roomId: created.room.id, accept: true, expectedRevision: snapshot(restoredMessages).revision, commandId: 'manage-swap-accept' })
+  assert.equal(snapshot(restoredMessages).role, 'red')
+  assert.equal(snapshot(guestMessages).role, 'spectator')
   await manager.handle(restored, { type: 'room-leave-seat', roomId: created.room.id, expectedRevision: snapshot(restoredMessages).revision, commandId: 'manage-leave' })
-  assert.equal(snapshot(ownerMessages).seats.black, undefined)
+  assert.equal(snapshot(ownerMessages).seats.red, undefined)
 
   await manager.handle(owner, { type: 'room-renew-invite', roomId: created.room.id, expectedRevision: snapshot(ownerMessages).revision, commandId: 'manage-invite' })
   assert.ok(message(ownerMessages, 'room-invite-token')?.inviteToken)

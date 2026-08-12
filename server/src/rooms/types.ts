@@ -5,6 +5,29 @@ export type RoomRole = 'owner' | RoomColor | 'spectator'
 export type RoomStatus = 'playing' | 'red-wins' | 'black-wins' | 'draw'
 export type RoomStatusReason = 'checkmate' | 'stalemate' | 'resignation' | 'agreement' | 'repetition' | 'natural-limit' | 'move-limit' | 'disconnect' | 'abandoned'
 
+export type RoomChatMessage = {
+  id: string
+  sequence: number
+  authorId: string
+  nickname: string
+  role: RoomRole
+  isOwner: boolean
+  content: string
+  createdAt: number
+}
+
+export type StoredRoomChat = {
+  schemaVersion: 1
+  roomId: string
+  sequence: number
+  messages: RoomChatMessage[]
+  everyoneMuted: boolean
+  mutedAuthorIds: string[]
+  roomSensitiveWords: string[]
+}
+
+export type RoomChatSettings = { everyoneMuted: boolean; muted: boolean; mutedAuthorIds?: string[]; roomSensitiveWords?: string[] }
+
 export type RoomPiece = {
   type: 'k' | 'a' | 'b' | 'n' | 'r' | 'c' | 'p'
   color: RoomColor

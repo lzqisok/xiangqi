@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Board from '../components/Board'
 import { getLegalMoves, isInCheck } from '../engine/rules'
 import { uciToMove } from '../engine/notation'
 import { Move, PieceColor, Position } from '../types'
 import { createLanRoom, listLanRoomHistory, listLanRooms } from './api'
 import { copyLanText } from './browser'
-import { LanRoomSummary } from './types'
+import { getLanChatContentLength, getLanChatLineCount, getLanChatRole, parseLanRoomSensitiveWords } from './chat'
+import { LanChatMessage, LanRoomSummary } from './types'
 import { getLanRecentRooms, getLanToken, saveLanToken, useLanRoom } from './useLanRoom'
 
 const NICKNAME_KEY = 'xiangqi-lan-nickname'
@@ -60,7 +61,7 @@ function LanLobby({ nickname, onNickname }: { nickname: string; onNickname: (val
 }
 
 function LanRoom({ roomId, nickname, onNickname }: { roomId: string; nickname: string; onNickname: (value: string) => void }) {
-  const { room, connected, error, privateHint, setPrivateHint, pending, recoveryToken, send } = useLanRoom(roomId, nickname)
+  const { room, connected, error, privateHint, setPrivateHint, pending, recoveryToken, send, chatMessages, chatError, chatSettings, sendChat, deleteChatMessage, muteChatMember, updateChatSettings } = useLanRoom(roomId, nickname)
   const [selected, setSelected] = useState<Position | null>(null)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'manual'>('idle')
   const [recoveryCopyState, setRecoveryCopyState] = useState<'idle' | 'copied' | 'manual'>('idle')
@@ -72,8 +73,9 @@ function LanRoom({ roomId, nickname, onNickname }: { roomId: string; nickname: s
   useEffect(() => { setSelected(null) }, [room?.revision])
   useEffect(() => { setPrivateHint(null) }, [room?.moves.length, setPrivateHint])
   const legal = useMemo(() => selected && room ? getLegalMoves(room.board, selected, room.variant) : [], [room, selected])
-  if (!room) return <div className="lan-shell"><p>{connected ? '正在同步房间…' : '正在连接服务…'}</p>{error && <div className="lan-error">{error}</div>}</div>
+  if (!room) return <div className="lan-shell lan-room-shell"><p>{connected ? '正在同步房间…' : '正在连接服务…'}</p>{error && <div className="lan-error">{error}</div>}</div>
   const color = room.role === 'red' || room.role === 'black' ? room.role : null
+  const boardFlipped = color === 'black' || !color && spectatorFlipped
   const canMove = room.phase === 'playing' && room.status === 'playing' && color === room.turn
   const last = room.moves[room.moves.length - 1]
   const lastMove: Move | null = last ? (() => { const positions = uciToMove(last.uci); const piece = room.board[positions.to.row][positions.to.col]; return piece ? { ...positions, piece } : null })() : null
@@ -115,31 +117,49 @@ function LanRoom({ roomId, nickname, onNickname }: { roomId: string; nickname: s
     else if (room.isOwner) send('room-claim-seat', { side, nickname })
     else send('room-seat-request', { side, nickname })
   }
+  const actOnBoardSeat = (side: PieceColor) => {
+    if (color === side) return send('room-ready', { ready: !room.seats[side]!.ready })
+    if (!color) return actionForSeat(side)
+    if (room.seats[side]) return send('room-swap-request')
+    return send('room-switch-seat', { side })
+  }
+  const boardSeatLabel = (side: PieceColor) => {
+    const seat = room.seats[side], sideName = side === 'red' ? '红方' : '黑方'
+    if (color === side) return seat?.ready ? '取消准备' : '准备开局'
+    if (color && seat) return room.pendingSwapBy ? '换边申请中' : `申请切换为${sideName}`
+    if (color) return `切换为${sideName}`
+    if (seat) return '席位已占用'
+    return incomingInvite || room.isOwner ? `成为${sideName}` : `申请成为${sideName}`
+  }
   const mapReason = room.statusReason === 'resignation' ? 'resignation' : room.statusReason === 'repetition' || room.statusReason === 'natural-limit' || room.statusReason === 'move-limit' || room.statusReason === 'checkmate' || room.statusReason === 'stalemate' ? room.statusReason : room.status === 'draw' ? 'manual' : room.statusReason === 'disconnect' ? 'manual' : undefined
   const countdown = room.disconnect ? Math.max(0, Math.ceil((room.disconnect.deadline - now) / 1000)) : null
   const proposalCountdown = (deadline?: number) => deadline ? Math.max(0, Math.ceil((deadline - now) / 1000)) : null
-  return <div className="lan-shell">
+  return <div className="lan-shell lan-room-shell">
     <header className="lan-header"><div><h1>{room.name}</h1><p>{room.variant === 'jieqi' ? '揭棋' : '普通象棋'} · {room.phase === 'waiting' ? '等待开局' : room.phase === 'playing' ? '进行中' : '已结束'} · {connected ? '已连接' : '重连中'}</p></div><a href="?lan=1">返回大厅</a></header>
     {error && <div className="lan-error">{error}</div>}
     {rematchError && <div className="lan-error">{rematchError}</div>}
     {countdown !== null && <div className="lan-warning">{room.disconnect!.color === 'red' ? '红方' : '黑方'}已断线，{countdown} 秒后判负</div>}
     <div className="lan-game">
-      <main className="board-stage"><Board board={room.board} gameStatus={room.status} gameStatusReason={mapReason} selectedPos={selected} legalMoves={legal} lastMove={lastMove} hintMove={hintMove} inCheck={room.phase === 'playing' && isInCheck(room.board, room.turn, room.variant) ? findKing(room.board, room.turn) : null} flipped={color === 'black' || !color && spectatorFlipped} aiThinking={false} thinkingText="" interactionDisabled={!canMove || pending} onCellClick={click} onCancelSelection={() => setSelected(null)} />
+      <main className={`board-stage ${boardFlipped ? 'lan-board-flipped' : ''}`}>{room.phase === 'waiting' && <div className="lan-board-seat-controls">{(['red', 'black'] as const).map(side => {
+        const seat = room.seats[side]
+        const current = color === side
+        const occupiedByOther = Boolean(seat && !current)
+        const seatActionDisabled = pending || Boolean(room.pendingSwapBy) || (!color && occupiedByOther) || (!color && !seat && !nickname.trim())
+        return <section className={`lan-board-seat ${side} ${current ? 'current' : ''}`} key={side}><div><strong>{side === 'red' ? '红方' : '黑方'}</strong><span>{seat ? `${seat.nickname} · ${seat.online ? '在线' : '离线'} · ${seat.ready ? '已准备' : '未准备'}` : '空位'}</span></div><button className={current && seat?.ready ? 'ready' : ''} disabled={seatActionDisabled} onClick={() => actOnBoardSeat(side)}>{boardSeatLabel(side)}</button>{room.isOwner && occupiedByOther && <button className="remove" disabled={pending} onClick={() => send('room-remove-seat', { side })}>移除</button>}</section>
+      })}</div>}<Board board={room.board} gameStatus={room.status} gameStatusReason={mapReason} selectedPos={selected} legalMoves={legal} lastMove={lastMove} hintMove={hintMove} inCheck={room.phase === 'playing' && isInCheck(room.board, room.turn, room.variant) ? findKing(room.board, room.turn) : null} flipped={boardFlipped} aiThinking={false} thinkingText="" interactionDisabled={!canMove || pending} onCellClick={click} onCancelSelection={() => setSelected(null)} />
         {room.captured.length > 0 && <div className="lan-captured"><strong>已吃棋子</strong>{(['red', 'black'] as const).map(side => <span key={side}>{side === 'red' ? '红方所吃：' : '黑方所吃：'}{room.captured.filter(item => item.capturedBy === side).map((item, index) => <i key={index}>{item.type ? pieceName(item.type, item.color) : '暗'}</i>)}</span>)}</div>}
       </main>
-      {room.phase === 'waiting' ? <aside className="lan-panel lan-room-waiting card">
-        <div><h2>等待开局</h2><p>选择席位，双方准备后自动开始。</p></div>
-        <label>你的昵称<input value={nickname} maxLength={20} onChange={event => onNickname(event.target.value)} /></label>
-        <div className="lan-seats">{(['red', 'black'] as const).map(side => <div className={`lan-seat ${side}`} key={side}><h3>{side === 'red' ? '红方' : '黑方'}</h3>{room.seats[side] ? <><strong>{room.seats[side]!.nickname}</strong><span>{room.seats[side]!.online ? '在线' : '离线'} · {room.seats[side]!.ready ? '已准备' : '未准备'}</span>{color === side && <><button disabled={pending} className="lan-ready-button" onClick={() => send('room-ready', { ready: !room.seats[side]!.ready })}>{room.seats[side]!.ready ? '取消准备' : '准备开局'}</button><button disabled={pending} onClick={() => send('room-leave-seat')}>离开席位</button></>}{room.isOwner && color !== side && <button disabled={pending} onClick={() => send('room-remove-seat', { side })}>移除棋手</button>}</> : <button disabled={!nickname.trim() || pending} onClick={() => actionForSeat(side)}>{incomingInvite || room.isOwner ? `成为${side === 'red' ? '红方' : '黑方'}` : `申请${side === 'red' ? '红方' : '黑方'}`}</button>}</div>)}</div>
-        {color && room.seats.red && room.seats.black && !room.pendingSwapBy && <button disabled={pending} onClick={() => send('room-swap-request')}>申请交换红黑</button>}
+      <div className="lan-side">
+      {room.phase === 'waiting' ? <section className="lan-panel lan-room-tools card">
+        <label>昵称<input value={nickname} maxLength={20} onChange={event => onNickname(event.target.value)} /></label>
         {room.pendingSwapBy === color && <div className="lan-request">等待对方处理（{proposalCountdown(room.pendingSwapDeadline)} 秒）<button disabled={pending} onClick={() => send('room-proposal-cancel', { kind: 'swap' })}>撤回</button></div>}
         {room.pendingSwapBy && room.pendingSwapBy !== color && color && <div className="lan-request">对方申请交换红黑（{proposalCountdown(room.pendingSwapDeadline)} 秒） <button disabled={pending} onClick={() => send('room-swap-response', { accept: true })}>同意</button><button disabled={pending} onClick={() => send('room-swap-response', { accept: false })}>拒绝</button></div>}
-        {room.isOwner && (!room.seats.red || !room.seats.black) && <><button disabled={pending} onClick={() => shareToken ? void shareInvite() : send('room-renew-invite')}>{shareToken ? copyState === 'copied' ? '邀请链接已复制' : '复制玩家邀请链接' : '生成玩家邀请链接'}</button>{shareToken && <button disabled={pending} onClick={() => send('room-renew-invite')}>作废旧链接并重新生成</button>}{copyState === 'manual' && <label className="lan-copy-fallback">浏览器未允许自动复制，请手动复制<input readOnly value={inviteUrl} onFocus={event => event.currentTarget.select()} /></label>}</>}
+        {room.isOwner && <div className="lan-room-tool-buttons"><button disabled={pending || Boolean(room.seats.red && room.seats.black)} onClick={() => shareToken ? void shareInvite() : send('room-renew-invite')}>{shareToken ? copyState === 'copied' ? '邀请链接已复制' : '复制玩家邀请链接' : '生成玩家邀请链接'}</button><button disabled={pending || Boolean(room.seats.red && room.seats.black)} onClick={() => send('room-renew-invite')}>作废旧链接并重新生成</button><button className="lan-danger-button" disabled={pending} onClick={() => confirm('确定解散这个房间吗？') && send('room-dissolve')}>解散房间</button></div>}
+        {copyState === 'manual' && <label className="lan-copy-fallback">浏览器未允许自动复制，请手动复制<input readOnly value={inviteUrl} onFocus={event => event.currentTarget.select()} /></label>}
         {room.isOwner && room.applications?.map(item => <div className="lan-request" key={item.id}>{item.nickname} 申请成为{item.side === 'red' ? '红方' : '黑方'} <button onClick={() => send('room-seat-approve', { applicationId: item.id, accept: true })}>批准</button><button onClick={() => send('room-seat-approve', { applicationId: item.id, accept: false })}>拒绝</button></div>)}
-        {color && (recoveryToken || getLanToken(roomId)) && <><button onClick={shareRecovery}>{recoveryCopyState === 'copied' ? '恢复链接已复制' : room.isOwner ? '复制房主恢复链接' : '复制席位恢复链接'}</button>{recoveryCopyState === 'manual' && <label className="lan-copy-fallback">请手动复制恢复链接<input readOnly value={recoveryUrl} onFocus={event => event.currentTarget.select()} /></label>}</>}
-        {room.isOwner && <button className="lan-danger-button" disabled={pending} onClick={() => confirm('确定解散这个房间吗？') && send('room-dissolve')}>解散房间</button>}
-        <p className="lan-spectators">当前观众 {room.spectatorCount} 人</p>
-      </aside> : <aside className="lan-panel card"><h2>{color ? `你是${color === 'red' ? '红方' : '黑方'}` : '观战中'}</h2><p>{room.status === 'playing' ? `${room.turn === 'red' ? '红方' : '黑方'}走棋` : formatResult(room.status, room.statusReason)}</p><p>红：{room.seats.red?.nickname || '-'} {room.seats.red?.online ? '●' : '○'}<br/>黑：{room.seats.black?.nickname || '-'} {room.seats.black?.online ? '●' : '○'}</p>
+        <div className="lan-room-tool-meta">{color && (recoveryToken || getLanToken(roomId)) && <button onClick={shareRecovery}>{recoveryCopyState === 'copied' ? '恢复链接已复制' : '复制恢复链接'}</button>}{color && <button onClick={() => send('room-leave-seat')}>退出席位并观战</button>}<span>观众 {room.spectatorCount} 人</span></div>
+        {recoveryCopyState === 'manual' && <label className="lan-copy-fallback">请手动复制恢复链接<input readOnly value={recoveryUrl} onFocus={event => event.currentTarget.select()} /></label>}
+      </section> : <aside className="lan-panel lan-room-playing card"><h2>{color ? `你是${color === 'red' ? '红方' : '黑方'}` : '观战中'}</h2><p>{room.status === 'playing' ? `${room.turn === 'red' ? '红方' : '黑方'}走棋` : formatResult(room.status, room.statusReason)}</p><p>红：{room.seats.red?.nickname || '-'} {room.seats.red?.online ? '●' : '○'}<br/>黑：{room.seats.black?.nickname || '-'} {room.seats.black?.online ? '●' : '○'}</p>
         {!color && <button onClick={() => setSpectatorFlipped(value => !value)}>切换到{spectatorFlipped ? '红方' : '黑方'}视角</button>}
         {color && room.phase === 'playing' && <><button disabled={pending || room.turn !== color || (room.seats[color]?.hintsRemaining || 0) < 1} onClick={() => send('room-hint')}>大师提示（剩余 {room.seats[color]?.hintsRemaining || 0}）</button>{room.variant === 'xiangqi' && !room.pendingUndoBy && !room.pendingDrawBy && <button disabled={pending} onClick={() => send('room-undo-request')}>申请悔棋</button>}{!room.pendingUndoBy && !room.pendingDrawBy && <button disabled={pending} onClick={() => send('room-draw-offer')}>提议和棋</button>}<button disabled={pending} onClick={() => confirm('确定认输吗？') && send('room-resign')}>认输</button></>}
         {room.pendingUndoBy === color && <div className="lan-request">悔棋申请等待中（{proposalCountdown(room.pendingUndoDeadline)} 秒）<button disabled={pending} onClick={() => send('room-proposal-cancel', { kind: 'undo' })}>撤回</button></div>}
@@ -150,8 +170,48 @@ function LanRoom({ roomId, nickname, onNickname }: { roomId: string; nickname: s
         {room.phase === 'finished' && (room.isOwner || color) && <button disabled={creatingRematch} onClick={() => void rematch()}>{creatingRematch ? '正在创建…' : '创建再来一局'}</button>}
         <h3>走棋记录</h3><div className="lan-moves">{room.moves.map((move, index) => <span key={index}>{index + 1}. {move.notation || move.uci}{move.capturedHidden ? ` · 吃${move.captured || '暗子'}` : move.captured ? ` · 吃${pieceName(move.captured, move.color === 'red' ? 'black' : 'red')}` : ''}</span>)}</div>
       </aside>}
+      <LanChat messages={chatMessages} connected={connected} isOwner={room.isOwner} settings={chatSettings} error={chatError} send={sendChat} remove={deleteChatMessage} mute={muteChatMember} updateSettings={updateChatSettings} />
+      </div>
     </div>
   </div>
+}
+
+function LanChat({ messages, connected, isOwner, settings, error, send, remove, mute, updateSettings }: { messages: LanChatMessage[]; connected: boolean; isOwner: boolean; settings: import('./types').LanChatSettings; error: string; send: (content: string) => boolean; remove: (messageId: string) => boolean; mute: (authorId: string, muted: boolean) => boolean; updateSettings: (everyoneMuted: boolean, words: string[]) => boolean }) {
+  const [draft, setDraft] = useState('')
+  const [managementOpen, setManagementOpen] = useState(false)
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null)
+  const [sensitiveDraft, setSensitiveDraft] = useState('')
+  const listRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
+  const contentLength = getLanChatContentLength(draft)
+  const lineCount = getLanChatLineCount(draft)
+  const draftInvalid = contentLength > 200 || lineCount > 4
+  const silenced = !isOwner && (settings.everyoneMuted || settings.muted)
+  const parsedSensitiveWords = parseLanRoomSensitiveWords(sensitiveDraft)
+  const sensitiveWordsInvalid = parsedSensitiveWords.length > 20 || parsedSensitiveWords.some(word => Array.from(word).length > 20)
+  const savedSensitiveWords = (settings.roomSensitiveWords || []).join('，')
+  const mutedMembers = (settings.mutedAuthorIds || []).map(authorId => ({
+    authorId,
+    nickname: messages.slice().reverse().find(message => message.authorId === authorId)?.nickname || `成员 ${authorId.slice(0, 6)}`,
+  }))
+  useEffect(() => { if (isOwner) setSensitiveDraft(savedSensitiveWords) }, [isOwner, savedSensitiveWords])
+  useEffect(() => {
+    const list = listRef.current
+    if (list && stickToBottomRef.current) list.scrollTop = list.scrollHeight
+  }, [messages])
+  const submit = () => {
+    if (!draft.trim() || draftInvalid || !connected || silenced) return
+    if (send(draft)) { setDraft(''); stickToBottomRef.current = true }
+  }
+  return <aside className="lan-panel lan-chat-panel card">
+    <div className="lan-chat-heading"><div><h2>聊天</h2><p>{settings.everyoneMuted ? '房主已开启全面禁言' : settings.muted ? '你已被房主禁言' : '房主、棋手和观众均可发言'}</p></div><div><span>{connected ? '已连接' : '重连中'}</span>{isOwner && <button onClick={() => setManagementOpen(value => !value)}>管理</button>}</div></div>
+    {error && <div className="lan-error">{error}</div>}
+    {isOwner && managementOpen && <section className="lan-chat-management"><div><strong>全面禁言</strong><button className={settings.everyoneMuted ? 'active' : ''} disabled={!connected} onClick={() => updateSettings(!settings.everyoneMuted, settings.roomSensitiveWords || [])}>{settings.everyoneMuted ? '已开启，点击关闭' : '未开启，点击开启'}</button></div>{mutedMembers.length > 0 && <div className="lan-chat-muted-list"><strong>已禁言成员</strong><span>{mutedMembers.map(member => <button key={member.authorId} disabled={!connected} onClick={() => mute(member.authorId, false)}>{member.nickname} · 解除</button>)}</span></div>}<label>房间敏感词<textarea rows={3} value={sensitiveDraft} onChange={event => setSensitiveDraft(event.target.value)} placeholder="使用逗号、顿号或换行分隔，最多 20 个，每个最多 20 字" /></label><div><small className={sensitiveWordsInvalid ? 'over' : ''}>系统敏感词已由服务端统一启用</small><button disabled={!connected || sensitiveWordsInvalid} onClick={() => updateSettings(settings.everyoneMuted, parsedSensitiveWords)}>保存敏感词（{parsedSensitiveWords.length}/20）</button></div></section>}
+    <div className="lan-chat-list" ref={listRef} onScroll={event => { const target = event.currentTarget; stickToBottomRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 48 }}>
+      {messages.length === 0 ? <p className="lan-chat-empty">还没有消息，来打个招呼吧。</p> : messages.map(chat => <article className="lan-chat-message" key={chat.id}><div className="lan-chat-line">{isOwner && !chat.isOwner ? <button className="lan-chat-author" onClick={() => setSelectedMessageId(current => current === chat.id ? null : chat.id)}>{chat.nickname}</button> : <strong>{chat.nickname}</strong>}<i>「{getLanChatRole(chat)}」</i><span title={chat.content}>：{chat.content.replace(/\s*\n\s*/g, ' ')}</span><time>{new Date(chat.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>{isOwner && <button className="lan-chat-delete" title="删除消息" aria-label={`删除 ${chat.nickname} 的消息`} onClick={() => remove(chat.id)}>删除</button>}</div>{isOwner && selectedMessageId === chat.id && !chat.isOwner && <div className="lan-chat-member-menu"><span>{chat.nickname}</span><button onClick={() => { mute(chat.authorId, !settings.mutedAuthorIds?.includes(chat.authorId)); setSelectedMessageId(null) }}>{settings.mutedAuthorIds?.includes(chat.authorId) ? '解除禁言' : '禁言该成员'}</button></div>}</article>)}
+    </div>
+    <div className="lan-chat-compose"><textarea value={draft} rows={2} placeholder={!connected ? '连接恢复后可以发言' : silenced ? '当前无法发言' : '输入消息，Enter 发送'} disabled={!connected || silenced} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit() } }} /><div><span className={draftInvalid ? 'over' : ''}>{lineCount}/4 行 · {contentLength}/200 字</span><button disabled={!connected || silenced || !draft.trim() || draftInvalid} onClick={submit}>发送</button></div></div>
+  </aside>
 }
 
 function Request({ text, pending, accept, reject }: { text: string; pending: boolean; accept: () => void; reject: () => void }) { return <div className="lan-request">{text}<button disabled={pending} onClick={accept}>同意</button><button disabled={pending} onClick={reject}>拒绝</button></div> }

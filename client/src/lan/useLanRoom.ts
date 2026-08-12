@@ -1,12 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createLanCommandId } from './browser'
-import { LanRoomSnapshot } from './types'
+import { mergeLanChatMessage } from './chat'
+import { LanChatMessage, LanChatSettings, LanRoomSnapshot } from './types'
 
 const COMMAND_TIMEOUT_MS = 10_000
 const HINT_TIMEOUT_MS = 70_000
 const COMMAND_TIMEOUT_ERROR = '操作响应超时，请检查连接后重试'
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function key(id: string) { return `xiangqi-lan-room:${id}` }
+function getChatClientId() {
+  const storageKey = 'xiangqi-lan-chat-client-id'
+  try {
+    const current = localStorage.getItem(storageKey)
+    if (current && UUID.test(current)) return current
+    const created = createLanCommandId(); localStorage.setItem(storageKey, created); return created
+  } catch { return createLanCommandId() }
+}
 export function getLanToken(id: string) { try { return localStorage.getItem(key(id)) || '' } catch { return '' } }
 export function saveLanToken(id: string, token: string) { try { localStorage.setItem(key(id), token); return true } catch { return false } }
 export type LanRecentRoom = { id: string; name: string; variant: string; role: string; updatedAt: number }
@@ -26,13 +36,19 @@ export function useLanRoom(roomId: string, nickname: string) {
   const [error, setError] = useState('')
   const [privateHint, setPrivateHint] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const [chatMessages, setChatMessages] = useState<LanChatMessage[]>([])
+  const [chatError, setChatError] = useState('')
+  const [chatSettings, setChatSettings] = useState<LanChatSettings>({ everyoneMuted: false, muted: false })
   const [recoveryToken, setRecoveryToken] = useState(() => getLanToken(roomId))
   const wsRef = useRef<WebSocket | null>(null)
   const tokenRef = useRef(getLanToken(roomId))
   const reconnectRef = useRef<number>()
   const pendingTimerRef = useRef<number>()
+  const chatTimersRef = useRef(new Map<string, number>())
+  const chatCommandIdsRef = useRef(new Set<string>())
   const roomRef = useRef(room)
   const nicknameRef = useRef(nickname)
+  const [chatClientId] = useState(getChatClientId)
   roomRef.current = room
   nicknameRef.current = nickname
 
@@ -42,9 +58,16 @@ export function useLanRoom(roomId: string, nickname: string) {
     setPending(false)
   }, [])
 
+  const finishChatCommand = useCallback((commandId: string) => {
+    const timer = chatTimersRef.current.get(commandId)
+    if (timer !== undefined) clearTimeout(timer)
+    chatTimersRef.current.delete(commandId)
+    chatCommandIdsRef.current.delete(commandId)
+  }, [])
+
   const subscribe = useCallback((ws: WebSocket) => {
-    ws.send(JSON.stringify({ type: 'room-subscribe', roomId, token: tokenRef.current, nickname: nicknameRef.current }))
-  }, [roomId])
+    ws.send(JSON.stringify({ type: 'room-subscribe', roomId, token: tokenRef.current, nickname: nicknameRef.current, clientId: chatClientId }))
+  }, [chatClientId, roomId])
 
   useEffect(() => {
     let disposed = false
@@ -92,16 +115,43 @@ export function useLanRoom(roomId: string, nickname: string) {
         } else if (message.type === 'room-private-hint') {
           setPrivateHint(String(message.move))
           finishPending()
+        } else if (message.type === 'room-chat-history') {
+          const messages = Array.isArray(message.messages) ? message.messages as LanChatMessage[] : []
+          setChatMessages(messages.slice(-100))
+        } else if (message.type === 'room-chat-message') {
+          const chatMessage = message.message as LanChatMessage
+          if (chatMessage && typeof chatMessage.id === 'string') setChatMessages(current => mergeLanChatMessage(current, chatMessage))
+          setChatError('')
+        } else if (message.type === 'room-chat-settings') {
+          setChatSettings(message.settings as LanChatSettings)
+        } else if (message.type === 'room-chat-delete') {
+          setChatMessages(current => current.filter(item => item.id !== String(message.messageId)))
+        } else if (message.type === 'room-chat-ack') {
+          finishChatCommand(String(message.commandId || ''))
         } else if (message.type === 'room-closed') {
           location.href = '?lan=1'
-        } else if (message.type === 'error') { finishPending(); setError(String(message.message || '操作失败')) }
+        } else if (message.type === 'error') {
+          const requestId = String(message.requestId || '')
+          if (chatCommandIdsRef.current.has(requestId)) { finishChatCommand(requestId); setChatError(String(message.message || '发送失败')) }
+          else { finishPending(); setError(String(message.message || '操作失败')) }
+        }
       }
-      ws.onclose = () => { setConnected(false); finishPending(); if (!disposed) reconnectRef.current = window.setTimeout(connect, 1500) }
+      ws.onclose = () => {
+        setConnected(false); finishPending()
+        for (const commandId of chatTimersRef.current.keys()) finishChatCommand(commandId)
+        chatCommandIdsRef.current.clear()
+        if (!disposed) reconnectRef.current = window.setTimeout(connect, 1500)
+      }
       ws.onerror = () => ws.close()
     }
     connect()
-    return () => { disposed = true; clearTimeout(reconnectRef.current); finishPending(); wsRef.current?.close() }
-  }, [finishPending, roomId, subscribe])
+    return () => {
+      disposed = true; clearTimeout(reconnectRef.current); finishPending()
+      for (const commandId of chatTimersRef.current.keys()) finishChatCommand(commandId)
+      chatCommandIdsRef.current.clear()
+      wsRef.current?.close()
+    }
+  }, [finishChatCommand, finishPending, roomId, subscribe])
 
   const send = useCallback((type: string, payload: Record<string, unknown> = {}) => {
     const ws = wsRef.current, current = roomRef.current
@@ -118,5 +168,32 @@ export function useLanRoom(roomId: string, nickname: string) {
     return true
   }, [roomId])
 
-  return { room, connected, error, privateHint, setPrivateHint, pending, recoveryToken, send }
+  const sendChatCommand = useCallback((type: 'room-chat-send' | 'room-chat-delete' | 'room-chat-mute' | 'room-chat-settings-update', payload: Record<string, unknown>) => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) { setChatError('聊天连接尚未建立'); return false }
+    const commandId = createLanCommandId()
+    ws.send(JSON.stringify({ type, roomId, commandId, ...payload }))
+    chatCommandIdsRef.current.add(commandId)
+    while (chatCommandIdsRef.current.size > 100) {
+      const oldest = chatCommandIdsRef.current.values().next().value!
+      clearTimeout(chatTimersRef.current.get(oldest))
+      chatTimersRef.current.delete(oldest)
+      chatCommandIdsRef.current.delete(oldest)
+    }
+    chatTimersRef.current.set(commandId, window.setTimeout(() => {
+      chatTimersRef.current.delete(commandId)
+      setChatError('聊天操作响应超时，请检查连接后重试')
+    }, COMMAND_TIMEOUT_MS))
+    setChatError('')
+    return true
+  }, [roomId])
+
+  return {
+    room, connected, error, privateHint, setPrivateHint, pending, recoveryToken, send,
+    chatMessages, chatError, chatSettings,
+    sendChat: (content: string) => sendChatCommand('room-chat-send', { content, nickname: nicknameRef.current }),
+    deleteChatMessage: (messageId: string) => sendChatCommand('room-chat-delete', { messageId }),
+    muteChatMember: (authorId: string, muted: boolean) => sendChatCommand('room-chat-mute', { authorId, muted }),
+    updateChatSettings: (everyoneMuted: boolean, roomSensitiveWords: string[]) => sendChatCommand('room-chat-settings-update', { everyoneMuted, roomSensitiveWords }),
+  }
 }

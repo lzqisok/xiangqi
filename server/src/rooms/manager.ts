@@ -1,23 +1,34 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { WebSocket } from 'ws'
-import { createRoomInitialState, executeRoomMove, projectBoard, rebuildRoomBoard } from './core.js'
+import { createRoomInitialState, executeRoomMoveFromState, projectBoard, rebuildRoomBoard } from './core.js'
 import { RoomRepository } from './repository.js'
 import { RoomColor, RoomRole, RoomSnapshot, RoomSummary, StoredRoom } from './types.js'
 
 type Connection = { roomId: string; role: RoomRole; isOwner: boolean; token?: string; nickname: string }
 type Application = { id: string; ws: WebSocket; nickname: string; side: RoomColor }
+type Proposal = { by: RoomColor; deadline: number; timer: NodeJS.Timeout }
 type Runtime = {
   sockets: Set<WebSocket>
   applications: Map<string, Application>
-  pendingDrawBy?: RoomColor
-  pendingUndoBy?: RoomColor
-  pendingSwapBy?: RoomColor
+  pendingDraw?: Proposal
+  pendingUndo?: Proposal
+  pendingSwap?: Proposal
   disconnect?: { color: RoomColor; deadline: number; timer: NodeJS.Timeout }
+  bothOfflineSince?: number
+  cached?: { revision: number; layout?: string; moveCount: number; lastMove?: string; rebuilt: ReturnType<typeof rebuildRoomBoard> }
   commands: Map<string, { revision: number }>
   queue: Promise<void>
 }
 
 export type RoomHintProvider = (room: StoredRoom, color: RoomColor) => Promise<string | null>
+export type RoomManagerOptions = {
+  proposalTimeoutMs?: number
+  waitingTtlMs?: number
+  abandonedTtlMs?: number
+  finishedTtlMs?: number
+}
+
+const DAY = 24 * 60 * 60 * 1000
 
 function hash(value: string) { return createHash('sha256').update(value).digest('hex') }
 function matches(value: string | undefined, expected: string | undefined) {
@@ -36,20 +47,29 @@ export class RoomManager {
     private readonly repository: RoomRepository,
     private readonly hintProvider: RoomHintProvider,
     private readonly disconnectTimeoutMs = 60_000,
+    private readonly options: RoomManagerOptions = {},
   ) {}
 
-  createRoom(name: string, variant: 'xiangqi' | 'jieqi') {
-    if (this.repository.list().filter(room => room.phase !== 'finished').length >= 100) return Promise.reject(new Error('活跃房间数量已达到上限'))
+  async createRoom(name: string, variant: 'xiangqi' | 'jieqi') {
+    if (this.repository.list().filter(room => room.phase !== 'finished').length >= 100) {
+      await this.cleanup()
+      if (this.repository.list().filter(room => room.phase !== 'finished').length >= 100) throw new Error('活跃房间数量已达到上限')
+    }
     const ownerToken = randomUUID(), inviteToken = randomUUID(), now = Date.now()
     const room: StoredRoom = {
       schemaVersion: 1, id: randomUUID(), name: name.trim().slice(0, 60) || (variant === 'jieqi' ? '揭棋房间' : '象棋房间'),
       variant, phase: 'waiting', revision: 0, ownerHash: hash(ownerToken), inviteHash: hash(inviteToken), seats: {}, moves: [], status: 'playing', createdAt: now, updatedAt: now,
     }
-    return this.repository.create(room).then(saved => ({ room: saved, ownerToken, inviteToken }))
+    const saved = await this.repository.create(room)
+    return { room: saved, ownerToken, inviteToken }
   }
 
   lobby(): RoomSummary[] {
     return this.repository.list().filter(room => room.phase !== 'finished').sort((a, b) => b.createdAt - a.createdAt).map(room => this.summary(room))
+  }
+
+  history(limit = 20): RoomSummary[] {
+    return this.repository.list().filter(room => room.phase === 'finished').sort((a, b) => b.updatedAt - a.updatedAt).slice(0, Math.max(1, Math.min(limit, 100))).map(room => this.summary(room))
   }
 
   publicRoom(id: string) {
@@ -63,7 +83,16 @@ export class RoomManager {
     if (!rate || now - rate.startedAt >= 5_000) this.rates.set(ws, { startedAt: now, count: 1 })
     else if (++rate.count > 40) throw new Error('操作过于频繁，请稍后再试')
     const type = String(message.type || '')
-    if (type === 'room-subscribe') return this.subscribe(ws, message)
+    if (type === 'room-subscribe') {
+      const roomId = String(message.roomId || '')
+      if (!this.repository.get(roomId)) throw new Error('房间不存在')
+      const target = this.getRuntime(roomId)
+      const previous = this.connections.get(ws)
+      const involved = previous && previous.roomId !== roomId ? [this.getRuntime(previous.roomId), target] : [target]
+      const operation = Promise.all(involved.map(runtime => runtime.queue)).then(() => this.subscribe(ws, message))
+      for (const runtime of involved) runtime.queue = operation.catch(() => undefined)
+      return operation
+    }
     const connection = this.connections.get(ws)
     if (!connection) throw new Error('请先加入房间')
     const runtime = this.getRuntime(connection.roomId)
@@ -76,10 +105,12 @@ export class RoomManager {
     const type = String(message.type || '')
     const connection = this.connections.get(ws)
     if (!connection) throw new Error('请先加入房间')
+    const commandId = typeof message.commandId === 'string' && /^[A-Za-z0-9._:-]{1,100}$/.test(message.commandId) ? message.commandId : undefined
+    if (!commandId) throw new Error('操作标识无效')
+    if (!Number.isInteger(message.expectedRevision) || Number(message.expectedRevision) < 0) throw new Error('房间版本无效')
     const room = this.requireRoom(connection.roomId)
     if (message.roomId !== room.id) throw new Error('房间不匹配')
-    const commandId = typeof message.commandId === 'string' ? message.commandId : undefined
-    if (commandId && this.getRuntime(room.id).commands.has(commandId)) return this.sendSnapshot(ws, room)
+    if (this.getRuntime(room.id).commands.has(commandId)) return this.sendSnapshot(ws, room)
     if (message.expectedRevision !== undefined && message.expectedRevision !== room.revision) return this.sendSnapshot(ws, room, '状态已更新，请重试')
 
     switch (type) {
@@ -87,6 +118,10 @@ export class RoomManager {
       case 'room-invite-seat': await this.inviteSeat(ws, room, message); break
       case 'room-seat-request': this.requestSeat(ws, room, message); break
       case 'room-seat-approve': await this.approveSeat(ws, room, message); break
+      case 'room-leave-seat': await this.leaveSeat(ws, room); break
+      case 'room-remove-seat': await this.removeSeat(room, connection, message.side); break
+      case 'room-renew-invite': await this.renewInvite(ws, room, connection); break
+      case 'room-dissolve': await this.dissolve(room, connection); break
       case 'room-ready': await this.ready(ws, room, Boolean(message.ready)); break
       case 'room-swap-request': await this.propose(room, connection, 'swap'); break
       case 'room-swap-response': await this.respondSwap(room, connection, Boolean(message.accept)); break
@@ -96,10 +131,11 @@ export class RoomManager {
       case 'room-undo-response': await this.respondUndo(room, connection, Boolean(message.accept)); break
       case 'room-draw-offer': await this.propose(room, connection, 'draw'); break
       case 'room-draw-response': await this.respondDraw(room, connection, Boolean(message.accept)); break
+      case 'room-proposal-cancel': this.cancelProposal(room, connection, String(message.kind || '')); break
       case 'room-resign': await this.resign(room, connection); break
       default: throw new Error('不支持的房间操作')
     }
-    if (commandId) this.rememberCommand(room.id, commandId, room.revision)
+    if (this.repository.get(room.id)) this.rememberCommand(room.id, commandId, room.revision)
   }
 
   disconnect(ws: WebSocket) {
@@ -120,15 +156,63 @@ export class RoomManager {
     await this.repository.flush()
   }
 
+  async cleanup(now = Date.now()) {
+    await Promise.all(this.repository.list().map(room => {
+      const runtime = this.getRuntime(room.id)
+      const operation = runtime.queue.then(() => this.cleanupLocked(room.id, now))
+      runtime.queue = operation.catch(error => console.error('Room cleanup failed:', error))
+      return operation
+    }))
+  }
+
+  private async cleanupLocked(roomId: string, now: number) {
+    const waitingTtl = this.options.waitingTtlMs ?? DAY
+    const abandonedTtl = this.options.abandonedTtlMs ?? DAY
+    const finishedTtl = this.options.finishedTtlMs ?? 30 * DAY
+    const room = this.repository.get(roomId)
+    if (!room) return
+    const runtime = this.getRuntime(room.id)
+    const hasSockets = runtime.sockets.size > 0
+    const hasPlayers = [...runtime.sockets].some(socket => {
+      const role = this.connections.get(socket)?.role
+      return role === 'red' || role === 'black'
+    })
+    if (room.phase === 'waiting' && !hasSockets && now - room.updatedAt >= waitingTtl) {
+      await this.deleteRoom(room.id)
+    } else if (room.phase === 'playing' && !hasPlayers) {
+      runtime.bothOfflineSince ??= now
+      if (now - runtime.bothOfflineSince >= abandonedTtl) {
+        room.phase = 'finished'; room.status = 'draw'; room.statusReason = 'abandoned'; room.finishedAt = now
+        this.clearDisconnect(room.id); this.clearProposals(room.id); this.touch(room)
+        await this.repository.save(room)
+        this.broadcast(room)
+      }
+    } else if (room.phase === 'finished' && !hasSockets && now - (room.finishedAt ?? room.updatedAt) >= finishedTtl) {
+      await this.deleteRoom(room.id)
+    }
+  }
+
+  dispose() {
+    for (const [id] of this.runtime) { this.clearDisconnect(id); this.clearProposals(id) }
+  }
+
+  private async deleteRoom(id: string) {
+    const runtime = this.runtime.get(id)
+    if (runtime) { this.clearDisconnect(id); this.clearProposals(id) }
+    await this.repository.delete(id)
+    this.runtime.delete(id)
+  }
+
   private subscribe(ws: WebSocket, message: Record<string, unknown>) {
+    if (ws.readyState !== WebSocket.OPEN) return
     const room = this.requireRoom(String(message.roomId || ''))
-    const token = typeof message.token === 'string' ? message.token : undefined
+    const token = typeof message.token === 'string' && message.token.length <= 200 ? message.token : undefined
     let role: RoomRole = 'spectator', isOwner = matches(token, room.ownerHash)
     for (const color of ['red', 'black'] as const) if (matches(token, room.seats[color]?.credentialHash)) role = color
-    const runtime = this.getRuntime(room.id)
-    if (role === 'spectator' && !this.connections.has(ws) && [...runtime.sockets].filter(socket => this.connections.get(socket)?.role === 'spectator').length >= 50) throw new Error('观众人数已满')
     const previous = this.connections.get(ws)
-    if (previous) this.getRuntime(previous.roomId).sockets.delete(ws)
+    const runtime = this.getRuntime(room.id)
+    if (role === 'spectator' && (!previous || previous.roomId !== room.id) && [...runtime.sockets].filter(socket => this.connections.get(socket)?.role === 'spectator').length >= 50) throw new Error('观众人数已满')
+    if (previous && previous.roomId !== room.id) this.leaveSubscribedRoom(ws, previous.roomId)
     this.connections.set(ws, { roomId: room.id, role, isOwner, token, nickname: String(message.nickname || '访客').slice(0, 20) })
     runtime.sockets.add(ws)
     if (role === 'red' || role === 'black') {
@@ -143,6 +227,16 @@ export class RoomManager {
     }
     this.updateDisconnect(room)
     this.broadcast(room)
+  }
+
+  private leaveSubscribedRoom(ws: WebSocket, roomId: string) {
+    const runtime = this.getRuntime(roomId)
+    runtime.sockets.delete(ws)
+    for (const [id, application] of runtime.applications) if (application.ws === ws) runtime.applications.delete(id)
+    const previousRoom = this.repository.get(roomId)
+    if (!previousRoom) return
+    this.updateDisconnect(previousRoom)
+    this.broadcast(previousRoom)
   }
 
   private async claimSeat(ws: WebSocket, room: StoredRoom, message: Record<string, unknown>) {
@@ -162,6 +256,7 @@ export class RoomManager {
     const side = message.side
     if (side !== 'red' && side !== 'black' || room.seats[side]) throw new Error('该席位不可用')
     const runtime = this.getRuntime(room.id)
+    for (const [id, current] of runtime.applications) if (current.ws === ws) runtime.applications.delete(id)
     const application: Application = { id: randomUUID(), ws, nickname: String(message.nickname || '申请者').slice(0, 20), side }
     runtime.applications.set(application.id, application)
     this.broadcast(room)
@@ -192,6 +287,60 @@ export class RoomManager {
     this.broadcast(room)
   }
 
+  private async leaveSeat(ws: WebSocket, room: StoredRoom) {
+    if (room.phase !== 'waiting') throw new Error('对局开始后请使用认输结束对局')
+    const connection = this.connections.get(ws)!
+    const color = this.color(connection)
+    delete room.seats[color]
+    this.clearProposals(room.id)
+    this.touch(room)
+    await this.repository.save(room)
+    connection.role = 'spectator'
+    connection.token = connection.isOwner ? connection.token : undefined
+    send(ws, { type: 'room-seat-lost', roomId: room.id })
+    this.broadcast(room)
+  }
+
+  private async removeSeat(room: StoredRoom, connection: Connection, rawSide: unknown) {
+    if (!connection.isOwner || room.phase !== 'waiting') throw new Error('只有房主能在开局前移除棋手')
+    const side = rawSide === 'red' || rawSide === 'black' ? rawSide : null
+    if (!side || !room.seats[side]) throw new Error('该席位没有棋手')
+    delete room.seats[side]
+    this.clearProposals(room.id)
+    this.touch(room)
+    await this.repository.save(room)
+    for (const socket of this.getRuntime(room.id).sockets) {
+      const target = this.connections.get(socket)
+      if (target?.role !== side) continue
+      target.role = 'spectator'
+      if (!target.isOwner) target.token = undefined
+      send(socket, { type: 'room-seat-lost', roomId: room.id })
+    }
+    this.broadcast(room)
+  }
+
+  private async renewInvite(ws: WebSocket, room: StoredRoom, connection: Connection) {
+    if (!connection.isOwner || room.phase !== 'waiting') throw new Error('只有房主能重新生成邀请链接')
+    const inviteToken = randomUUID()
+    room.inviteHash = hash(inviteToken)
+    this.touch(room)
+    await this.repository.save(room)
+    send(ws, { type: 'room-invite-token', roomId: room.id, inviteToken })
+    this.broadcast(room)
+  }
+
+  private async dissolve(room: StoredRoom, connection: Connection) {
+    if (!connection.isOwner || room.phase !== 'waiting') throw new Error('只有房主能解散等待中的房间')
+    const runtime = this.getRuntime(room.id)
+    this.clearProposals(room.id)
+    this.clearDisconnect(room.id)
+    await this.repository.delete(room.id)
+    for (const socket of runtime.sockets) send(socket, { type: 'room-closed', roomId: room.id, reason: '房间已由房主解散' })
+    for (const socket of runtime.sockets) this.connections.delete(socket)
+    runtime.sockets.clear()
+    this.runtime.delete(room.id)
+  }
+
   private async ready(_ws: WebSocket, room: StoredRoom, ready: boolean) {
     const connection = this.connections.get(_ws)!
     const color = this.color(connection)
@@ -207,16 +356,27 @@ export class RoomManager {
 
   private async propose(room: StoredRoom, connection: Connection, kind: 'swap' | 'undo' | 'draw') {
     const color = this.color(connection), runtime = this.getRuntime(room.id)
-    if (kind === 'swap') { if (room.phase !== 'waiting' || !room.seats.red || !room.seats.black) throw new Error('当前不能换边'); runtime.pendingSwapBy = color }
-    if (kind === 'undo') { if (room.variant === 'jieqi' || room.phase !== 'playing' || room.moves.length === 0) throw new Error('当前不能悔棋'); runtime.pendingUndoBy = color }
-    if (kind === 'draw') { if (room.phase !== 'playing') throw new Error('当前不能提议和棋'); runtime.pendingDrawBy = color }
+    if (kind === 'swap' && (room.phase !== 'waiting' || !room.seats.red || !room.seats.black)) throw new Error('当前不能换边')
+    if (kind === 'undo' && (room.variant === 'jieqi' || room.phase !== 'playing' || room.moves.length === 0)) throw new Error('当前不能悔棋')
+    if (kind === 'draw' && room.phase !== 'playing') throw new Error('当前不能提议和棋')
+    if (runtime.pendingSwap || runtime.pendingUndo || runtime.pendingDraw) throw new Error('已有待处理的协商申请')
+    const key = kind === 'swap' ? 'pendingSwap' : kind === 'undo' ? 'pendingUndo' : 'pendingDraw'
+    const deadline = Date.now() + (this.options.proposalTimeoutMs ?? 60_000)
+    const timer = setTimeout(() => {
+      const current = this.getRuntime(room.id)[key]
+      if (!current || current.deadline !== deadline) return
+      this.getRuntime(room.id)[key] = undefined
+      const latest = this.repository.get(room.id)
+      if (latest) this.broadcast(latest)
+    }, Math.max(0, deadline - Date.now()))
+    runtime[key] = { by: color, deadline, timer }
     this.broadcast(room)
   }
 
   private async respondSwap(room: StoredRoom, connection: Connection, accept: boolean) {
     const runtime = this.getRuntime(room.id), color = this.color(connection)
-    if (!runtime.pendingSwapBy || runtime.pendingSwapBy === color) throw new Error('没有待处理的换边申请')
-    runtime.pendingSwapBy = undefined
+    if (!runtime.pendingSwap || runtime.pendingSwap.by === color) throw new Error('没有待处理的换边申请')
+    this.clearProposal(room.id, 'swap')
     if (accept) { const red = room.seats.red!, black = room.seats.black!; room.seats.red = { ...black, ready: false }; room.seats.black = { ...red, ready: false }; this.touch(room); await this.repository.save(room); this.refreshRoles(room) }
     this.broadcast(room)
   }
@@ -224,17 +384,19 @@ export class RoomManager {
   private async move(room: StoredRoom, connection: Connection, uci: string) {
     const color = this.color(connection)
     if (room.phase !== 'playing' || room.status !== 'playing') throw new Error('对局未在进行')
-    const result = executeRoomMove(room.variant, room.initialLayout, room.moves, uci, color)
+    const result = executeRoomMoveFromState(room.variant, this.rebuilt(room), room.moves, uci, color)
     room.moves.push(result.move); room.status = result.detail.status; room.statusReason = result.detail.reason
-    const runtime = this.getRuntime(room.id); runtime.pendingDrawBy = undefined; runtime.pendingUndoBy = undefined
+    this.clearProposal(room.id, 'draw'); this.clearProposal(room.id, 'undo')
     if (room.status !== 'playing') { room.phase = 'finished'; room.finishedAt = Date.now(); this.clearDisconnect(room.id) }
-    this.touch(room); await this.repository.save(room); this.broadcast(room)
+    this.touch(room)
+    this.getRuntime(room.id).cached = { revision: room.revision, layout: room.initialLayout, moveCount: room.moves.length, lastMove: room.moves.at(-1)?.uci, rebuilt: { board: result.board, turn: result.turn } }
+    await this.repository.save(room); this.broadcast(room)
   }
 
   private async hint(ws: WebSocket, room: StoredRoom, connection: Connection) {
     const color = this.color(connection), seat = room.seats[color]!
     if (room.phase !== 'playing' || room.status !== 'playing' || seat.hintsUsed >= 3) throw new Error('提示次数已用完或对局未进行')
-    if (rebuildRoomBoard(room.variant, room.initialLayout, room.moves).turn !== color) throw new Error('只能在自己的回合请求提示')
+    if (this.rebuilt(room).turn !== color) throw new Error('只能在自己的回合请求提示')
     const move = await this.hintProvider(room, color)
     if (!move) throw new Error('引擎暂时无法给出提示')
     seat.hintsUsed++; this.touch(room); await this.repository.save(room)
@@ -244,17 +406,17 @@ export class RoomManager {
 
   private async respondUndo(room: StoredRoom, connection: Connection, accept: boolean) {
     const runtime = this.getRuntime(room.id), color = this.color(connection)
-    if (!runtime.pendingUndoBy || runtime.pendingUndoBy === color) throw new Error('没有待处理的悔棋申请')
-    runtime.pendingUndoBy = undefined
-    if (accept) { runtime.pendingDrawBy = undefined; room.moves.pop(); room.status = 'playing'; room.statusReason = undefined; this.touch(room); await this.repository.save(room) }
+    if (!runtime.pendingUndo || runtime.pendingUndo.by === color) throw new Error('没有待处理的悔棋申请')
+    this.clearProposal(room.id, 'undo')
+    if (accept) { this.clearProposal(room.id, 'draw'); room.moves.pop(); room.status = 'playing'; room.statusReason = undefined; this.touch(room); await this.repository.save(room) }
     this.broadcast(room)
   }
 
   private async respondDraw(room: StoredRoom, connection: Connection, accept: boolean) {
     const runtime = this.getRuntime(room.id), color = this.color(connection)
-    if (!runtime.pendingDrawBy || runtime.pendingDrawBy === color) throw new Error('没有待处理的和棋申请')
-    runtime.pendingDrawBy = undefined
-    if (accept) { runtime.pendingUndoBy = undefined; room.status = 'draw'; room.statusReason = 'agreement'; room.phase = 'finished'; room.finishedAt = Date.now(); this.touch(room); await this.repository.save(room); this.clearDisconnect(room.id) }
+    if (!runtime.pendingDraw || runtime.pendingDraw.by === color) throw new Error('没有待处理的和棋申请')
+    this.clearProposal(room.id, 'draw')
+    if (accept) { this.clearProposal(room.id, 'undo'); room.status = 'draw'; room.statusReason = 'agreement'; room.phase = 'finished'; room.finishedAt = Date.now(); this.touch(room); await this.repository.save(room); this.clearDisconnect(room.id) }
     this.broadcast(room)
   }
 
@@ -262,24 +424,34 @@ export class RoomManager {
     const color = this.color(connection)
     if (room.phase !== 'playing') throw new Error('对局未在进行')
     room.status = color === 'red' ? 'black-wins' : 'red-wins'; room.statusReason = 'resignation'; room.phase = 'finished'; room.finishedAt = Date.now()
-    const runtime = this.getRuntime(room.id); runtime.pendingDrawBy = undefined; runtime.pendingUndoBy = undefined
+    this.clearProposals(room.id)
     this.touch(room); await this.repository.save(room); this.clearDisconnect(room.id); this.broadcast(room)
+  }
+
+  private cancelProposal(room: StoredRoom, connection: Connection, kind: string) {
+    if (kind !== 'swap' && kind !== 'undo' && kind !== 'draw') throw new Error('申请类型无效')
+    const proposal = kind === 'swap' ? this.getRuntime(room.id).pendingSwap : kind === 'undo' ? this.getRuntime(room.id).pendingUndo : this.getRuntime(room.id).pendingDraw
+    if (!proposal || proposal.by !== this.color(connection)) throw new Error('没有可撤回的申请')
+    this.clearProposal(room.id, kind)
+    this.broadcast(room)
   }
 
   private snapshot(room: StoredRoom, ws: WebSocket): RoomSnapshot {
     const connection = this.connections.get(ws) || { role: 'spectator' as const, isOwner: false }
-    const rebuilt = rebuildRoomBoard(room.variant, room.initialLayout, room.moves)
+    const rebuilt = this.rebuilt(room)
     const runtime = this.getRuntime(room.id)
     const online = (color: RoomColor) => [...runtime.sockets].some(socket => this.connections.get(socket)?.role === color)
     const roleColor = connection.role === 'red' || connection.role === 'black' ? connection.role : null
     return {
-      id: room.id, name: room.name, variant: room.variant, phase: room.phase, revision: room.revision, role: connection.role, isOwner: connection.isOwner,
+      id: room.id, name: room.name, variant: room.variant, phase: room.phase, revision: room.revision, role: connection.role, isOwner: connection.isOwner, inviteAvailable: Boolean(room.inviteHash),
       seats: Object.fromEntries((['red', 'black'] as const).flatMap(color => room.seats[color] ? [[color, { nickname: room.seats[color]!.nickname, ready: room.seats[color]!.ready, online: online(color), hintsRemaining: roleColor === color ? 3 - room.seats[color]!.hintsUsed : 0 }]] : [])),
       board: projectBoard(rebuilt.board), turn: rebuilt.turn,
-      moves: room.moves.map(move => ({ uci: move.uci, color: move.color, revealed: move.revealed, captured: !move.capturedHidden || roleColor === move.color ? move.captured : null, capturedHidden: move.capturedHidden })),
+      moves: room.moves.map(move => ({ uci: move.uci, color: move.color, notation: move.notation, revealed: move.revealed, captured: !move.capturedHidden || roleColor === move.color ? move.captured : null, capturedHidden: move.capturedHidden })),
       captured: room.moves.flatMap(move => move.capturedColor ? [{ color: move.capturedColor, type: !move.capturedHidden || roleColor === move.color ? move.captured || null : null, hidden: Boolean(move.capturedHidden), capturedBy: move.color }] : []),
       status: room.status, statusReason: room.statusReason, spectatorCount: [...runtime.sockets].filter(socket => this.connections.get(socket)?.role === 'spectator').length,
-      pendingDrawBy: runtime.pendingDrawBy, pendingUndoBy: runtime.pendingUndoBy, pendingSwapBy: runtime.pendingSwapBy,
+      pendingDrawBy: runtime.pendingDraw?.by, pendingDrawDeadline: runtime.pendingDraw?.deadline,
+      pendingUndoBy: runtime.pendingUndo?.by, pendingUndoDeadline: runtime.pendingUndo?.deadline,
+      pendingSwapBy: runtime.pendingSwap?.by, pendingSwapDeadline: runtime.pendingSwap?.deadline,
       applications: connection.isOwner ? [...runtime.applications.values()].map(item => ({ id: item.id, nickname: item.nickname, side: item.side })) : undefined,
       disconnect: runtime.disconnect ? { color: runtime.disconnect.color, deadline: runtime.disconnect.deadline } : undefined,
     }
@@ -287,19 +459,37 @@ export class RoomManager {
 
   private broadcast(room: StoredRoom) { for (const ws of this.getRuntime(room.id).sockets) this.sendSnapshot(ws, room) }
   private sendSnapshot(ws: WebSocket, room: StoredRoom, warning?: string) { send(ws, { type: 'room-snapshot', room: this.snapshot(room, ws), warning }) }
-  private summary(room: StoredRoom): RoomSummary { return { id: room.id, name: room.name, variant: room.variant, phase: room.phase, red: room.seats.red?.nickname || null, black: room.seats.black?.nickname || null, spectatorCount: [...this.getRuntime(room.id).sockets].filter(ws => this.connections.get(ws)?.role === 'spectator').length, moveCount: room.moves.length, createdAt: room.createdAt } }
+  private summary(room: StoredRoom): RoomSummary { const runtime = this.runtime.get(room.id); return { id: room.id, name: room.name, variant: room.variant, phase: room.phase, red: room.seats.red?.nickname || null, black: room.seats.black?.nickname || null, spectatorCount: runtime ? [...runtime.sockets].filter(ws => this.connections.get(ws)?.role === 'spectator').length : 0, moveCount: room.moves.length, status: room.status, statusReason: room.statusReason, createdAt: room.createdAt, updatedAt: room.updatedAt } }
   private requireRoom(id: string) { const room = this.repository.get(id); if (!room) throw new Error('房间不存在'); return room }
   private color(connection: Connection): RoomColor { if (connection.role !== 'red' && connection.role !== 'black') throw new Error('当前不是棋手'); return connection.role }
-  private touch(room: StoredRoom) { room.revision++; room.updatedAt = Date.now() }
+  private touch(room: StoredRoom) { room.revision++; room.updatedAt = Date.now(); this.getRuntime(room.id).cached = undefined }
   private getRuntime(id: string) { let value = this.runtime.get(id); if (!value) { value = { sockets: new Set(), applications: new Map(), commands: new Map(), queue: Promise.resolve() }; this.runtime.set(id, value) } return value }
   private rememberCommand(id: string, commandId: string, revision: number) { const commands = this.getRuntime(id).commands; commands.set(commandId, { revision }); while (commands.size > 200) commands.delete(commands.keys().next().value!) }
+  private rebuilt(room: StoredRoom) {
+    const runtime = this.getRuntime(room.id)
+    const lastMove = room.moves.at(-1)?.uci
+    if (!runtime.cached || runtime.cached.revision !== room.revision || runtime.cached.layout !== room.initialLayout || runtime.cached.moveCount !== room.moves.length || runtime.cached.lastMove !== lastMove) {
+      runtime.cached = { revision: room.revision, layout: room.initialLayout, moveCount: room.moves.length, lastMove, rebuilt: rebuildRoomBoard(room.variant, room.initialLayout, room.moves) }
+    }
+    return runtime.cached.rebuilt
+  }
   private refreshRoles(room: StoredRoom) { for (const ws of this.getRuntime(room.id).sockets) { const connection = this.connections.get(ws); if (!connection) continue; connection.role = matches(connection.token, room.seats.red?.credentialHash) ? 'red' : matches(connection.token, room.seats.black?.credentialHash) ? 'black' : 'spectator' } }
   private clearDisconnect(id: string) { const runtime = this.getRuntime(id); if (runtime.disconnect) clearTimeout(runtime.disconnect.timer); runtime.disconnect = undefined }
+  private clearProposal(id: string, kind: 'swap' | 'undo' | 'draw') {
+    const runtime = this.getRuntime(id)
+    const key = kind === 'swap' ? 'pendingSwap' : kind === 'undo' ? 'pendingUndo' : 'pendingDraw'
+    const proposal = runtime[key]
+    if (proposal) clearTimeout(proposal.timer)
+    runtime[key] = undefined
+  }
+  private clearProposals(id: string) { this.clearProposal(id, 'swap'); this.clearProposal(id, 'undo'); this.clearProposal(id, 'draw') }
   private updateDisconnect(room: StoredRoom) {
     const runtime = this.getRuntime(room.id)
     if (room.phase !== 'playing') { this.clearDisconnect(room.id); return }
     const online = (color: RoomColor) => [...runtime.sockets].some(ws => this.connections.get(ws)?.role === color)
-    if (online('red') === online('black')) { this.clearDisconnect(room.id); return }
+    if (!online('red') && !online('black')) { runtime.bothOfflineSince ??= Date.now(); this.clearDisconnect(room.id); return }
+    runtime.bothOfflineSince = undefined
+    if (online('red') && online('black')) { this.clearDisconnect(room.id); return }
     const color: RoomColor = online('red') ? 'black' : 'red', deadline = Date.now() + this.disconnectTimeoutMs
     if (runtime.disconnect?.color === color) return
     this.clearDisconnect(room.id)
@@ -329,8 +519,7 @@ export class RoomManager {
     room.statusReason = 'disconnect'
     room.phase = 'finished'
     room.finishedAt = Date.now()
-    runtime.pendingDrawBy = undefined
-    runtime.pendingUndoBy = undefined
+    this.clearProposals(room.id)
     this.touch(room)
     await this.repository.save(room)
     this.clearDisconnect(room.id)

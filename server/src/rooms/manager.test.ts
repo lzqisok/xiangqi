@@ -16,6 +16,9 @@ function snapshot(messages: unknown[]): RoomSnapshot {
   assert.ok(item)
   return item.room
 }
+function message(messages: unknown[], type: string) {
+  return [...messages].reverse().find(value => (value as { type?: string }).type === type) as Record<string, unknown> | undefined
+}
 
 test('room manager authorizes two seats and redacts hidden captures per recipient', async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-rooms-'))
@@ -140,6 +143,7 @@ test('owner can approve a spectator seat request and players can swap before sta
   const owner = socket(ownerMessages), applicant = socket(applicantMessages)
 
   await manager.handle(owner, { type: 'room-subscribe', roomId: created.room.id, token: created.ownerToken, nickname: '房主' })
+  await assert.rejects(() => manager.handle(owner, { type: 'room-claim-seat', roomId: created.room.id, side: 'red', expectedRevision: snapshot(ownerMessages).revision }), /操作标识无效/)
   await manager.handle(owner, { type: 'room-claim-seat', roomId: created.room.id, side: 'red', nickname: '房主', expectedRevision: snapshot(ownerMessages).revision, commandId: 'owner-seat' })
   await assert.rejects(() => manager.handle(owner, { type: 'room-claim-seat', roomId: created.room.id, side: 'black', nickname: '房主', expectedRevision: snapshot(ownerMessages).revision, commandId: 'owner-seat-again' }), /已经占用一个席位/)
   await manager.handle(applicant, { type: 'room-subscribe', roomId: created.room.id, nickname: '申请者' })
@@ -218,4 +222,141 @@ test('starting with an already disconnected ready player begins the disconnect c
   assert.equal(snapshot(blackMessages).status, 'black-wins')
   assert.equal(snapshot(blackMessages).statusReason, 'disconnect')
   manager.disconnect(black)
+})
+
+test('seat credentials can move devices and owners can manage waiting rooms', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-manage-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory); await repository.init()
+  const manager = new RoomManager(repository, async () => null)
+  const created = await manager.createRoom('管理测试', 'xiangqi')
+  const ownerMessages: unknown[] = [], guestMessages: unknown[] = [], restoredMessages: unknown[] = []
+  const owner = socket(ownerMessages), guest = socket(guestMessages), restored = socket(restoredMessages)
+  await manager.handle(owner, { type: 'room-subscribe', roomId: created.room.id, token: created.ownerToken })
+  await manager.handle(owner, { type: 'room-claim-seat', roomId: created.room.id, side: 'red', expectedRevision: snapshot(ownerMessages).revision, commandId: 'manage-owner' })
+  await manager.handle(guest, { type: 'room-subscribe', roomId: created.room.id })
+  await manager.handle(guest, { type: 'room-invite-seat', roomId: created.room.id, inviteToken: created.inviteToken, side: 'black', expectedRevision: snapshot(guestMessages).revision, commandId: 'manage-guest' })
+  const guestToken = String(message(guestMessages, 'room-seat-token')?.token)
+  assert.ok(guestToken)
+
+  await manager.handle(restored, { type: 'room-subscribe', roomId: created.room.id, token: guestToken })
+  assert.equal(snapshot(restoredMessages).role, 'black')
+  assert.equal(snapshot(guestMessages).role, 'spectator')
+  await manager.handle(restored, { type: 'room-leave-seat', roomId: created.room.id, expectedRevision: snapshot(restoredMessages).revision, commandId: 'manage-leave' })
+  assert.equal(snapshot(ownerMessages).seats.black, undefined)
+
+  await manager.handle(owner, { type: 'room-renew-invite', roomId: created.room.id, expectedRevision: snapshot(ownerMessages).revision, commandId: 'manage-invite' })
+  assert.ok(message(ownerMessages, 'room-invite-token')?.inviteToken)
+  await manager.handle(owner, { type: 'room-dissolve', roomId: created.room.id, expectedRevision: snapshot(ownerMessages).revision, commandId: 'manage-dissolve' })
+  assert.equal(repository.get(created.room.id), null)
+  assert.ok(message(guestMessages, 'room-closed'))
+  manager.dispose()
+})
+
+test('room proposals are exclusive, cancellable, and expire automatically', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-proposals-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory); await repository.init()
+  const manager = new RoomManager(repository, async () => null, 60_000, { proposalTimeoutMs: 15 })
+  const created = await manager.createRoom('协商测试', 'xiangqi')
+  const redMessages: unknown[] = [], blackMessages: unknown[] = []
+  const red = socket(redMessages), black = socket(blackMessages)
+  await manager.handle(red, { type: 'room-subscribe', roomId: created.room.id, token: created.ownerToken })
+  await manager.handle(red, { type: 'room-claim-seat', roomId: created.room.id, side: 'red', expectedRevision: snapshot(redMessages).revision, commandId: 'proposal-red' })
+  await manager.handle(black, { type: 'room-subscribe', roomId: created.room.id })
+  await manager.handle(black, { type: 'room-invite-seat', roomId: created.room.id, inviteToken: created.inviteToken, side: 'black', expectedRevision: snapshot(blackMessages).revision, commandId: 'proposal-black' })
+  await manager.handle(red, { type: 'room-ready', roomId: created.room.id, ready: true, expectedRevision: snapshot(redMessages).revision, commandId: 'proposal-ready-red' })
+  await manager.handle(black, { type: 'room-ready', roomId: created.room.id, ready: true, expectedRevision: snapshot(blackMessages).revision, commandId: 'proposal-ready-black' })
+  await manager.handle(red, { type: 'room-move', roomId: created.room.id, uci: 'h2e2', expectedRevision: snapshot(redMessages).revision, commandId: 'proposal-move' })
+  await manager.handle(red, { type: 'room-draw-offer', roomId: created.room.id, expectedRevision: snapshot(redMessages).revision, commandId: 'proposal-draw' })
+  await assert.rejects(() => manager.handle(black, { type: 'room-draw-offer', roomId: created.room.id, expectedRevision: snapshot(blackMessages).revision, commandId: 'proposal-duplicate' }), /已有待处理/)
+  await assert.rejects(() => manager.handle(red, { type: 'room-undo-request', roomId: created.room.id, expectedRevision: snapshot(redMessages).revision, commandId: 'proposal-other-kind' }), /已有待处理/)
+  await manager.handle(red, { type: 'room-proposal-cancel', roomId: created.room.id, kind: 'draw', expectedRevision: snapshot(redMessages).revision, commandId: 'proposal-cancel' })
+  assert.equal(snapshot(blackMessages).pendingDrawBy, undefined)
+  await manager.handle(red, { type: 'room-draw-offer', roomId: created.room.id, expectedRevision: snapshot(redMessages).revision, commandId: 'proposal-expire' })
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(snapshot(blackMessages).pendingDrawBy, undefined)
+  manager.disconnect(red); manager.disconnect(black); manager.dispose()
+})
+
+test('cleanup expires idle rooms, abandons offline games, and later removes finished data', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-cleanup-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory); await repository.init()
+  const manager = new RoomManager(repository, async () => null, 60_000, { waitingTtlMs: 10, abandonedTtlMs: 10, finishedTtlMs: 10 })
+  const waiting = await manager.createRoom('无人房间', 'xiangqi')
+  await manager.cleanup(waiting.room.updatedAt + 11)
+  assert.equal(repository.get(waiting.room.id), null)
+
+  const playing = await manager.createRoom('离线对局', 'xiangqi')
+  const redMessages: unknown[] = [], blackMessages: unknown[] = [], spectatorMessages: unknown[] = []
+  const red = socket(redMessages), black = socket(blackMessages), spectator = socket(spectatorMessages)
+  await manager.handle(red, { type: 'room-subscribe', roomId: playing.room.id, token: playing.ownerToken })
+  await manager.handle(red, { type: 'room-claim-seat', roomId: playing.room.id, side: 'red', expectedRevision: snapshot(redMessages).revision, commandId: 'cleanup-red' })
+  await manager.handle(black, { type: 'room-subscribe', roomId: playing.room.id })
+  await manager.handle(black, { type: 'room-invite-seat', roomId: playing.room.id, inviteToken: playing.inviteToken, side: 'black', expectedRevision: snapshot(blackMessages).revision, commandId: 'cleanup-black' })
+  await manager.handle(red, { type: 'room-ready', roomId: playing.room.id, ready: true, expectedRevision: snapshot(redMessages).revision, commandId: 'cleanup-ready-red' })
+  await manager.handle(black, { type: 'room-ready', roomId: playing.room.id, ready: true, expectedRevision: snapshot(blackMessages).revision, commandId: 'cleanup-ready-black' })
+  await manager.handle(spectator, { type: 'room-subscribe', roomId: playing.room.id })
+  manager.disconnect(red); manager.disconnect(black)
+  await manager.cleanup(Date.now() + 20)
+  assert.equal(repository.get(playing.room.id)?.statusReason, 'abandoned')
+  assert.equal(snapshot(spectatorMessages).phase, 'finished')
+  manager.disconnect(spectator)
+  const finishedAt = repository.get(playing.room.id)!.finishedAt!
+  await manager.cleanup(finishedAt + 11)
+  assert.equal(repository.get(playing.room.id), null)
+  manager.dispose()
+})
+
+test('resubscribing one socket updates connectivity in the previous room', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-resubscribe-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory); await repository.init()
+  const manager = new RoomManager(repository, async () => null, 60_000)
+  const first = await manager.createRoom('原房间', 'xiangqi')
+  const second = await manager.createRoom('新房间', 'xiangqi')
+  const redMessages: unknown[] = [], blackMessages: unknown[] = []
+  const red = socket(redMessages), black = socket(blackMessages)
+  await manager.handle(red, { type: 'room-subscribe', roomId: first.room.id, token: first.ownerToken })
+  await manager.handle(red, { type: 'room-claim-seat', roomId: first.room.id, side: 'red', expectedRevision: snapshot(redMessages).revision, commandId: 'resub-red' })
+  await manager.handle(black, { type: 'room-subscribe', roomId: first.room.id })
+  await manager.handle(black, { type: 'room-invite-seat', roomId: first.room.id, inviteToken: first.inviteToken, side: 'black', expectedRevision: snapshot(blackMessages).revision, commandId: 'resub-black' })
+  await manager.handle(red, { type: 'room-ready', roomId: first.room.id, ready: true, expectedRevision: snapshot(redMessages).revision, commandId: 'resub-ready-red' })
+  await manager.handle(black, { type: 'room-ready', roomId: first.room.id, ready: true, expectedRevision: snapshot(blackMessages).revision, commandId: 'resub-ready-black' })
+  await manager.handle(red, { type: 'room-subscribe', roomId: second.room.id, token: second.ownerToken })
+  assert.equal(snapshot(blackMessages).disconnect?.color, 'red')
+  manager.disconnect(red); manager.disconnect(black); manager.dispose()
+})
+
+test('lifecycle cleanup is serialized behind active room commands', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-cleanup-queue-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory); await repository.init()
+  let releaseHint!: () => void
+  let hintStarted!: () => void
+  const started = new Promise<void>(resolve => { hintStarted = resolve })
+  const manager = new RoomManager(repository, async () => {
+    hintStarted()
+    await new Promise<void>(resolve => { releaseHint = resolve })
+    return 'h2e2'
+  }, 60_000, { abandonedTtlMs: 1 })
+  const created = await manager.createRoom('清理串行测试', 'xiangqi')
+  const redMessages: unknown[] = [], blackMessages: unknown[] = []
+  const red = socket(redMessages), black = socket(blackMessages)
+  await manager.handle(red, { type: 'room-subscribe', roomId: created.room.id, token: created.ownerToken })
+  await manager.handle(red, { type: 'room-claim-seat', roomId: created.room.id, side: 'red', expectedRevision: snapshot(redMessages).revision, commandId: 'cleanup-queue-red' })
+  await manager.handle(black, { type: 'room-subscribe', roomId: created.room.id })
+  await manager.handle(black, { type: 'room-invite-seat', roomId: created.room.id, inviteToken: created.inviteToken, side: 'black', expectedRevision: snapshot(blackMessages).revision, commandId: 'cleanup-queue-black' })
+  await manager.handle(red, { type: 'room-ready', roomId: created.room.id, ready: true, expectedRevision: snapshot(redMessages).revision, commandId: 'cleanup-queue-ready-red' })
+  await manager.handle(black, { type: 'room-ready', roomId: created.room.id, ready: true, expectedRevision: snapshot(blackMessages).revision, commandId: 'cleanup-queue-ready-black' })
+  const hint = manager.handle(red, { type: 'room-hint', roomId: created.room.id, expectedRevision: snapshot(redMessages).revision, commandId: 'cleanup-queue-hint' })
+  await started
+  manager.disconnect(red); manager.disconnect(black)
+  const cleanup = manager.cleanup(Date.now() + 10)
+  releaseHint()
+  await hint; await cleanup; await manager.flush()
+  assert.equal(repository.get(created.room.id)?.statusReason, 'abandoned')
+  assert.equal(repository.get(created.room.id)?.seats.red?.hintsUsed, 1)
+  manager.dispose()
 })

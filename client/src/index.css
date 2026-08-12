@@ -2845,6 +2845,7 @@ body {
 .lan-panel { display: flex; flex-direction: column; gap: 10px; }
 .lan-panel button, .lan-create button { padding: 9px 12px; border: 1px solid #bca98c; border-radius: 7px; background: #fffaf0; cursor: pointer; }
 .lan-panel button:disabled { opacity: .5; cursor: not-allowed; }
+.lan-panel .lan-danger-button { border-color: #a44a42; color: #8b241c; background: #fff1ef; }
 .lan-room-waiting .lan-seats { grid-template-columns: 1fr; gap: 10px; margin: 8px 0; }
 .lan-room-waiting .lan-seat { min-height: 108px; }
 .lan-room-waiting .lan-ready-button { border-color: #3f6b58; background: #3f6b58; color: #fff; font-weight: 700; }

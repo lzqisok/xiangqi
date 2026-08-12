@@ -18,6 +18,15 @@ const app = express()
 const server = createServer(app)
 const LAN_MODE = process.env.LAN_MODE === '1'
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 })
+type LiveWebSocket = WebSocket & { isAlive?: boolean }
+const heartbeatTimer = setInterval(() => {
+  for (const client of wss.clients as Set<LiveWebSocket>) {
+    if (client.isAlive === false) { client.terminate(); continue }
+    client.isAlive = false
+    client.ping()
+  }
+}, 15_000)
+heartbeatTimer.unref()
 const serverDirectory = fileURLToPath(new URL('../', import.meta.url))
 const gameRepository = new JsonGameRepository(process.env.XIANGQI_DATA_DIR || path.resolve(serverDirectory, '../data/games'))
 const roomRepository = new RoomRepository(process.env.XIANGQI_ROOM_DIR || path.resolve(serverDirectory, '../data/rooms'))
@@ -162,6 +171,9 @@ async function getRoomHint(room: StoredRoom, viewer: RoomColor): Promise<string 
   return result.move?.slice(0, 4) || null
 }
 const roomManager = new RoomManager(roomRepository, getRoomHint)
+void roomManager.cleanup().catch(error => console.error('Room cleanup failed:', error))
+const roomCleanupTimer = setInterval(() => void roomManager.cleanup().catch(error => console.error('Room cleanup failed:', error)), 60 * 60 * 1000)
+roomCleanupTimer.unref()
 app.use('/api/rooms', createRoomRouter(roomManager))
 
 wss.on('connection', async (ws, request) => {
@@ -170,6 +182,8 @@ wss.on('connection', async (ws, request) => {
       if (new URL(request.headers.origin).host !== request.headers.host) return ws.close(1008, 'Origin not allowed')
     } catch { return ws.close(1008, 'Origin not allowed') }
   }
+  ;(ws as LiveWebSocket).isAlive = true
+  ws.on('pong', () => { (ws as LiveWebSocket).isAlive = true })
   console.log('Client connected')
 
   const sessionId = makeSessionId()
@@ -523,7 +537,7 @@ wss.on('connection', async (ws, request) => {
     }
     destroyEngineSlots(engineSlots)
     gameLeases.releaseSocket(ws)
-    roomManager.disconnect(ws)
+    if (!shuttingDown) roomManager.disconnect(ws)
   })
 })
 
@@ -552,10 +566,13 @@ function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
   console.log('\nShutting down...')
+  clearInterval(heartbeatTimer)
+  clearInterval(roomCleanupTimer)
   for (const engine of liveEngines) engine.destroy()
   liveEngines.clear()
   for (const client of wss.clients) client.terminate()
   wss.close()
+  roomManager.dispose()
   const serverClosed = new Promise<void>(resolve => server.close(() => resolve()))
   Promise.allSettled([gameRepository.flush(), roomManager.flush(), serverClosed]).then(results => {
     const failed = results.some(result => result.status === 'rejected')

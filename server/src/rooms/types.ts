@@ -3,7 +3,7 @@ export type RoomColor = 'red' | 'black'
 export type RoomPhase = 'waiting' | 'playing' | 'finished'
 export type RoomRole = 'owner' | RoomColor | 'spectator'
 export type RoomStatus = 'playing' | 'red-wins' | 'black-wins' | 'draw'
-export type RoomStatusReason = 'checkmate' | 'stalemate' | 'resignation' | 'agreement' | 'repetition' | 'natural-limit' | 'move-limit' | 'disconnect'
+export type RoomStatusReason = 'checkmate' | 'stalemate' | 'resignation' | 'agreement' | 'repetition' | 'natural-limit' | 'move-limit' | 'disconnect' | 'abandoned'
 
 export type RoomPiece = {
   type: 'k' | 'a' | 'b' | 'n' | 'r' | 'c' | 'p'
@@ -16,6 +16,7 @@ export type RoomBoard = (RoomPiece | null)[][]
 export type RoomMove = {
   uci: string
   color: RoomColor
+  notation?: string
   revealed?: RoomPiece['type']
   captured?: RoomPiece['type']
   capturedColor?: RoomColor
@@ -58,7 +59,10 @@ export type RoomSummary = {
   black: string | null
   spectatorCount: number
   moveCount: number
+  status: RoomStatus
+  statusReason?: RoomStatusReason
   createdAt: number
+  updatedAt: number
 }
 
 export type PublicCapturedPiece = { color: RoomColor; type: RoomPiece['type'] | null; hidden: boolean; capturedBy: RoomColor }
@@ -71,6 +75,7 @@ export type RoomSnapshot = {
   revision: number
   role: RoomRole
   isOwner: boolean
+  inviteAvailable: boolean
   seats: Partial<Record<RoomColor, { nickname: string; ready: boolean; online: boolean; hintsRemaining: number }>>
   board: RoomBoard
   turn: RoomColor
@@ -80,8 +85,11 @@ export type RoomSnapshot = {
   statusReason?: RoomStatusReason
   spectatorCount: number
   pendingDrawBy?: RoomColor
+  pendingDrawDeadline?: number
   pendingUndoBy?: RoomColor
+  pendingUndoDeadline?: number
   pendingSwapBy?: RoomColor
+  pendingSwapDeadline?: number
   applications?: Array<{ id: string; nickname: string; side: RoomColor }>
   disconnect?: { color: RoomColor; deadline: number }
 }

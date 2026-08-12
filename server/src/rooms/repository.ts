@@ -8,7 +8,7 @@ const HASH = /^[0-9a-f]{64}$/
 const UCI = /^[a-i][0-9][a-i][0-9]$/
 const PIECES = new Set(['k', 'a', 'b', 'n', 'r', 'c', 'p'])
 const STATUSES = new Set(['playing', 'red-wins', 'black-wins', 'draw'])
-const REASONS = new Set(['checkmate', 'stalemate', 'resignation', 'agreement', 'repetition', 'natural-limit', 'move-limit', 'disconnect'])
+const REASONS = new Set(['checkmate', 'stalemate', 'resignation', 'agreement', 'repetition', 'natural-limit', 'move-limit', 'disconnect', 'abandoned'])
 function validLayout(layout: string) {
   if (!/^[rabncp]{30}$/.test(layout)) return false
   return [layout.slice(0, 15), layout.slice(15)].every(side => [...side].sort().join('') === [...'rraabbnnccppppp'].sort().join(''))
@@ -20,6 +20,7 @@ function validRoom(value: unknown): value is StoredRoom {
   if (!Number.isInteger(room.revision) || room.revision < 0 || !HASH.test(room.ownerHash) || room.inviteHash !== undefined && !HASH.test(room.inviteHash)) return false
   if (!Array.isArray(room.moves) || room.moves.length > 2000 || !room.moves.every(move => (
     move && UCI.test(move.uci) && (move.color === 'red' || move.color === 'black') &&
+    (move.notation === undefined || typeof move.notation === 'string' && move.notation.length <= 20) &&
     (move.revealed === undefined || PIECES.has(move.revealed)) &&
     (move.captured === undefined || PIECES.has(move.captured)) &&
     (move.capturedColor === undefined || move.capturedColor === 'red' || move.capturedColor === 'black') &&
@@ -40,7 +41,7 @@ function validRoom(value: unknown): value is StoredRoom {
 
 export class RoomRepository {
   private rooms = new Map<string, StoredRoom>()
-  private queue: Promise<void> = Promise.resolve()
+  private queues = new Map<string, Promise<void>>()
 
   constructor(private readonly directory: string) {}
 
@@ -58,21 +59,35 @@ export class RoomRepository {
   get(id: string) { const room = this.rooms.get(id); return room ? structuredClone(room) : null }
 
   async create(room: StoredRoom) {
-    if (this.rooms.has(room.id)) throw new Error('房间已存在')
-    await this.mutate(async () => { await this.write(room); this.rooms.set(room.id, structuredClone(room)) })
+    await this.mutate(room.id, async () => {
+      if (this.rooms.has(room.id)) throw new Error('房间已存在')
+      await this.write(room)
+      this.rooms.set(room.id, structuredClone(room))
+    })
     return structuredClone(room)
   }
 
   async save(room: StoredRoom) {
-    await this.mutate(async () => { await this.write(room); this.rooms.set(room.id, structuredClone(room)) })
+    await this.mutate(room.id, async () => { await this.write(room); this.rooms.set(room.id, structuredClone(room)) })
     return structuredClone(room)
   }
 
-  async flush() { await this.queue }
+  async delete(id: string) {
+    await this.mutate(id, async () => {
+      const target = path.join(this.directory, `${id}.json`)
+      await Promise.all([unlink(target).catch(() => undefined), unlink(`${target}.bak`).catch(() => undefined)])
+      this.rooms.delete(id)
+    })
+  }
 
-  private async mutate(action: () => Promise<void>) {
-    const result = this.queue.then(action, action)
-    this.queue = result.catch(() => undefined)
+  async flush() { await Promise.all([...this.queues.values()]) }
+
+  private async mutate(id: string, action: () => Promise<void>) {
+    const previous = this.queues.get(id) || Promise.resolve()
+    const result = previous.then(action, action)
+    const settled = result.catch(() => undefined)
+    this.queues.set(id, settled)
+    void settled.finally(() => { if (this.queues.get(id) === settled) this.queues.delete(id) })
     return result
   }
 

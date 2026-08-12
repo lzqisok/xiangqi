@@ -70,10 +70,36 @@ test('room repository removes primary and backup snapshots', async t => {
   const repository = new RoomRepository(directory)
   await repository.init()
   await repository.create(stored)
+  await repository.chat.append(stored.id, { id: randomUUID(), authorId: 'a'.repeat(64), nickname: '房主', role: 'owner', isOwner: true, content: '测试消息', createdAt: Date.now() })
+  await repository.chat.updateSettings(stored.id, { everyoneMuted: true, mutedAuthorIds: ['b'.repeat(64)], roomSensitiveWords: ['广告'] })
   stored.revision++
   await repository.save(stored)
   await repository.delete(stored.id)
   assert.equal(repository.get(stored.id), null)
   await assert.rejects(() => access(path.join(directory, `${stored.id}.json`)))
   await assert.rejects(() => access(path.join(directory, `${stored.id}.json.bak`)))
+  await assert.rejects(() => access(path.join(directory, `${stored.id}.chat.json`)))
+  await assert.rejects(() => access(path.join(directory, `${stored.id}.chat.json.bak`)))
+})
+
+test('room chat repository persists bounded ordered history independently', async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-chat-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const stored = room()
+  const repository = new RoomRepository(directory)
+  await repository.init()
+  await repository.create(stored)
+  for (let index = 0; index < 105; index++) {
+    await repository.chat.append(stored.id, { id: randomUUID(), authorId: 'b'.repeat(64), nickname: '观众', role: 'spectator', isOwner: false, content: `消息 ${index}`, createdAt: Date.now() + index })
+  }
+  assert.equal(repository.chat.list(stored.id).length, 100)
+  assert.equal(repository.chat.list(stored.id)[0].content, '消息 5')
+  assert.equal(repository.chat.list(stored.id).at(-1)?.sequence, 105)
+  await repository.chat.updateSettings(stored.id, { everyoneMuted: true, mutedAuthorIds: ['b'.repeat(64)], roomSensitiveWords: ['广告'] })
+
+  const reloaded = new RoomRepository(directory)
+  await reloaded.init()
+  assert.equal(reloaded.chat.list(stored.id).length, 100)
+  assert.equal(reloaded.chat.list(stored.id).at(-1)?.content, '消息 104')
+  assert.deepEqual(reloaded.chat.settings(stored.id), { everyoneMuted: true, mutedAuthorIds: ['b'.repeat(64)], roomSensitiveWords: ['广告'] })
 })

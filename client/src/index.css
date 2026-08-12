@@ -2841,8 +2841,26 @@ body {
 .lan-seat { min-height: 120px; border: 1px solid #d8c8ad; border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
 .lan-seat.red { border-top: 4px solid #b73a30; } .lan-seat.black { border-top: 4px solid #333; }
 .lan-request { margin: 10px 0; padding: 10px; border-radius: 7px; background: #f2e6cf; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.lan-game { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: minmax(620px, 1fr) 320px; gap: 24px; align-items: start; }
+.lan-room-shell { min-height: 100dvh; padding: 14px 18px; }
+.lan-room-shell .lan-header { max-width: 1480px; min-height: 62px; margin-bottom: 10px; }
+.lan-room-shell .lan-header h1 { font-size: 27px; }
+.lan-room-shell .lan-header p { margin-top: 3px; font-size: 14px; }
+.lan-game {
+  --lan-board-width: min(650px, calc((100dvh - 112px) / 1.105), calc(100vw - 390px));
+  width: min(100%, 1020px);
+  max-width: 1020px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: var(--lan-board-width) minmax(300px, 340px);
+  justify-content: center;
+  gap: 16px;
+  align-items: stretch;
+}
+.lan-game > .board-stage { position: relative; box-sizing: border-box; grid-column: 1; grid-row: 1; width: var(--lan-board-width); justify-self: center; }
+.lan-game > .board-stage > .board-canvas { width: 100% !important; }
+.lan-side { grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; height: auto; contain: size; display: flex; flex-direction: column; gap: 10px; }
 .lan-panel { display: flex; flex-direction: column; gap: 10px; }
+.lan-room-shell .lan-panel { min-width: 0; padding: 14px; gap: 8px; }
 .lan-panel button, .lan-create button { padding: 9px 12px; border: 1px solid #bca98c; border-radius: 7px; background: #fffaf0; cursor: pointer; }
 .lan-panel button:disabled { opacity: .5; cursor: not-allowed; }
 .lan-panel .lan-danger-button { border-color: #a44a42; color: #8b241c; background: #fff1ef; }
@@ -2850,11 +2868,74 @@ body {
 .lan-room-waiting .lan-seat { min-height: 108px; }
 .lan-room-waiting .lan-ready-button { border-color: #3f6b58; background: #3f6b58; color: #fff; font-weight: 700; }
 .lan-spectators { padding-top: 4px; color: #776654; font-size: 12px; }
-.lan-moves { max-height: 300px; overflow: auto; display: flex; flex-direction: column; gap: 4px; font-family: monospace; }
+.lan-board-seat-controls { position: absolute; z-index: 3; inset: 7px; pointer-events: none; }
+.lan-board-seat { position: absolute; left: 0; box-sizing: border-box; width: 100%; min-width: 0; min-height: 112px; display: flex; flex-direction: column; justify-content: space-between; gap: 9px; padding: 12px 14px; border: 0; border-radius: 12px; background: linear-gradient(135deg, rgba(250,247,239,.82), rgba(222,215,202,.74)); box-shadow: 0 10px 28px rgba(57,42,27,.24); backdrop-filter: blur(3px); pointer-events: auto; }
+.lan-board-seat.black { top: 19%; }
+.lan-board-seat.red { bottom: 19%; background: linear-gradient(135deg, rgba(255,242,235,.82), rgba(238,203,188,.74)); }
+.lan-board-flipped .lan-board-seat.black { top: auto; bottom: 19%; }
+.lan-board-flipped .lan-board-seat.red { top: 19%; bottom: auto; }
+.lan-board-seat.current { box-shadow: 0 12px 30px rgba(57,42,27,.3); }
+.lan-board-seat > div { min-width: 0; display: flex; align-items: baseline; gap: 8px; padding-right: 34px; }
+.lan-board-seat strong { flex: 0 0 auto; color: #33261b; font-size: 18px; line-height: 1.1; }
+.lan-board-seat.red strong { color: #9e3029; }
+.lan-board-seat span { min-width: 0; overflow: hidden; color: #6f604f; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.lan-board-seat button { width: 100%; min-height: 42px; padding: 8px 12px; border: 0; border-radius: 8px; background: rgba(255,250,240,.96); color: #3f3023; cursor: pointer; font-size: 14px; font-weight: 800; white-space: nowrap; box-shadow: 0 3px 9px rgba(75,52,30,.12); }
+.lan-board-seat.red > button:not(.remove) { color: #9e3029; }
+.lan-board-seat button.ready { background: #3f6b58; color: #fff; }
+.lan-board-seat button.remove { position: absolute; top: 9px; right: 10px; width: auto; min-height: 0; padding: 2px 5px; border: 0; background: transparent; color: #9b352e; font-size: 10px; font-weight: 500; box-shadow: none; }
+.lan-board-seat button:disabled { opacity: .5; cursor: not-allowed; }
+.lan-room-tools { flex: 0 0 auto; }
+.lan-room-tools > label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; color: #665646; font-size: 12px; font-weight: 700; }
+.lan-room-tools > label input { min-width: 0; padding: 7px 9px; border: 1px solid #c9b89e; border-radius: 7px; background: #fffdf8; }
+.lan-room-tool-buttons { display: grid; gap: 6px; }
+.lan-room-tool-buttons button { padding: 7px 9px; font-size: 12px; }
+.lan-room-tool-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: #776654; font-size: 11px; }
+.lan-room-tool-meta button { padding: 4px 7px; font-size: 10px; }
+.lan-room-tool-meta span { margin-left: auto; }
+.lan-moves { max-height: min(180px, calc(100dvh - 410px)); overflow: auto; display: flex; flex-direction: column; gap: 4px; font-family: monospace; }
+.lan-chat-panel { position: relative; flex: 1 1 auto; min-height: 0; max-height: none; }
+.lan-chat-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.lan-chat-heading h2, .lan-chat-heading p { margin: 0; }
+.lan-chat-heading h2 { font-size: 18px; }
+.lan-chat-heading p { margin-top: 4px; color: #776654; font-size: 12px; }
+.lan-chat-heading > div:last-child { display: flex; align-items: flex-end; gap: 5px; flex-direction: column; }
+.lan-chat-heading > div:last-child > span { color: #3f6b58; font-size: 12px; white-space: nowrap; }
+.lan-chat-heading > div:last-child > button { padding: 3px 6px; font-size: 10px; }
+.lan-chat-panel > .lan-error { margin: 0; padding: 9px 10px; font-size: 12px; }
+.lan-chat-management { position: absolute; z-index: 4; top: 62px; left: 10px; right: 10px; display: grid; gap: 9px; max-height: calc(100% - 74px); overflow: auto; padding: 10px; border: 1px solid #d7c3a3; border-radius: 9px; background: #f8eddb; box-shadow: 0 12px 28px rgba(70,45,24,.2); }
+.lan-chat-management > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lan-chat-management label { display: grid; gap: 5px; color: #665646; font-size: 12px; font-weight: 700; }
+.lan-chat-management textarea { resize: vertical; min-height: 60px; padding: 7px 8px; border: 1px solid #c9b89e; border-radius: 7px; background: #fffdf8; font: inherit; }
+.lan-chat-management small { color: #8b7861; font-size: 10px; }
+.lan-chat-management small.over { color: #a62920; font-weight: 700; }
+.lan-chat-management button { padding: 5px 7px; font-size: 11px; }
+.lan-chat-management button.active { border-color: #a44a42; background: #fff1ef; color: #8b241c; }
+.lan-chat-management .lan-chat-muted-list { display: grid; justify-content: stretch; }
+.lan-chat-muted-list > span { display: flex; gap: 5px; flex-wrap: wrap; }
+.lan-chat-muted-list > span button { border-color: #d0bda1; background: #fffaf0; color: #714c32; }
+.lan-chat-list { flex: 1 1 auto; min-height: 100px; height: auto; overflow: auto; padding: 3px 1px 3px 0; display: flex; flex-direction: column; gap: 3px; overscroll-behavior: contain; }
+.lan-chat-empty { margin: auto; color: #8b7861; text-align: center; font-size: 11px; }
+.lan-chat-message { min-width: 0; padding: 5px 7px; border-bottom: 1px solid #eadfce; background: rgba(255,253,248,.7); }
+.lan-chat-line { min-width: 0; display: flex; align-items: baseline; gap: 3px; color: #3e3328; font-size: 11px; line-height: 1.35; }
+.lan-chat-line strong { max-width: 72px; overflow: hidden; flex: 0 1 auto; color: #4d3524; text-overflow: ellipsis; white-space: nowrap; }
+.lan-chat-line .lan-chat-author { max-width: 72px; overflow: hidden; flex: 0 1 auto; padding: 0; border: 0; background: transparent; color: #6f2d27; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; text-decoration: underline dotted; }
+.lan-chat-line i { flex: 0 0 auto; color: #8a6f50; font-size: 9px; font-style: normal; white-space: nowrap; }
+.lan-chat-line > span { min-width: 0; overflow: hidden; flex: 1 1 auto; text-overflow: ellipsis; white-space: nowrap; }
+.lan-chat-line time { flex: 0 0 auto; color: #a08e79; font-size: 9px; white-space: nowrap; }
+.lan-chat-line .lan-chat-delete { flex: 0 0 auto; padding: 0; border: 0; background: transparent; color: #a44a42; font-size: 9px; }
+.lan-chat-member-menu { margin-top: 7px; padding: 7px; border-radius: 7px; background: #f3e5cf; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; }
+.lan-chat-member-menu button { padding: 4px 7px; border-color: #a44a42; color: #8b241c; font-size: 11px; }
+.lan-chat-compose { display: grid; gap: 7px; }
+.lan-chat-compose textarea { width: 100%; resize: none; padding: 7px 8px; border: 1px solid #c9b89e; border-radius: 7px; background: #fffdf8; color: #342a20; font: inherit; font-size: 11px; line-height: 1.35; }
+.lan-chat-compose > div { display: flex; align-items: center; justify-content: space-between; }
+.lan-chat-compose span { color: #8b7861; font-size: 11px; }
+.lan-chat-compose span.over { color: #a62920; font-weight: 700; }
+.lan-chat-compose button { min-width: 64px; padding: 6px 9px; border-color: #7b3028; background: #7b3028; color: #fff; font-size: 11px; font-weight: 700; }
 .lan-captured { width: min(592px, 100%); margin: 10px auto 0; padding: 10px 14px; border-radius: 8px; background: rgba(255,255,255,.7); display: grid; gap: 6px; }
 .lan-captured span { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .lan-captured i { width: 28px; height: 28px; border: 1px solid #9d7952; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-style: normal; background: #f6dfae; }
 .lan-copy-fallback { display: grid; gap: 6px; margin-top: 10px; color: #745200; }
 .lan-copy-fallback input { width: 100%; }
-@media (max-width: 900px) { .lan-game { display: block; } .lan-panel { margin-top: 18px; } .lan-shell { padding: 14px; } .lan-seats { grid-template-columns: 1fr; } }
+@media (max-width: 1000px) { .lan-room-shell { min-height: 100vh; padding: 14px; } .lan-room-shell .lan-header { margin-bottom: 18px; } .lan-game { display: block; } .lan-game > .board-stage { width: 592px; max-width: 100%; margin: 0 auto; } .lan-side { width: 100%; height: auto; contain: none; display: flex; flex-direction: column; gap: 18px; margin-top: 18px; } .lan-room-shell .lan-panel { width: 100%; max-width: 592px; margin: 0 auto; padding: 20px; } .lan-chat-panel { min-height: 430px; max-height: none; } .lan-chat-list { flex: none; height: 280px; } .lan-chat-management { position: static; max-height: none; box-shadow: none; } .lan-shell { padding: 14px; } .lan-seats { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .lan-board-seat { min-height: 90px; gap: 6px; padding: 7px; } .lan-board-seat > div { display: block; padding-right: 0; } .lan-board-seat strong { display: block; font-size: 14px; } .lan-board-seat span { display: block; margin-top: 2px; font-size: 9px; } .lan-board-seat button { min-height: 34px; padding: 5px; font-size: 11px; } .lan-board-seat button.remove { top: 4px; right: 4px; width: auto; min-height: 0; } }
 @media (max-width: 640px) { .home-screen { padding: 14px; } .home-card { padding: 26px 20px; } .home-brand { margin-bottom: 24px; } .home-brand h1 { font-size: 28px; } .home-entries { grid-template-columns: 1fr; } .home-entries a { min-height: 180px; } .lan-header { align-items: flex-start; } .lan-create-heading { display: block; } .lan-create-heading > span { display: inline-block; margin-top: 10px; } .lan-form-grid, .lan-variant-picker { grid-template-columns: 1fr; } }

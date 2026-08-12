@@ -1,10 +1,12 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { WebSocket } from 'ws'
+import { containsSensitiveWord, normalizeRoomSensitiveWords } from './chatPolicy.js'
+import { MAX_ROOM_CHAT_CONTENT_LENGTH } from './chatRepository.js'
 import { createRoomInitialState, executeRoomMoveFromState, projectBoard, rebuildRoomBoard } from './core.js'
 import { RoomRepository } from './repository.js'
 import { RoomColor, RoomRole, RoomSnapshot, RoomSummary, StoredRoom } from './types.js'
 
-type Connection = { roomId: string; role: RoomRole; isOwner: boolean; token?: string; nickname: string }
+type Connection = { roomId: string; role: RoomRole; isOwner: boolean; token?: string; nickname: string; authorId: string }
 type Application = { id: string; ws: WebSocket; nickname: string; side: RoomColor }
 type Proposal = { by: RoomColor; deadline: number; timer: NodeJS.Timeout }
 type Runtime = {
@@ -17,6 +19,7 @@ type Runtime = {
   bothOfflineSince?: number
   cached?: { revision: number; layout?: string; moveCount: number; lastMove?: string; rebuilt: ReturnType<typeof rebuildRoomBoard> }
   commands: Map<string, { revision: number }>
+  chatCommands: Map<string, { messageId?: string }>
   queue: Promise<void>
 }
 
@@ -29,6 +32,7 @@ export type RoomManagerOptions = {
 }
 
 const DAY = 24 * 60 * 60 * 1000
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function hash(value: string) { return createHash('sha256').update(value).digest('hex') }
 function matches(value: string | undefined, expected: string | undefined) {
@@ -37,11 +41,22 @@ function matches(value: string | undefined, expected: string | undefined) {
   return left.length === right.length && timingSafeEqual(left, right)
 }
 function send(ws: WebSocket, message: unknown) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message)) }
+function normalizeChatContent(value: unknown) {
+  const content = String(value ?? '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim()
+  if (!content) throw new Error('消息不能为空')
+  if (Array.from(content).length > MAX_ROOM_CHAT_CONTENT_LENGTH) throw new Error(`消息不能超过 ${MAX_ROOM_CHAT_CONTENT_LENGTH} 个字符`)
+  if (content.split('\n').length > 4) throw new Error('消息最多允许四行')
+  return content
+}
+function normalizeNickname(value: unknown, fallback: string) {
+  return String(value ?? '').replace(/[\u0000-\u001F\u007F]/g, '').replace(/\s+/g, ' ').trim().slice(0, 20) || fallback
+}
 
 export class RoomManager {
   private readonly connections = new Map<WebSocket, Connection>()
   private readonly runtime = new Map<string, Runtime>()
   private readonly rates = new WeakMap<WebSocket, { startedAt: number; count: number }>()
+  private readonly chatRates = new WeakMap<WebSocket, { startedAt: number; count: number }>()
 
   constructor(
     private readonly repository: RoomRepository,
@@ -107,9 +122,13 @@ export class RoomManager {
     if (!connection) throw new Error('请先加入房间')
     const commandId = typeof message.commandId === 'string' && /^[A-Za-z0-9._:-]{1,100}$/.test(message.commandId) ? message.commandId : undefined
     if (!commandId) throw new Error('操作标识无效')
-    if (!Number.isInteger(message.expectedRevision) || Number(message.expectedRevision) < 0) throw new Error('房间版本无效')
     const room = this.requireRoom(connection.roomId)
     if (message.roomId !== room.id) throw new Error('房间不匹配')
+    if (type === 'room-chat-send') return this.sendChat(ws, room, connection, commandId, message.content, message.nickname)
+    if (type === 'room-chat-delete') return this.deleteChatMessage(ws, room, connection, commandId, message.messageId)
+    if (type === 'room-chat-mute') return this.muteChatMember(ws, room, connection, commandId, message.authorId, message.muted)
+    if (type === 'room-chat-settings-update') return this.updateChatSettings(ws, room, connection, commandId, message)
+    if (!Number.isInteger(message.expectedRevision) || Number(message.expectedRevision) < 0) throw new Error('房间版本无效')
     if (this.getRuntime(room.id).commands.has(commandId)) return this.sendSnapshot(ws, room)
     if (message.expectedRevision !== undefined && message.expectedRevision !== room.revision) return this.sendSnapshot(ws, room, '状态已更新，请重试')
 
@@ -119,6 +138,7 @@ export class RoomManager {
       case 'room-seat-request': this.requestSeat(ws, room, message); break
       case 'room-seat-approve': await this.approveSeat(ws, room, message); break
       case 'room-leave-seat': await this.leaveSeat(ws, room); break
+      case 'room-switch-seat': await this.switchSeat(room, connection, message.side); break
       case 'room-remove-seat': await this.removeSeat(room, connection, message.side); break
       case 'room-renew-invite': await this.renewInvite(ws, room, connection); break
       case 'room-dissolve': await this.dissolve(room, connection); break
@@ -213,7 +233,9 @@ export class RoomManager {
     const runtime = this.getRuntime(room.id)
     if (role === 'spectator' && (!previous || previous.roomId !== room.id) && [...runtime.sockets].filter(socket => this.connections.get(socket)?.role === 'spectator').length >= 50) throw new Error('观众人数已满')
     if (previous && previous.roomId !== room.id) this.leaveSubscribedRoom(ws, previous.roomId)
-    this.connections.set(ws, { roomId: room.id, role, isOwner, token, nickname: String(message.nickname || '访客').slice(0, 20) })
+    const clientId = typeof message.clientId === 'string' && UUID.test(message.clientId) ? message.clientId : randomUUID()
+    const identity = isOwner ? `owner:${room.ownerHash}` : `client:${clientId}`
+    this.connections.set(ws, { roomId: room.id, role, isOwner, token, nickname: normalizeNickname(message.nickname, '访客'), authorId: hash(`chat:${room.id}:${identity}`) })
     runtime.sockets.add(ws)
     if (role === 'red' || role === 'black') {
       for (const socket of runtime.sockets) {
@@ -227,6 +249,8 @@ export class RoomManager {
     }
     this.updateDisconnect(room)
     this.broadcast(room)
+    this.sendChatHistory(ws, room.id)
+    this.sendChatSettings(ws, room.id)
   }
 
   private leaveSubscribedRoom(ws: WebSocket, roomId: string) {
@@ -257,7 +281,7 @@ export class RoomManager {
     if (side !== 'red' && side !== 'black' || room.seats[side]) throw new Error('该席位不可用')
     const runtime = this.getRuntime(room.id)
     for (const [id, current] of runtime.applications) if (current.ws === ws) runtime.applications.delete(id)
-    const application: Application = { id: randomUUID(), ws, nickname: String(message.nickname || '申请者').slice(0, 20), side }
+    const application: Application = { id: randomUUID(), ws, nickname: normalizeNickname(message.nickname, '申请者'), side }
     runtime.applications.set(application.id, application)
     this.broadcast(room)
   }
@@ -278,10 +302,12 @@ export class RoomManager {
     const connection = this.connections.get(ws)
     if (connection?.role === 'red' || connection?.role === 'black') throw new Error('当前已经占用一个席位')
     const seatToken = existingToken || randomUUID()
-    room.seats[side] = { nickname: nickname.trim().slice(0, 20) || (side === 'red' ? '红方' : '黑方'), credentialHash: hash(seatToken), ready: false, hintsUsed: 0 }
+    room.seats[side] = { nickname: normalizeNickname(nickname, side === 'red' ? '红方' : '黑方'), credentialHash: hash(seatToken), ready: false, hintsUsed: 0 }
     this.touch(room)
     await this.repository.save(room)
-    if (connection) { connection.role = side; connection.token = seatToken }
+    if (connection) {
+      connection.role = side; connection.token = seatToken
+    }
     send(ws, { type: 'room-seat-token', roomId: room.id, token: seatToken, role: side })
     this.updateDisconnect(room)
     this.broadcast(room)
@@ -298,6 +324,23 @@ export class RoomManager {
     connection.role = 'spectator'
     connection.token = connection.isOwner ? connection.token : undefined
     send(ws, { type: 'room-seat-lost', roomId: room.id })
+    this.broadcast(room)
+  }
+
+  private async switchSeat(room: StoredRoom, connection: Connection, rawSide: unknown) {
+    if (room.phase !== 'waiting') throw new Error('只能在开局前切换席位')
+    const current = this.color(connection)
+    const target = rawSide === 'red' || rawSide === 'black' ? rawSide : null
+    if (!target || target === current) throw new Error('目标席位无效')
+    if (room.seats[target]) throw new Error('目标席位已有棋手，请申请交换红黑')
+    room.seats[target] = { ...room.seats[current]!, ready: false }
+    delete room.seats[current]
+    const runtime = this.getRuntime(room.id)
+    for (const [id, application] of runtime.applications) if (application.side === target) runtime.applications.delete(id)
+    this.clearProposals(room.id)
+    this.touch(room)
+    await this.repository.save(room)
+    this.refreshRoles(room)
     this.broadcast(room)
   }
 
@@ -436,6 +479,92 @@ export class RoomManager {
     this.broadcast(room)
   }
 
+  private async sendChat(ws: WebSocket, room: StoredRoom, connection: Connection, commandId: string, rawContent: unknown, rawNickname: unknown) {
+    const runtime = this.getRuntime(room.id)
+    const previous = runtime.chatCommands.get(commandId)
+    if (previous) return send(ws, { type: 'room-chat-ack', roomId: room.id, commandId, messageId: previous.messageId })
+    const now = Date.now(), rate = this.chatRates.get(ws)
+    if (!rate || now - rate.startedAt >= 10_000) this.chatRates.set(ws, { startedAt: now, count: 1 })
+    else if (++rate.count > 5) throw new Error('发言过于频繁，请稍后再试')
+    const content = normalizeChatContent(rawContent)
+    const settings = this.repository.chat.settings(room.id)
+    if (!connection.isOwner && settings.everyoneMuted) throw new Error('房间当前已开启全面禁言')
+    if (!connection.isOwner && settings.mutedAuthorIds.includes(connection.authorId)) throw new Error('你已被房主禁言')
+    const role: RoomRole = connection.isOwner && connection.role === 'spectator' ? 'owner' : connection.role
+    const seat = connection.role === 'red' || connection.role === 'black' ? room.seats[connection.role] : undefined
+    if (!seat) connection.nickname = normalizeNickname(rawNickname, connection.nickname || (connection.isOwner ? '房主' : '访客'))
+    const nickname = normalizeNickname(seat?.nickname, connection.nickname || (connection.isOwner ? '房主' : '访客'))
+    if (containsSensitiveWord(content, settings.roomSensitiveWords)) {
+      this.rememberChatCommand(room.id, commandId)
+      return send(ws, { type: 'room-chat-ack', roomId: room.id, commandId, filtered: true })
+    }
+    const chatMessage = await this.repository.chat.append(room.id, { id: randomUUID(), authorId: connection.authorId, nickname, role, isOwner: connection.isOwner, content, createdAt: now })
+    this.rememberChatCommand(room.id, commandId, chatMessage.id)
+    for (const socket of runtime.sockets) send(socket, { type: 'room-chat-message', roomId: room.id, message: chatMessage })
+    send(ws, { type: 'room-chat-ack', roomId: room.id, commandId, messageId: chatMessage.id })
+  }
+
+  private async deleteChatMessage(ws: WebSocket, room: StoredRoom, connection: Connection, commandId: string, rawMessageId: unknown) {
+    const runtime = this.getRuntime(room.id)
+    const previous = runtime.chatCommands.get(commandId)
+    if (previous) return send(ws, { type: 'room-chat-ack', roomId: room.id, commandId, messageId: previous.messageId })
+    if (!connection.isOwner) throw new Error('只有房主可以删除聊天消息')
+    const messageId = String(rawMessageId || '')
+    if (!UUID.test(messageId) || !await this.repository.chat.deleteMessage(room.id, messageId)) throw new Error('聊天消息不存在')
+    this.rememberChatCommand(room.id, commandId, messageId)
+    for (const socket of runtime.sockets) send(socket, { type: 'room-chat-delete', roomId: room.id, messageId })
+    send(ws, { type: 'room-chat-ack', roomId: room.id, commandId, messageId })
+  }
+
+  private async muteChatMember(ws: WebSocket, room: StoredRoom, connection: Connection, commandId: string, rawAuthorId: unknown, rawMuted: unknown) {
+    const runtime = this.getRuntime(room.id), previous = runtime.chatCommands.get(commandId)
+    if (previous) return send(ws, { type: 'room-chat-ack', roomId: room.id, commandId })
+    if (!connection.isOwner) throw new Error('只有房主可以禁言成员')
+    if (typeof rawMuted !== 'boolean') throw new Error('禁言设置无效')
+    const authorId = String(rawAuthorId || ''), muted = rawMuted
+    if (!/^[0-9a-f]{64}$/.test(authorId)) throw new Error('成员标识无效')
+    const settings = this.repository.chat.settings(room.id)
+    const target = this.repository.chat.list(room.id).find(message => message.authorId === authorId)
+    if (muted && !target) throw new Error('成员不存在')
+    if (muted && (target!.isOwner || authorId === connection.authorId)) throw new Error('不能禁言房主')
+    if (!muted && !settings.mutedAuthorIds.includes(authorId)) throw new Error('成员未被禁言')
+    if (muted && !settings.mutedAuthorIds.includes(authorId) && settings.mutedAuthorIds.length >= 100) throw new Error('禁言名单已满')
+    const mutedAuthorIds = muted ? [...new Set([...settings.mutedAuthorIds, authorId])] : settings.mutedAuthorIds.filter(id => id !== authorId)
+    await this.repository.chat.updateSettings(room.id, { mutedAuthorIds })
+    this.rememberChatCommand(room.id, commandId)
+    this.broadcastChatSettings(room.id)
+    send(ws, { type: 'room-chat-ack', roomId: room.id, commandId })
+  }
+
+  private async updateChatSettings(ws: WebSocket, room: StoredRoom, connection: Connection, commandId: string, message: Record<string, unknown>) {
+    const runtime = this.getRuntime(room.id), previous = runtime.chatCommands.get(commandId)
+    if (previous) return send(ws, { type: 'room-chat-ack', roomId: room.id, commandId })
+    if (!connection.isOwner) throw new Error('只有房主可以修改聊天设置')
+    if (typeof message.everyoneMuted !== 'boolean') throw new Error('全面禁言设置无效')
+    const roomSensitiveWords = normalizeRoomSensitiveWords(message.roomSensitiveWords)
+    await this.repository.chat.updateSettings(room.id, { everyoneMuted: message.everyoneMuted, roomSensitiveWords })
+    this.rememberChatCommand(room.id, commandId)
+    this.broadcastChatSettings(room.id)
+    send(ws, { type: 'room-chat-ack', roomId: room.id, commandId })
+  }
+
+  private sendChatHistory(ws: WebSocket, roomId: string) {
+    send(ws, { type: 'room-chat-history', roomId, messages: this.repository.chat.list(roomId) })
+  }
+
+  private sendChatSettings(ws: WebSocket, roomId: string) {
+    const connection = this.connections.get(ws)
+    if (!connection) return
+    const settings = this.repository.chat.settings(roomId)
+    send(ws, { type: 'room-chat-settings', roomId, settings: {
+      everyoneMuted: settings.everyoneMuted,
+      muted: !connection.isOwner && settings.mutedAuthorIds.includes(connection.authorId),
+      mutedAuthorIds: connection.isOwner ? settings.mutedAuthorIds : undefined,
+      roomSensitiveWords: connection.isOwner ? settings.roomSensitiveWords : undefined,
+    } })
+  }
+  private broadcastChatSettings(roomId: string) { for (const socket of this.getRuntime(roomId).sockets) this.sendChatSettings(socket, roomId) }
+
   private snapshot(room: StoredRoom, ws: WebSocket): RoomSnapshot {
     const connection = this.connections.get(ws) || { role: 'spectator' as const, isOwner: false }
     const rebuilt = this.rebuilt(room)
@@ -463,8 +592,9 @@ export class RoomManager {
   private requireRoom(id: string) { const room = this.repository.get(id); if (!room) throw new Error('房间不存在'); return room }
   private color(connection: Connection): RoomColor { if (connection.role !== 'red' && connection.role !== 'black') throw new Error('当前不是棋手'); return connection.role }
   private touch(room: StoredRoom) { room.revision++; room.updatedAt = Date.now(); this.getRuntime(room.id).cached = undefined }
-  private getRuntime(id: string) { let value = this.runtime.get(id); if (!value) { value = { sockets: new Set(), applications: new Map(), commands: new Map(), queue: Promise.resolve() }; this.runtime.set(id, value) } return value }
+  private getRuntime(id: string) { let value = this.runtime.get(id); if (!value) { value = { sockets: new Set(), applications: new Map(), commands: new Map(), chatCommands: new Map(), queue: Promise.resolve() }; this.runtime.set(id, value) } return value }
   private rememberCommand(id: string, commandId: string, revision: number) { const commands = this.getRuntime(id).commands; commands.set(commandId, { revision }); while (commands.size > 200) commands.delete(commands.keys().next().value!) }
+  private rememberChatCommand(id: string, commandId: string, messageId?: string) { const commands = this.getRuntime(id).chatCommands; commands.set(commandId, { messageId }); while (commands.size > 500) commands.delete(commands.keys().next().value!) }
   private rebuilt(room: StoredRoom) {
     const runtime = this.getRuntime(room.id)
     const lastMove = room.moves.at(-1)?.uci
@@ -473,7 +603,7 @@ export class RoomManager {
     }
     return runtime.cached.rebuilt
   }
-  private refreshRoles(room: StoredRoom) { for (const ws of this.getRuntime(room.id).sockets) { const connection = this.connections.get(ws); if (!connection) continue; connection.role = matches(connection.token, room.seats.red?.credentialHash) ? 'red' : matches(connection.token, room.seats.black?.credentialHash) ? 'black' : 'spectator' } }
+  private refreshRoles(room: StoredRoom) { for (const ws of this.getRuntime(room.id).sockets) { const connection = this.connections.get(ws); if (!connection || connection.role === 'spectator' || connection.role === 'owner') continue; connection.role = matches(connection.token, room.seats.red?.credentialHash) ? 'red' : matches(connection.token, room.seats.black?.credentialHash) ? 'black' : 'spectator' } }
   private clearDisconnect(id: string) { const runtime = this.getRuntime(id); if (runtime.disconnect) clearTimeout(runtime.disconnect.timer); runtime.disconnect = undefined }
   private clearProposal(id: string, kind: 'swap' | 'undo' | 'draw') {
     const runtime = this.getRuntime(id)

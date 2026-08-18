@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EventEmitter } from 'node:events'
+import { fileURLToPath } from 'node:url'
 import {
   buildGoCommand,
   getDifficultyDepth,
+  getEngineDirectory,
   normalizeEngineRuntimeOptions,
   waitForBestMoveWithStop,
 } from './engine.js'
+
+test('engine directory is resolved from the server module instead of the launch directory', () => {
+  assert.equal(getEngineDirectory(), fileURLToPath(new URL('../../engine', import.meta.url)))
+})
 
 test('buildGoCommand uses explicit depth limits', () => {
   assert.equal(buildGoCommand(14, { searchMode: 'depth', searchDepth: 18 }), 'go depth 18')

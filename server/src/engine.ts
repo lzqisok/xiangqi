@@ -128,6 +128,10 @@ export function normalizeEngineRuntimeOptions(options?: EngineRuntimeOptions): R
   return { engineThreads, engineHashMb }
 }
 
+export function getEngineDirectory(moduleDirectory = __dirname): string {
+  return path.resolve(moduleDirectory, '../../engine')
+}
+
 export class PikafishEngine extends EventEmitter {
   private process: ChildProcess | null = null
   private ready = false
@@ -144,7 +148,7 @@ export class PikafishEngine extends EventEmitter {
   async init(options?: EngineRuntimeOptions): Promise<boolean> {
     this.terminateProcess()
     this.buffer = ''
-    const engineDir = path.resolve(process.cwd(), '../engine')
+    const engineDir = getEngineDirectory()
     const binaryName = this.variant === 'jieqi' ? 'pikafish-jieqi' : 'pikafish'
     const candidates = [path.join(engineDir, binaryName), path.join(engineDir, `${binaryName}.exe`)]
 

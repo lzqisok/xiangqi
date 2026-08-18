@@ -3874,7 +3874,9 @@ body {
     right: 8px;
     bottom: calc(68px + env(safe-area-inset-bottom));
     left: 8px;
-    display: block;
+    display: flex;
+    flex-direction: column;
+    height: min(58dvh, 520px);
     max-height: min(58dvh, 520px);
     overflow: hidden;
     border-radius: 16px 16px 10px 10px;
@@ -3885,10 +3887,14 @@ body {
     pointer-events: none;
   }
   .mobile-chat-dock.open { transform: translateY(0); pointer-events: auto; }
-  .mobile-chat-dock > .lan-chat-panel { width: 100%; min-height: min(52dvh, 460px); max-height: min(52dvh, 460px); border-radius: 0; box-shadow: none; }
+  .mobile-chat-dock > .mobile-chat-close { flex: 0 0 auto; }
+  .mobile-chat-dock > .lan-chat-panel { flex: 1 1 auto; width: 100%; min-height: 0; max-height: none; overflow: hidden; border-radius: 0; box-shadow: none; }
+  .mobile-chat-dock .lan-chat-list { flex: 1 1 auto; min-height: 0; height: auto; }
+  .mobile-chat-dock .lan-chat-compose { flex: 0 0 auto; }
+  .mobile-chat-dock .lan-chat-compose textarea { font-size: 16px; }
   .mobile-chat-dock + .mobile-stage-bar { grid-auto-columns: 1fr; }
   .lan-ready-layout > .mobile-chat-dock { min-height: 0; }
-  .lan-ready-layout > .mobile-chat-dock > .lan-chat-panel { min-height: min(52dvh, 460px); }
+  .lan-ready-layout > .mobile-chat-dock > .lan-chat-panel { min-height: 0; }
   .lan-ready-shell,
   .lan-room-shell { padding-bottom: 78px; }
 }

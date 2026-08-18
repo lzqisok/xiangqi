@@ -15,6 +15,7 @@ import { createRoomRouter } from './rooms/routes.js'
 import { StoredRoom, RoomColor } from './rooms/types.js'
 import { RapfiEngine } from './gomoku/rapfiEngine.js'
 import { registerRapfiWebSocketServer, type RapfiWebSocket } from './gomoku/websocket.js'
+import { listLanIPv4 } from './network.js'
 
 const app = express()
 const server = createServer(app)
@@ -48,6 +49,9 @@ const gameLeases = new GameLeaseManager()
 await gameRepository.init().catch(error => console.error('Game store initialization failed:', error))
 await roomRepository.init().catch(error => console.error('Room store initialization failed:', error))
 app.use(express.json({ limit: '10mb' }))
+app.get('/api/network-info', (_req, res) => {
+  res.json({ addresses: listLanIPv4(os.networkInterfaces()) })
+})
 app.use('/api/games', (req, res, next) => {
   if (!LAN_MODE) return next()
   const address = req.socket.remoteAddress || ''
@@ -573,9 +577,7 @@ server.listen(Number(PORT), HOST, () => {
   console.log(`WebSocket available at ws://${HOST}:${PORT}/ws`)
   console.log(`Rapfi WebSocket available at ws://${HOST}:${PORT}/gomoku-ws`)
   if (LAN_MODE) {
-    const addresses = Object.values(os.networkInterfaces()).flatMap(items => items || [])
-      .filter(item => item.family === 'IPv4' && !item.internal)
-      .map(item => `http://${item.address}:${PORT}/?lan=1`)
+    const addresses = listLanIPv4(os.networkInterfaces()).map(address => `http://${address}:${PORT}/?lan=1`)
     for (const address of addresses) console.log(`LAN lobby: ${address}`)
   }
 })

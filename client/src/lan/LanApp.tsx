@@ -9,6 +9,7 @@ import { uciToMove } from '../engine/notation'
 import { Move, PieceColor, Position } from '../types'
 import { createLanRoom, listLanRoomHistory, listLanRooms } from './api'
 import { copyLanText } from './browser'
+import { resolveLanShareUrl } from './network'
 import { getLanChatContentLength, getLanChatLineCount, getLanChatRole, parseLanRoomSensitiveWords } from './chat'
 import { LanChatMessage, LanRoomSummary } from './types'
 import { getLanRecentRooms, getLanToken, saveLanToken, useLanRoom } from './useLanRoom'
@@ -76,6 +77,8 @@ function LanRoom({ roomId, nickname, onNickname }: { roomId: string; nickname: s
   const [selected, setSelected] = useState<Position | null>(null)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'manual'>('idle')
   const [recoveryCopyState, setRecoveryCopyState] = useState<'idle' | 'copied' | 'manual'>('idle')
+  const [manualInviteUrl, setManualInviteUrl] = useState('')
+  const [manualRecoveryUrl, setManualRecoveryUrl] = useState('')
   const [spectatorFlipped, setSpectatorFlipped] = useState(false)
   const [creatingRematch, setCreatingRematch] = useState(false)
   const [rematchError, setRematchError] = useState('')
@@ -103,13 +106,17 @@ function LanRoom({ roomId, nickname, onNickname }: { roomId: string; nickname: s
   const shareToken = storageGet(`xiangqi-lan-invite:${roomId}`)
   const inviteUrl = (() => { const url = new URL(location.href); url.searchParams.set('invite', shareToken); return url.toString() })()
   const shareInvite = async () => {
-    const copied = await copyLanText(inviteUrl)
+    const resolvedUrl = await resolveLanShareUrl(inviteUrl)
+    setManualInviteUrl(resolvedUrl)
+    const copied = await copyLanText(resolvedUrl)
     setCopyState(copied ? 'copied' : 'manual')
     if (copied) setTimeout(() => setCopyState('idle'), 1500)
   }
   const recoveryUrl = (() => { const url = new URL(location.href); url.searchParams.delete('invite'); url.searchParams.set('seat', recoveryToken || getLanToken(roomId)); return url.toString() })()
   const shareRecovery = async () => {
-    const copied = await copyLanText(recoveryUrl)
+    const resolvedUrl = await resolveLanShareUrl(recoveryUrl)
+    setManualRecoveryUrl(resolvedUrl)
+    const copied = await copyLanText(resolvedUrl)
     setRecoveryCopyState(copied ? 'copied' : 'manual')
     if (copied) setTimeout(() => setRecoveryCopyState('idle'), 1500)
   }
@@ -160,9 +167,9 @@ function LanRoom({ roomId, nickname, onNickname }: { roomId: string; nickname: s
         {room.pendingSwapBy && room.pendingSwapBy !== color && color && <div className="lan-request lan-proposal-bar">对方申请交换红黑（{proposalCountdown(room.pendingSwapDeadline)} 秒）<button disabled={pending} onClick={() => send('room-swap-response', { accept: true })}>同意</button><button disabled={pending} onClick={() => send('room-swap-response', { accept: false })}>拒绝</button></div>}
         {room.isOwner && room.applications?.map(item => <div className="lan-request" key={item.id}>{item.nickname} 申请成为{item.side === 'red' ? '红方' : '黑方'} <button onClick={() => send('room-seat-approve', { applicationId: item.id, accept: true })}>同意</button><button onClick={() => send('room-seat-approve', { applicationId: item.id, accept: false })}>拒绝</button></div>)}
         <div className="lan-ready-primary">{room.isOwner && <button className="invite" disabled={pending || Boolean(room.seats.red && room.seats.black)} onClick={() => shareToken ? void shareInvite() : send('room-renew-invite')}>{shareToken ? copyState === 'copied' ? '邀请链接已复制' : '邀请棋友' : '生成邀请链接'}</button>}<span>{room.seats.red?.ready && room.seats.black?.ready ? '双方已准备，正在开始…' : '双方入座并准备后自动开始'}</span></div>
-        {copyState === 'manual' && <label className="lan-copy-fallback">浏览器未允许自动复制，请手动复制<input readOnly value={inviteUrl} onFocus={event => event.currentTarget.select()} /></label>}
+        {copyState === 'manual' && <label className="lan-copy-fallback">浏览器未允许自动复制，请手动复制<input readOnly value={manualInviteUrl || inviteUrl} onFocus={event => event.currentTarget.select()} /></label>}
         <details className="lan-room-management"><summary>房间管理</summary><div>{color && <button onClick={() => send('room-leave-seat')}>退出席位并观战</button>}{color && (recoveryToken || getLanToken(roomId)) && <button onClick={shareRecovery}>{recoveryCopyState === 'copied' ? '恢复链接已复制' : '复制席位恢复链接'}</button>}{room.isOwner && <button disabled={pending || Boolean(room.seats.red && room.seats.black)} onClick={() => send('room-renew-invite')}>作废邀请并重新生成</button>}{room.isOwner && <button className="danger" disabled={pending} onClick={() => setDangerAction('dissolve')}>解散房间</button>}</div></details>
-        {recoveryCopyState === 'manual' && <label className="lan-copy-fallback">请手动复制恢复链接<input readOnly value={recoveryUrl} onFocus={event => event.currentTarget.select()} /></label>}
+        {recoveryCopyState === 'manual' && <label className="lan-copy-fallback">请手动复制恢复链接<input readOnly value={manualRecoveryUrl || recoveryUrl} onFocus={event => event.currentTarget.select()} /></label>}
       </section>
       <MobileChatDock messageCount={chatMessages.length}><LanChat messages={chatMessages} connected={connected} isOwner={room.isOwner} settings={chatSettings} error={chatError} send={sendChat} remove={deleteChatMessage} mute={muteChatMember} updateSettings={updateChatSettings} /></MobileChatDock>
     </main>
@@ -187,7 +194,7 @@ function LanRoom({ roomId, nickname, onNickname }: { roomId: string; nickname: s
         {room.pendingDrawBy === color && <div className="lan-request lan-proposal-bar">和棋提议等待中（{proposalCountdown(room.pendingDrawDeadline)} 秒）<button disabled={pending} onClick={() => send('room-proposal-cancel', { kind: 'draw' })}>撤回</button></div>}
         {room.pendingUndoBy && room.pendingUndoBy !== color && color && <Request text={`对方申请悔棋（${proposalCountdown(room.pendingUndoDeadline)} 秒）`} pending={pending} accept={() => send('room-undo-response', { accept: true })} reject={() => send('room-undo-response', { accept: false })} />}
         {room.pendingDrawBy && room.pendingDrawBy !== color && color && <Request text={`对方提议和棋（${proposalCountdown(room.pendingDrawDeadline)} 秒）`} pending={pending} accept={() => send('room-draw-response', { accept: true })} reject={() => send('room-draw-response', { accept: false })} />}
-        {color && (recoveryToken || getLanToken(roomId)) && <><button onClick={shareRecovery}>{recoveryCopyState === 'copied' ? '恢复链接已复制' : room.isOwner ? '复制房主恢复链接' : '复制席位恢复链接'}</button>{recoveryCopyState === 'manual' && <label className="lan-copy-fallback">请手动复制恢复链接<input readOnly value={recoveryUrl} onFocus={event => event.currentTarget.select()} /></label>}</>}
+        {color && (recoveryToken || getLanToken(roomId)) && <><button onClick={shareRecovery}>{recoveryCopyState === 'copied' ? '恢复链接已复制' : room.isOwner ? '复制房主恢复链接' : '复制席位恢复链接'}</button>{recoveryCopyState === 'manual' && <label className="lan-copy-fallback">请手动复制恢复链接<input readOnly value={manualRecoveryUrl || recoveryUrl} onFocus={event => event.currentTarget.select()} /></label>}</>}
         {room.phase === 'finished' && (room.isOwner || color) && <button disabled={creatingRematch} onClick={() => void rematch()}>{creatingRematch ? '正在创建…' : '创建再来一局'}</button>}
         <h3>走棋记录</h3><div className="lan-moves">{room.moves.map((move, index) => <span key={index}>{index + 1}. {move.notation || move.uci}{move.capturedHidden ? ` · 吃${move.captured || '暗子'}` : move.captured ? ` · 吃${pieceName(move.captured, move.color === 'red' ? 'black' : 'red')}` : ''}</span>)}</div>
       </aside>

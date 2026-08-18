@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createGomokuLanRoom, listLanRoomHistory, listLanRooms } from '../../lan/api'
 import { copyLanText } from '../../lan/browser'
+import { resolveLanShareUrl } from '../../lan/network'
 import { LanChat } from '../../lan/LanApp'
 import { GomokuLanRoomSnapshot, LanRoomSummary } from '../../lan/types'
 import { getLanRecentRooms, getLanToken, saveLanToken, useLanRoom } from '../../lan/useLanRoom'
@@ -64,8 +65,9 @@ function Room({ roomId, nickname, onNickname }: { roomId: string; nickname: stri
   const inviteToken = load(`xiangqi-lan-invite:${roomId}`), inviteUrl = (() => { const url = new URL(location.href); url.searchParams.set('invite', inviteToken); return url.toString() })()
   const recoveryUrl = (() => { const url = new URL(location.href); url.searchParams.delete('invite'); url.searchParams.set('seat', recoveryToken || getLanToken(roomId)); return url.toString() })()
   const copy = async (value: string, label: string) => {
-    if (await copyLanText(value)) { setCopyState(label); setManualCopyUrl(''); setTimeout(() => setCopyState(''), 1800) }
-    else { setCopyState('浏览器未允许自动复制'); setManualCopyUrl(value) }
+    const resolvedUrl = await resolveLanShareUrl(value)
+    if (await copyLanText(resolvedUrl)) { setCopyState(label); setManualCopyUrl(''); setTimeout(() => setCopyState(''), 1800) }
+    else { setCopyState('浏览器未允许自动复制'); setManualCopyUrl(resolvedUrl) }
   }
   const countdown = room.disconnect ? Math.max(0, Math.ceil((room.disconnect.deadline - now) / 1000)) : null
   const canMove = room.phase === 'playing' && room.status === 'playing' && color === room.turn && !pending

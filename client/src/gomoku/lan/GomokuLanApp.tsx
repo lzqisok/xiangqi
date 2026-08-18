@@ -6,6 +6,7 @@ import { GomokuLanRoomSnapshot, LanRoomSummary } from '../../lan/types'
 import { getLanRecentRooms, getLanToken, saveLanToken, useLanRoom } from '../../lan/useLanRoom'
 import { PieceColor } from '../../types'
 import { GomokuLanBoard } from './GomokuLanBoard'
+import ProductDialog from '../../components/ProductDialog'
 
 const NICKNAME_KEY = 'gomoku-lan-nickname'
 function load(key: string) { try { return localStorage.getItem(key) || '' } catch { return '' } }
@@ -39,6 +40,7 @@ function Room({ roomId, nickname, onNickname }: { roomId: string; nickname: stri
   const [manualCopyUrl, setManualCopyUrl] = useState('')
   const [creatingRematch, setCreatingRematch] = useState(false)
   const [localError, setLocalError] = useState('')
+  const [dangerAction, setDangerAction] = useState<'dissolve' | 'resign' | null>(null)
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 250); return () => clearInterval(timer) }, [])
   if (!room) return <div className="lan-shell"><p>{connected ? '正在同步房间…' : '正在连接服务…'}</p>{error && <div className="lan-error">{error}</div>}</div>
   const color = room.role === 'red' || room.role === 'black' ? room.role : null, incomingInvite = new URLSearchParams(location.search).get('invite') || ''
@@ -85,10 +87,10 @@ function Room({ roomId, nickname, onNickname }: { roomId: string; nickname: stri
     <div className="gomoku-lan-game"><main className="gomoku-lan-board-wrap"><GomokuLanBoard board={room.board} moves={room.moves} disabled={!canMove} showOrder={room.phase === 'finished'} winner={room.status === 'red-wins' ? 'red' : room.status === 'black-wins' ? 'black' : null} onMove={(row, col) => send('room-move', { row, col })} /><div className="gomoku-board-state"><i className={room.phase} />{phaseText}</div></main>
       <div className="lan-side"><aside className="gomoku-room-panel"><div className="gomoku-room-summary"><div><small>{color ? '我的身份' : room.isOwner ? '房主身份' : '当前身份'}</small><h2>{color ? `你执${sideName(color).slice(0, 1)}` : room.isOwner ? '房主观战' : '观战中'}</h2></div><span>{phaseText}</span></div>
         <div className="gomoku-seat-grid">{(['red', 'black'] as const).map(side => { const seat = room.seats[side], mine = color === side; const disabled = room.phase !== 'waiting' || pending || Boolean(!color && seat) || Boolean(color && seat && room.pendingSwapBy); return <div className={`gomoku-seat-card ${side} ${mine ? 'mine' : ''}`} key={side}><span className="gomoku-seat-stone" /><div><strong>{sideName(side)}<em>{side === 'red' ? '先手' : '后手'}</em></strong><small>{seat ? seat.nickname : '等待棋手加入'}</small><i>{seat ? `${seat.online ? '在线' : '离线'} · ${seat.ready ? '已准备' : '未准备'}` : '空席'}</i></div>{room.phase === 'waiting' && <button disabled={disabled} onClick={() => act(side)}>{seatActionText(side)}</button>}{room.phase === 'waiting' && room.isOwner && seat && !mine && <button className="remove" disabled={pending} aria-label={`移除${sideName(side)}棋手`} onClick={() => send('room-remove-seat', { side })}>移除</button>}</div> })}</div>
-        {room.phase === 'waiting' && <div className="gomoku-waiting-tools"><label><span>对局昵称</span><input value={nickname} maxLength={20} onChange={event => onNickname(event.target.value)} /></label>{room.isOwner && <button className="primary" disabled={!room.inviteAvailable || !inviteToken || Boolean(room.seats.red && room.seats.black)} onClick={() => void copy(inviteUrl, '邀请链接已复制')}>邀请棋友加入</button>}{color && <button onClick={() => void copy(recoveryUrl, '席位恢复链接已复制')}>保存席位恢复链接</button>}{color && <button onClick={() => send('room-leave-seat')}>退出席位并观战</button>}{room.isOwner && <details><summary>房间管理</summary><div><button disabled={pending} onClick={() => send('room-renew-invite')}>作废旧邀请并重新生成</button><button className="danger" disabled={pending} onClick={() => confirm('确定解散房间吗？') && send('room-dissolve')}>解散房间</button></div></details>}</div>}
+        {room.phase === 'waiting' && <div className="gomoku-waiting-tools"><label><span>对局昵称</span><input value={nickname} maxLength={20} onChange={event => onNickname(event.target.value)} /></label>{room.isOwner && <button className="primary" disabled={!room.inviteAvailable || !inviteToken || Boolean(room.seats.red && room.seats.black)} onClick={() => void copy(inviteUrl, '邀请链接已复制')}>邀请棋友加入</button>}{color && <button onClick={() => void copy(recoveryUrl, '席位恢复链接已复制')}>保存席位恢复链接</button>}{color && <button onClick={() => send('room-leave-seat')}>退出席位并观战</button>}{room.isOwner && <details><summary>房间管理</summary><div><button disabled={pending} onClick={() => send('room-renew-invite')}>作废旧邀请并重新生成</button><button className="danger" disabled={pending} onClick={() => setDangerAction('dissolve')}>解散房间</button></div></details>}</div>}
         {room.isOwner && room.applications?.map(item => <div className="gomoku-room-request" key={item.id}><span><strong>{item.nickname}</strong>申请成为{sideName(item.side)}</span><button onClick={() => send('room-seat-approve', { applicationId: item.id, accept: true })}>同意</button><button onClick={() => send('room-seat-approve', { applicationId: item.id, accept: false })}>拒绝</button></div>)}
         {room.pendingSwapBy && color && <Proposal mine={room.pendingSwapBy === color} text="换边申请" seconds={proposalCountdown(room.pendingSwapDeadline)} pending={pending} accept={() => send('room-swap-response', { accept: true })} reject={() => send('room-swap-response', { accept: false })} cancel={() => send('room-proposal-cancel', { kind: 'swap' })} />}
-        {room.phase === 'playing' && color && <div className="gomoku-playing-actions"><button disabled={pending || Boolean(room.pendingUndoBy || room.pendingDrawBy)} onClick={() => send('room-undo-request')}>申请悔棋</button><button disabled={pending || Boolean(room.pendingUndoBy || room.pendingDrawBy)} onClick={() => send('room-draw-offer')}>提议和棋</button><button className="danger" disabled={pending} onClick={() => confirm('确定认输吗？') && send('room-resign')}>认输</button></div>}
+        {room.phase === 'playing' && color && <div className="gomoku-playing-actions"><button disabled={pending || Boolean(room.pendingUndoBy || room.pendingDrawBy)} onClick={() => send('room-undo-request')}>申请悔棋</button><button disabled={pending || Boolean(room.pendingUndoBy || room.pendingDrawBy)} onClick={() => send('room-draw-offer')}>提议和棋</button><button className="danger" disabled={pending} onClick={() => setDangerAction('resign')}>认输</button></div>}
         {room.pendingUndoBy && color && <Proposal mine={room.pendingUndoBy === color} text="悔棋申请" seconds={proposalCountdown(room.pendingUndoDeadline)} pending={pending} accept={() => send('room-undo-response', { accept: true })} reject={() => send('room-undo-response', { accept: false })} cancel={() => send('room-proposal-cancel', { kind: 'undo' })} />}{room.pendingDrawBy && color && <Proposal mine={room.pendingDrawBy === color} text="和棋提议" seconds={proposalCountdown(room.pendingDrawDeadline)} pending={pending} accept={() => send('room-draw-response', { accept: true })} reject={() => send('room-draw-response', { accept: false })} cancel={() => send('room-proposal-cancel', { kind: 'draw' })} />}
         {room.phase === 'finished' && (color || room.isOwner) && <button className="gomoku-rematch-button" disabled={creatingRematch} onClick={() => void rematch()}>{creatingRematch ? '正在创建新房间…' : '再来一局'}</button>}
         {copyState && <small className="gomoku-copy-state">{copyState}</small>}{manualCopyUrl && <label className="gomoku-manual-copy">手动复制链接<input readOnly value={manualCopyUrl} onFocus={event => event.currentTarget.select()} /></label>}
@@ -96,6 +98,17 @@ function Room({ roomId, nickname, onNickname }: { roomId: string; nickname: stri
       </aside>
         <LanChat messages={state.chatMessages} connected={connected} isOwner={room.isOwner} settings={state.chatSettings} error={state.chatError} send={state.sendChat} remove={state.deleteChatMessage} mute={state.muteChatMember} updateSettings={state.updateChatSettings} sideLabels={{ red: '黑方', black: '白方' }} />
       </div></div>
+    {dangerAction && <ProductDialog
+      title={dangerAction === 'dissolve' ? '解散房间' : '确认认输'}
+      description={dangerAction === 'dissolve' ? '房间将立即关闭，所有棋手和观众都会离开。' : '当前对局将立即结束，并判对方获胜。'}
+      confirmLabel={dangerAction === 'dissolve' ? '确认解散' : '确认认输'}
+      dangerous
+      onCancel={() => setDangerAction(null)}
+      onConfirm={() => {
+        send(dangerAction === 'dissolve' ? 'room-dissolve' : 'room-resign')
+        setDangerAction(null)
+      }}
+    />}
   </div>
 }
 

@@ -3133,3 +3133,145 @@ body {
   .opponent-btn-group { grid-template-columns: 1fr; }
   .opponent-btn-group button { min-width: 0; }
 }
+
+/* Product actions and feedback */
+.workspace-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+.workspace-save-state {
+  max-width: 230px;
+  overflow: hidden;
+  color: #71685e;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-save-state.dirty,
+.workspace-save-state.saving,
+.workspace-save-state.unsaved { color: #956b2f; }
+.workspace-save-state.error,
+.workspace-save-state.conflict { color: #a44337; }
+.workspace-new-game {
+  flex: none;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 9px;
+  background: #a44337;
+  color: #fffaf1;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 5px 14px rgba(116, 48, 39, .18);
+}
+.workspace-new-game:hover { background: #b94f41; }
+.phase-primary-action .accent-action { width: 100%; min-height: 42px; }
+.danger-actions {
+  padding-top: 12px;
+  border-top: 1px solid rgba(74, 61, 45, .11);
+}
+.danger-actions summary {
+  color: #9c4338;
+  font-size: 12px;
+  cursor: pointer;
+}
+.danger-actions .panel-buttons { margin-top: 9px; }
+.panel-buttons button.danger-action {
+  border-color: rgba(164, 67, 55, .18);
+  background: rgba(164, 67, 55, .09);
+  color: #9e3d32;
+}
+
+.product-dialog-backdrop {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(35, 29, 23, .48);
+  backdrop-filter: blur(3px);
+}
+.product-dialog {
+  width: min(430px, 100%);
+  padding: 28px;
+  border: 1px solid rgba(90, 69, 45, .16);
+  border-radius: 18px;
+  background: #fffaf1;
+  color: #302a23;
+  box-shadow: 0 24px 70px rgba(43, 33, 23, .28);
+}
+.product-dialog-mark {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 15px;
+  border-radius: 50%;
+  background: #496f5a;
+  color: #fff;
+  font: 900 17px 'Noto Serif SC', serif;
+}
+.product-dialog-mark.dangerous { background: #a44337; }
+.product-dialog h2 { margin: 0; font: 900 22px 'Noto Serif SC', serif; }
+.product-dialog > p { margin: 10px 0 0; color: #756a5e; font-size: 13px; line-height: 1.7; white-space: pre-line; }
+.product-dialog-fields { display: grid; gap: 14px; margin-top: 20px; }
+.product-dialog-steps { display: grid; gap: 9px; margin-top: 18px; }
+.product-dialog-steps > div { display: flex; align-items: center; gap: 11px; padding: 10px; border-radius: 10px; background: #f2ede4; }
+.product-dialog-steps b { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #a44337; color: #fffaf1; font: 900 13px 'Noto Serif SC', serif; }
+.product-dialog-steps span { display: grid; gap: 2px; }
+.product-dialog-steps strong { font-size: 13px; }
+.product-dialog-steps small { color: #766c61; font-size: 11px; line-height: 1.45; }
+.product-dialog-fields label { display: grid; gap: 7px; color: #665d52; font-size: 12px; font-weight: 700; }
+.product-dialog-fields input,
+.product-dialog-fields textarea {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid rgba(74, 61, 45, .18);
+  border-radius: 9px;
+  background: #fffdf8;
+  color: #302a23;
+  font: inherit;
+  resize: vertical;
+}
+.product-dialog-fields input:focus,
+.product-dialog-fields textarea:focus { border-color: #a44337; outline: 2px solid rgba(164, 67, 55, .1); }
+.product-dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 24px; }
+.product-dialog-actions button { min-height: 38px; padding: 0 17px; border: 0; border-radius: 9px; font-weight: 800; cursor: pointer; }
+.product-dialog-actions button.secondary { background: #ebe4d8; color: #4b433a; }
+.product-dialog-actions button.primary { background: #496f5a; color: #fff; }
+.product-dialog-actions button.dangerous { background: #a44337; color: #fff; }
+.product-dialog-actions button:disabled { cursor: not-allowed; opacity: .5; }
+.product-toast {
+  position: fixed;
+  z-index: 1300;
+  bottom: 28px;
+  left: 50%;
+  max-width: calc(100vw - 32px);
+  padding: 11px 18px;
+  border-radius: 999px;
+  background: #302a23;
+  color: #fffaf1;
+  font-size: 13px;
+  box-shadow: 0 12px 32px rgba(35, 28, 21, .25);
+  transform: translateX(-50%);
+}
+
+@media (max-width: 760px) {
+  .workspace-header { align-items: flex-start; gap: 12px; }
+  .workspace-header-actions { flex-wrap: wrap; }
+  .workspace-context { width: 100%; justify-content: flex-end; }
+  .workspace-save-state { max-width: 150px; }
+  .workspace-new-game { min-height: 34px; padding: 0 12px; }
+}
+
+@media (max-width: 520px) {
+  .workspace-brand small { display: none; }
+  .workspace-header-actions { gap: 6px; }
+  .workspace-context { display: none; }
+  .workspace-save-state { max-width: 130px; }
+  .product-dialog { padding: 22px; }
+}

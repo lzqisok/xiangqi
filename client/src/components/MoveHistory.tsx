@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MoveRecord } from '../types'
+import ProductDialog from './ProductDialog'
 
 interface Props {
   moves: MoveRecord[]
@@ -28,6 +29,7 @@ export default function MoveHistory({
   onShowOnlyAnnotatedChange,
 }: Props) {
   const listRef = useRef<HTMLDivElement>(null)
+  const [editingNote, setEditingNote] = useState<{ index: number; note: string } | null>(null)
   const visibleMoves = showOnlyAnnotated
     ? moves.map((record, index) => ({ record, index })).filter(item => item.record.marked || item.record.note)
     : moves.map((record, index) => ({ record, index }))
@@ -106,8 +108,7 @@ export default function MoveHistory({
                 className="move-note-btn"
                 onClick={(e) => {
                   e.stopPropagation()
-                  const note = window.prompt('备注', record.note || '')
-                  if (note !== null) onUpdateNote(i, note)
+                  setEditingNote({ index: i, note: record.note || '' })
                 }}
                 title="编辑备注"
               >
@@ -120,6 +121,16 @@ export default function MoveHistory({
           )
         })}
       </div>
+      {editingNote && <ProductDialog
+        title="编辑备注"
+        confirmLabel="保存"
+        fields={[{ name: 'note', label: '局面备注', initialValue: editingNote.note, multiline: true, maxLength: 300 }]}
+        onCancel={() => setEditingNote(null)}
+        onConfirm={values => {
+          onUpdateNote(editingNote.index, values.note.trim())
+          setEditingNote(null)
+        }}
+      />}
     </div>
   )
 }

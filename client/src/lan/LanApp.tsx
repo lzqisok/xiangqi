@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Board from '../components/Board'
+import ProductDialog from '../components/ProductDialog'
 import { getLegalMoves, isInCheck } from '../engine/rules'
 import { uciToMove } from '../engine/notation'
 import { Move, PieceColor, Position } from '../types'
@@ -68,6 +69,7 @@ function LanRoom({ roomId, nickname, onNickname }: { roomId: string; nickname: s
   const [spectatorFlipped, setSpectatorFlipped] = useState(false)
   const [creatingRematch, setCreatingRematch] = useState(false)
   const [rematchError, setRematchError] = useState('')
+  const [dangerAction, setDangerAction] = useState<'dissolve' | 'resign' | null>(null)
   const [now, setNow] = useState(Date.now())
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 250); return () => clearInterval(timer) }, [])
   useEffect(() => { setSelected(null) }, [room?.revision])
@@ -154,14 +156,14 @@ function LanRoom({ roomId, nickname, onNickname }: { roomId: string; nickname: s
         <label>昵称<input value={nickname} maxLength={20} onChange={event => onNickname(event.target.value)} /></label>
         {room.pendingSwapBy === color && <div className="lan-request">等待对方处理（{proposalCountdown(room.pendingSwapDeadline)} 秒）<button disabled={pending} onClick={() => send('room-proposal-cancel', { kind: 'swap' })}>撤回</button></div>}
         {room.pendingSwapBy && room.pendingSwapBy !== color && color && <div className="lan-request">对方申请交换红黑（{proposalCountdown(room.pendingSwapDeadline)} 秒） <button disabled={pending} onClick={() => send('room-swap-response', { accept: true })}>同意</button><button disabled={pending} onClick={() => send('room-swap-response', { accept: false })}>拒绝</button></div>}
-        {room.isOwner && <div className="lan-room-tool-buttons"><button disabled={pending || Boolean(room.seats.red && room.seats.black)} onClick={() => shareToken ? void shareInvite() : send('room-renew-invite')}>{shareToken ? copyState === 'copied' ? '邀请链接已复制' : '复制玩家邀请链接' : '生成玩家邀请链接'}</button><button disabled={pending || Boolean(room.seats.red && room.seats.black)} onClick={() => send('room-renew-invite')}>作废旧链接并重新生成</button><button className="lan-danger-button" disabled={pending} onClick={() => confirm('确定解散这个房间吗？') && send('room-dissolve')}>解散房间</button></div>}
+        {room.isOwner && <div className="lan-room-tool-buttons"><button disabled={pending || Boolean(room.seats.red && room.seats.black)} onClick={() => shareToken ? void shareInvite() : send('room-renew-invite')}>{shareToken ? copyState === 'copied' ? '邀请链接已复制' : '复制玩家邀请链接' : '生成玩家邀请链接'}</button><button disabled={pending || Boolean(room.seats.red && room.seats.black)} onClick={() => send('room-renew-invite')}>作废旧链接并重新生成</button><button className="lan-danger-button" disabled={pending} onClick={() => setDangerAction('dissolve')}>解散房间</button></div>}
         {copyState === 'manual' && <label className="lan-copy-fallback">浏览器未允许自动复制，请手动复制<input readOnly value={inviteUrl} onFocus={event => event.currentTarget.select()} /></label>}
         {room.isOwner && room.applications?.map(item => <div className="lan-request" key={item.id}>{item.nickname} 申请成为{item.side === 'red' ? '红方' : '黑方'} <button onClick={() => send('room-seat-approve', { applicationId: item.id, accept: true })}>批准</button><button onClick={() => send('room-seat-approve', { applicationId: item.id, accept: false })}>拒绝</button></div>)}
         <div className="lan-room-tool-meta">{color && (recoveryToken || getLanToken(roomId)) && <button onClick={shareRecovery}>{recoveryCopyState === 'copied' ? '恢复链接已复制' : '复制恢复链接'}</button>}{color && <button onClick={() => send('room-leave-seat')}>退出席位并观战</button>}<span>观众 {room.spectatorCount} 人</span></div>
         {recoveryCopyState === 'manual' && <label className="lan-copy-fallback">请手动复制恢复链接<input readOnly value={recoveryUrl} onFocus={event => event.currentTarget.select()} /></label>}
       </section> : <aside className="lan-panel lan-room-playing card"><h2>{color ? `你是${color === 'red' ? '红方' : '黑方'}` : '观战中'}</h2><p>{room.status === 'playing' ? `${room.turn === 'red' ? '红方' : '黑方'}走棋` : formatResult(room.status, room.statusReason)}</p><p>红：{room.seats.red?.nickname || '-'} {room.seats.red?.online ? '●' : '○'}<br/>黑：{room.seats.black?.nickname || '-'} {room.seats.black?.online ? '●' : '○'}</p>
         {!color && <button onClick={() => setSpectatorFlipped(value => !value)}>切换到{spectatorFlipped ? '红方' : '黑方'}视角</button>}
-        {color && room.phase === 'playing' && <><button disabled={pending || room.turn !== color || (room.seats[color]?.hintsRemaining || 0) < 1} onClick={() => send('room-hint')}>大师提示（剩余 {room.seats[color]?.hintsRemaining || 0}）</button>{room.variant === 'xiangqi' && !room.pendingUndoBy && !room.pendingDrawBy && <button disabled={pending} onClick={() => send('room-undo-request')}>申请悔棋</button>}{!room.pendingUndoBy && !room.pendingDrawBy && <button disabled={pending} onClick={() => send('room-draw-offer')}>提议和棋</button>}<button disabled={pending} onClick={() => confirm('确定认输吗？') && send('room-resign')}>认输</button></>}
+        {color && room.phase === 'playing' && <><button disabled={pending || room.turn !== color || (room.seats[color]?.hintsRemaining || 0) < 1} onClick={() => send('room-hint')}>大师提示（剩余 {room.seats[color]?.hintsRemaining || 0}）</button>{room.variant === 'xiangqi' && !room.pendingUndoBy && !room.pendingDrawBy && <button disabled={pending} onClick={() => send('room-undo-request')}>申请悔棋</button>}{!room.pendingUndoBy && !room.pendingDrawBy && <button disabled={pending} onClick={() => send('room-draw-offer')}>提议和棋</button>}<button disabled={pending} onClick={() => setDangerAction('resign')}>认输</button></>}
         {room.pendingUndoBy === color && <div className="lan-request">悔棋申请等待中（{proposalCountdown(room.pendingUndoDeadline)} 秒）<button disabled={pending} onClick={() => send('room-proposal-cancel', { kind: 'undo' })}>撤回</button></div>}
         {room.pendingDrawBy === color && <div className="lan-request">和棋提议等待中（{proposalCountdown(room.pendingDrawDeadline)} 秒）<button disabled={pending} onClick={() => send('room-proposal-cancel', { kind: 'draw' })}>撤回</button></div>}
         {room.pendingUndoBy && room.pendingUndoBy !== color && color && <Request text={`对方申请悔棋（${proposalCountdown(room.pendingUndoDeadline)} 秒）`} pending={pending} accept={() => send('room-undo-response', { accept: true })} reject={() => send('room-undo-response', { accept: false })} />}
@@ -173,6 +175,17 @@ function LanRoom({ roomId, nickname, onNickname }: { roomId: string; nickname: s
       <LanChat messages={chatMessages} connected={connected} isOwner={room.isOwner} settings={chatSettings} error={chatError} send={sendChat} remove={deleteChatMessage} mute={muteChatMember} updateSettings={updateChatSettings} />
       </div>
     </div>
+    {dangerAction && <ProductDialog
+      title={dangerAction === 'dissolve' ? '解散房间' : '确认认输'}
+      description={dangerAction === 'dissolve' ? '房间将立即关闭，所有棋手和观众都会离开。' : '当前对局将立即结束，并判对方获胜。'}
+      confirmLabel={dangerAction === 'dissolve' ? '确认解散' : '确认认输'}
+      dangerous
+      onCancel={() => setDangerAction(null)}
+      onConfirm={() => {
+        send(dangerAction === 'dissolve' ? 'room-dissolve' : 'room-resign')
+        setDangerAction(null)
+      }}
+    />}
   </div>
 }
 

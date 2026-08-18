@@ -12,6 +12,7 @@ import CandidatePreviewControls from './components/CandidatePreviewControls'
 import ReviewPanel from './components/ReviewPanel'
 import VariationPanel from './components/VariationPanel'
 import StudyLibrary from './components/StudyLibrary'
+import ProductDialog, { ProductDialogRequest } from './components/ProductDialog'
 import { useGame } from './hooks/useGame'
 import { BUILTIN_ENDGAMES } from './endgames/builtin'
 import {
@@ -169,8 +170,13 @@ function LocalApp() {
   const [engineSettings, setEngineSettings] = useState<EngineSettings>(() => loadEngineSettings())
   const [trainingHintLevel, setTrainingHintLevel] = useState(0)
   const [trainingHintHistory, setTrainingHintHistory] = useState<TrainingHintHistoryEntry[]>([])
+  const [productDialog, setProductDialog] = useState<ProductDialogRequest | null>(null)
+  const [toastMessage, setToastMessage] = useState('')
   const candidateAutoRequestRef = useRef<string | null>(null)
   const historyNavigationRef = useRef(false)
+  const dialogResolveRef = useRef<((values: Record<string, string> | null) => void) | null>(null)
+  const toastTimerRef = useRef<number | null>(null)
+  const jieqiOnboardingShownRef = useRef(false)
   const [editorDraft, setEditorDraft] = useState<EndgameDraft>({
     id: null,
     name: '',
@@ -192,6 +198,28 @@ function LocalApp() {
     engineThreads: engineSettings.engineThreads,
     engineHashMb: engineSettings.engineHashMb,
   }), [engineSettings.engineHashMb, engineSettings.engineThreads])
+
+  const requestProductDialog = useCallback((request: ProductDialogRequest) => new Promise<Record<string, string> | null>(resolve => {
+    dialogResolveRef.current?.(null)
+    dialogResolveRef.current = resolve
+    setProductDialog(request)
+  }), [])
+
+  const closeProductDialog = useCallback((values: Record<string, string> | null) => {
+    const resolve = dialogResolveRef.current
+    dialogResolveRef.current = null
+    setProductDialog(null)
+    resolve?.(values)
+  }, [])
+
+  const showToast = useCallback((message: string) => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current)
+    setToastMessage(message)
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastMessage('')
+      toastTimerRef.current = null
+    }, 2200)
+  }, [])
 
   useEffect(() => {
     setCustomEndgames(loadCustomEndgames())
@@ -249,9 +277,19 @@ function LocalApp() {
 
   useEffect(() => {
     if (initialReplay && !initialReplay.ok) {
-      window.alert(initialReplay.error)
+      void requestProductDialog({
+        title: '回放链接无法打开',
+        description: initialReplay.error,
+        confirmLabel: '知道了',
+        cancelLabel: null,
+      })
     }
-  }, [initialReplay])
+  }, [initialReplay, requestProductDialog])
+
+  useEffect(() => () => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current)
+    dialogResolveRef.current?.(null)
+  }, [])
 
   const game = useGame({
     gameId: activeGame?.id,
@@ -315,9 +353,17 @@ function LocalApp() {
       try {
         if (activeGame && destinationGameId !== activeGame.id) {
           const saved = await gamePersistence.flush(liveGameState)
-          if (!saved && !window.confirm('当前对局尚未成功保存，仍要离开吗？未保存的走棋可能丢失。')) {
-            window.history.pushState(null, '', gameUrl(activeGame.id))
-            return
+          if (!saved) {
+            const confirmed = await requestProductDialog({
+              title: '当前对局尚未保存',
+              description: '继续离开可能丢失尚未写入的走棋。你可以取消并稍后重试保存。',
+              confirmLabel: '仍要离开',
+              dangerous: true,
+            })
+            if (!confirmed) {
+              window.history.pushState(null, '', gameUrl(activeGame.id))
+              return
+            }
           }
         }
         if (!destinationGameId) {
@@ -339,7 +385,7 @@ function LocalApp() {
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
-  }, [activeGame, gamePersistence.flush, liveGameState, openGame])
+  }, [activeGame, gamePersistence.flush, liveGameState, openGame, requestProductDialog])
 
   useEffect(() => {
     if (!activeGame || gamePersistence.status === 'saved' || gamePersistence.status === 'idle') return
@@ -391,6 +437,24 @@ function LocalApp() {
     setCandidatePreview(null)
     if (workspaceTab === 'engine' || workspaceTab === 'variations') setWorkspaceTab('play')
   }, [gameMode, workspaceTab])
+
+  useEffect(() => {
+    if (gameMode !== 'jieqi' || jieqiOnboardingShownRef.current) return
+    jieqiOnboardingShownRef.current = true
+    const storageKey = 'xiangqi-jieqi-onboarding-v1'
+    if (window.localStorage.getItem(storageKey)) return
+    void requestProductDialog({
+      title: '第一次玩揭棋？',
+      description: '记住三个动作，就可以安全开始第一局。',
+      steps: [
+        { mark: '走', title: '按原位走法', description: '暗子先按所在位置对应的棋种移动。' },
+        { mark: '翻', title: '落子后揭晓', description: '暗子完成移动后，公开真实身份。' },
+        { mark: '隐', title: '暗吃信息私有', description: '被暗吃棋子的身份只对捕获方可见。' },
+      ],
+      confirmLabel: '明白了，开始对局',
+      cancelLabel: null,
+    }).then(() => window.localStorage.setItem(storageKey, 'seen'))
+  }, [gameMode, requestProductDialog])
 
   useEffect(() => {
     if (workspaceTab === 'review' && !showReviewTab) setWorkspaceTab('play')
@@ -491,8 +555,38 @@ function LocalApp() {
     return () => window.clearTimeout(timer)
   }, [gameMode, selectedStudy, selectedStudyIsPersisted, studyContent, studyContentSignature])
 
+  const handleNewGame = async () => {
+    setAiAutoPlaying(false)
+    setStudyAutoPlaying(false)
+    if (activeGame) {
+      const saved = await gamePersistence.flush(liveGameState)
+      if (!saved) {
+        const confirmed = await requestProductDialog({
+          title: '当前对局尚未保存',
+          description: '返回对局列表可能丢失尚未写入的走棋。',
+          confirmLabel: '仍要返回',
+          dangerous: true,
+        })
+        if (!confirmed) return
+      }
+    }
+    if (gameMode === 'endgame') {
+      setSelectedEndgame(null)
+      setEditingEndgame(false)
+    } else if (gameMode === 'study') {
+      setSelectedStudy(null)
+    } else {
+      setActiveGame(null)
+      setInitialLiveState(null)
+      clearGameUrl()
+      void refreshSavedGames()
+      setGameMode(null)
+    }
+  }
+
   if (!gameMode) {
-    return <StartScreen
+    return <>
+    <StartScreen
       games={savedGames}
       loading={gameStoreLoading}
       storeError={gameStoreError}
@@ -566,7 +660,13 @@ function LocalApp() {
         } catch (error) {
           const message = error instanceof Error ? error.message : '创建保存对局失败'
           setGameStoreError(message)
-          if (window.confirm(`${message}\n\n是否改为开始临时对局？临时对局刷新后不会保留。`)) {
+          const confirmed = await requestProductDialog({
+            title: '对局无法保存',
+            description: `${message}\n\n可以改为临时对局继续，刷新页面后这盘棋不会保留。`,
+            confirmLabel: '开始临时对局',
+            dangerous: true,
+          })
+          if (confirmed) {
             clearGameUrl()
             begin(state, null)
           }
@@ -575,6 +675,12 @@ function LocalApp() {
         }
       }}
     />
+    {productDialog && <ProductDialog
+      {...productDialog}
+      onCancel={() => closeProductDialog(null)}
+      onConfirm={values => closeProductDialog(values)}
+    />}
+    </>
   }
 
   if (editingEndgame) {
@@ -700,14 +806,22 @@ function LocalApp() {
             <small>PIKAFISH XIANGQI</small>
           </span>
         </div>
-        <div className="workspace-context">
-          <span>{formatModeName(gameMode)}</span>
-          {activeGame?.name && <strong>{activeGame.name}</strong>}
-          {gameMode === 'endgame' && selectedEndgame?.name && <strong>{selectedEndgame.name}</strong>}
-          {gameMode === 'study' && selectedStudy?.name && <strong>{selectedStudy.name}</strong>}
-          <span className={`workspace-turn ${game.currentTurn}`}>
-            {game.gameStatus === 'playing' ? `${game.currentTurn === 'red' ? '红方' : '黑方'}走棋` : '棋局结束'}
+        <div className="workspace-header-actions">
+          <div className="workspace-context">
+            <span>{formatModeName(gameMode)}</span>
+            {activeGame?.name && <strong>{activeGame.name}</strong>}
+            {gameMode === 'endgame' && selectedEndgame?.name && <strong>{selectedEndgame.name}</strong>}
+            {gameMode === 'study' && selectedStudy?.name && <strong>{selectedStudy.name}</strong>}
+            <span className={`workspace-turn ${game.currentTurn}`}>
+              {game.gameStatus === 'playing' ? `${game.currentTurn === 'red' ? '红方' : '黑方'}走棋` : '棋局结束'}
+            </span>
+          </div>
+          <span className={`workspace-save-state ${activeGame ? gamePersistence.status : studySaveStatus || 'saved'}`}>
+            {activeGame
+              ? gamePersistence.status === 'saved' || gamePersistence.status === 'idle' ? '已保存' : formatSaveStatus(gamePersistence.status, gamePersistence.error)
+              : gameMode === 'study' && studySaveStatus === 'unsaved' ? '等待自动保存' : gameMode === 'study' && studySaveStatus === 'shared' ? '分享回放未保存' : '本局无需保存'}
           </span>
+          <button className="workspace-new-game" onClick={() => void handleNewGame()}>新对局</button>
         </div>
       </header>
       <div className="game-container">
@@ -823,26 +937,7 @@ function LocalApp() {
             canStudyReplay={gameMode === 'study' && game.canRedo}
             canJumpToPrevMarked={gameMode === 'study' && findPrevMarkedIndex(game.historyRecords, game.currentMoveIndex) !== null}
             canJumpToNextMarked={gameMode === 'study' && findNextMarkedIndex(game.historyRecords, game.currentMoveIndex) !== null}
-            onNewGame={async () => {
-              setAiAutoPlaying(false)
-              setStudyAutoPlaying(false)
-              if (activeGame) {
-                const saved = await gamePersistence.flush(liveGameState)
-                if (!saved && !window.confirm('当前对局尚未成功保存，仍要返回对局列表吗？')) return
-              }
-              if (gameMode === 'endgame') {
-                setSelectedEndgame(null)
-                setEditingEndgame(false)
-              } else if (gameMode === 'study') {
-                setSelectedStudy(null)
-              } else {
-                setActiveGame(null)
-                setInitialLiveState(null)
-                clearGameUrl()
-                void refreshSavedGames()
-                setGameMode(null)
-              }
-            }}
+            onOpenReview={() => setWorkspaceTab('review')}
             onUndo={game.undo}
             onRedo={game.redo}
             onFlip={game.flip}
@@ -853,13 +948,18 @@ function LocalApp() {
             onExportFen={() => setShowFenDialog('export')}
             onImportFen={() => setShowFenDialog('import')}
             onCopyMoveText={() => {
-              navigator.clipboard.writeText(formatMoveRecords(game.moveRecords))
+              void navigator.clipboard.writeText(formatMoveRecords(game.moveRecords))
+                .then(() => showToast('棋谱已复制'))
+                .catch(() => requestProductDialog({ title: '复制失败', description: '浏览器没有授予剪贴板权限，请稍后重试。', confirmLabel: '知道了', cancelLabel: null }))
             }}
             onCopyReplayLink={() => {
-              navigator.clipboard.writeText(createReplayUrl(window.location.href, game.initialFen, game.historyRecords, game.currentMoveIndex))
+              void navigator.clipboard.writeText(createReplayUrl(window.location.href, game.initialFen, game.historyRecords, game.currentMoveIndex))
+                .then(() => showToast('回放链接已复制'))
+                .catch(() => requestProductDialog({ title: '复制失败', description: '浏览器没有授予剪贴板权限，请稍后重试。', confirmLabel: '知道了', cancelLabel: null }))
             }}
             onSaveRecentFen={() => {
               setRecentFenPositions(saveRecentFenPosition(game.getCurrentFen(), '手动保存'))
+              showToast('当前局面已保存')
             }}
             onSaveAsEndgame={() => {
               setEditorDraft({
@@ -876,16 +976,23 @@ function LocalApp() {
               })
               setEditingEndgame(true)
             }}
-            onSaveStudy={() => {
+            onSaveStudy={async () => {
               const defaultName = selectedStudy?.name || scenarioNameFromState(gameMode, selectedEndgame).replace('-副本', '') || '研究局面'
-              const name = window.prompt('研究名称', defaultName)
-              if (!name?.trim()) return
-              const description = window.prompt('研究说明', selectedStudy?.description || '') || ''
+              const values = await requestProductDialog({
+                title: '保存研究',
+                description: '保存当前局面、走法、标记、备注与分析数据。',
+                confirmLabel: '保存',
+                fields: [
+                  { name: 'name', label: '研究名称', initialValue: defaultName, required: true, maxLength: 80 },
+                  { name: 'description', label: '研究说明', initialValue: selectedStudy?.description || '', multiline: true, maxLength: 300 },
+                ],
+              })
+              if (!values) return
               const existingStudyId = selectedStudy?.id
               const saved = saveStudyPosition({
                 id: existingStudyId,
-                name: name.trim(),
-                description: description.trim() || undefined,
+                name: values.name.trim(),
+                description: values.description.trim() || undefined,
                 initialFen: game.initialFen,
                 moves: game.historyRecords,
                 currentMoveIndex: game.currentMoveIndex,
@@ -896,6 +1003,7 @@ function LocalApp() {
               setSelectedStudy(existingStudyId
                 ? saved.find(item => item.id === existingStudyId) || saved[0] || null
                 : saved[0] || null)
+              showToast('研究已保存')
             }}
             onExportImage={async () => {
               const dataUrl = boardRef.current?.exportPng()
@@ -918,8 +1026,14 @@ function LocalApp() {
             }}
             onHint={game.requestHint}
             onNextAiMove={game.nextAiMove}
-            onDeclareDraw={game.declareDraw}
-            onResign={game.resign}
+            onDeclareDraw={async () => {
+              const confirmed = await requestProductDialog({ title: '确认和棋', description: '这盘棋将立即按双方议和结束。', confirmLabel: '确认和棋' })
+              if (confirmed) game.declareDraw()
+            }}
+            onResign={async () => {
+              const confirmed = await requestProductDialog({ title: '确认认输', description: `当前${game.currentTurn === 'red' ? '红方' : '黑方'}将认输并结束棋局。`, confirmLabel: '确认认输', dangerous: true })
+              if (confirmed) game.resign()
+            }}
             onToggleAiAutoPlay={() => setAiAutoPlaying(value => !value)}
             onAiAutoDelayChange={setAiAutoDelay}
             onToggleStudyAutoPlay={() => setStudyAutoPlaying(value => !value)}
@@ -946,7 +1060,7 @@ function LocalApp() {
                 const records = buildCandidatePreview(candidateAutoPositionKey, candidate)
                 setCandidatePreview({ candidate, records, stepIndex: Math.min(1, records.length) })
               } catch {
-                window.alert('当前候选变化无法在棋盘上预览。')
+                void requestProductDialog({ title: '无法预览候选变化', description: '当前引擎返回的变化无法从这个局面复现。', confirmLabel: '知道了', cancelLabel: null })
               }
             }}
             thinking={game.candidateThinking}
@@ -1038,6 +1152,12 @@ function LocalApp() {
           }}
         />
       )}
+      {toastMessage && <div className="product-toast" role="status">{toastMessage}</div>}
+      {productDialog && <ProductDialog
+        {...productDialog}
+        onCancel={() => closeProductDialog(null)}
+        onConfirm={values => closeProductDialog(values)}
+      />}
     </div>
   )
 }
@@ -1234,6 +1354,8 @@ function StartScreen({ games, loading, storeError, starting, onRetry, onOpen, on
   const [side, setSide] = useState<PlayerSide>('red')
   const [redDiff, setRedDiff] = useState<Difficulty>('medium')
   const [blackDiff, setBlackDiff] = useState<Difficulty>('medium')
+  const [editingGame, setEditingGame] = useState<GameSummary | null>(null)
+  const [deletingGame, setDeletingGame] = useState<GameSummary | null>(null)
   const mode: GameMode = section === 'study'
     ? studyMode
     : rule === 'jieqi' ? 'jieqi' : opponent
@@ -1368,13 +1490,8 @@ function StartScreen({ games, loading, storeError, starting, onRetry, onOpen, on
                     <strong>{item.name}</strong>
                     <span>{formatModeName(item.mode)} · {item.moveCount} 回合 · {new Date(item.updatedAt).toLocaleString()}</span>
                   </button>
-                  <button title="重命名" onClick={() => {
-                    const name = window.prompt('对局名称', item.name)
-                    if (name?.trim() && name.trim() !== item.name) onRename(item, name.trim())
-                  }}>改名</button>
-                  <button title="删除" onClick={() => {
-                    if (window.confirm(`确定删除“${item.name}”吗？`)) onDelete(item)
-                  }}>删除</button>
+                  <button title="重命名" onClick={() => setEditingGame(item)}>改名</button>
+                  <button title="删除" onClick={() => setDeletingGame(item)}>删除</button>
                 </div>
               ))}
             </div>
@@ -1382,6 +1499,28 @@ function StartScreen({ games, loading, storeError, starting, onRetry, onOpen, on
         </div>
         </section>
       </div>
+      {editingGame && <ProductDialog
+        title="重命名对局"
+        confirmLabel="保存"
+        fields={[{ name: 'name', label: '对局名称', initialValue: editingGame.name, required: true, maxLength: 80 }]}
+        onCancel={() => setEditingGame(null)}
+        onConfirm={values => {
+          const name = values.name.trim()
+          if (name !== editingGame.name) onRename(editingGame, name)
+          setEditingGame(null)
+        }}
+      />}
+      {deletingGame && <ProductDialog
+        title="删除对局"
+        description={`确定删除“${deletingGame.name}”吗？删除后无法恢复。`}
+        confirmLabel="确认删除"
+        dangerous
+        onCancel={() => setDeletingGame(null)}
+        onConfirm={() => {
+          onDelete(deletingGame)
+          setDeletingGame(null)
+        }}
+      />}
     </div>
   )
 }

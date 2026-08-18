@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { StudyPosition } from '../types'
 import { countVariationBranches } from '../variations/tree'
+import ProductDialog, { ProductDialogRequest } from './ProductDialog'
 
 interface Props {
   studies: StudyPosition[]
@@ -34,6 +35,7 @@ export default function StudyLibrary({ studies, onBack, onStart, onDelete, onDel
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<'all' | 'marked' | 'notes' | 'recent'>('all')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [dialog, setDialog] = useState<(ProductDialogRequest & { action: 'rename' | 'delete'; targetIds?: string[] }) | null>(null)
 
   const visibleStudies = useMemo(() => {
     const keyword = query.trim().toLowerCase()
@@ -82,15 +84,24 @@ export default function StudyLibrary({ studies, onBack, onStart, onDelete, onDel
 
   function deleteSelected() {
     if (selectedIds.length === 0) return
-    onDeleteMany(selectedIds)
-    setSelectedIds([])
+    setDialog({
+      action: 'delete',
+      title: '删除研究',
+      description: `确定删除选中的 ${selectedIds.length} 项研究吗？删除后无法恢复。`,
+      confirmLabel: '确认删除',
+      dangerous: true,
+      targetIds: selectedIds,
+    })
   }
 
   function renameSelected() {
     if (!singleSelectedStudy) return
-    const name = window.prompt('研究名称', singleSelectedStudy.name)
-    if (!name?.trim()) return
-    onRename(singleSelectedStudy.id, name)
+    setDialog({
+      action: 'rename',
+      title: '重命名研究',
+      confirmLabel: '保存',
+      fields: [{ name: 'name', label: '研究名称', initialValue: singleSelectedStudy.name, required: true, maxLength: 80 }],
+    })
   }
 
   function duplicateSelected() {
@@ -179,7 +190,14 @@ export default function StudyLibrary({ studies, onBack, onStart, onDelete, onDel
               <div className="study-card-actions">
                 <button onClick={() => onStart(study)}>打开</button>
                 <button onClick={() => onDuplicate(study.id)}>复制</button>
-                <button className="endgame-delete-btn" onClick={() => onDelete(study.id)}>删除</button>
+                <button className="endgame-delete-btn" onClick={() => setDialog({
+                  action: 'delete',
+                  targetIds: [study.id],
+                  title: '删除研究',
+                  description: `确定删除“${study.name}”吗？删除后无法恢复。`,
+                  confirmLabel: '确认删除',
+                  dangerous: true,
+                })}>删除</button>
               </div>
             </div>
           ))}
@@ -190,6 +208,20 @@ export default function StudyLibrary({ studies, onBack, onStart, onDelete, onDel
           )}
         </div>
       </div>
+      {dialog && <ProductDialog
+        {...dialog}
+        onCancel={() => setDialog(null)}
+        onConfirm={values => {
+          if (dialog.action === 'rename' && singleSelectedStudy) onRename(singleSelectedStudy.id, values.name.trim())
+          if (dialog.action === 'delete') {
+            const ids = dialog.targetIds || selectedIds
+            if (ids.length === 1) onDelete(ids[0])
+            else onDeleteMany(ids)
+            setSelectedIds([])
+          }
+          setDialog(null)
+        }}
+      />}
     </div>
   )
 }

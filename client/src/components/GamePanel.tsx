@@ -31,7 +31,7 @@ interface Props {
   canStudyReplay: boolean
   canJumpToPrevMarked: boolean
   canJumpToNextMarked: boolean
-  onNewGame: () => void
+  onOpenReview: () => void
   onUndo: () => void
   onRedo: () => void
   onFlip: () => void
@@ -142,7 +142,7 @@ export default function GamePanel({
   canStudyReplay,
   canJumpToPrevMarked,
   canJumpToNextMarked,
-  onNewGame, onUndo, onRedo, onFlip, onToggleAnalysis,
+  onOpenReview, onUndo, onRedo, onFlip, onToggleAnalysis,
   onExportFen, onImportFen, onCopyMoveText, onCopyReplayLink, onSaveRecentFen, onSaveAsEndgame, onSaveStudy, onExportImage, onTrainingHint,
   onHint, onNextAiMove, onDeclareDraw, onResign, onToggleAiAutoPlay, onAiAutoDelayChange,
   onToggleStudyAutoPlay, onStudyReplayDelayChange, onJumpToPrevMarked, onJumpToNextMarked,
@@ -203,6 +203,12 @@ export default function GamePanel({
       {naturalLimitReminder && <div className="natural-limit-reminder">{naturalLimitReminder}</div>}
       {repetitionReminder && <div className="natural-limit-reminder">{repetitionReminder}</div>}
 
+      {gameStatus !== 'playing' && !isJieqi && (
+        <div className="panel-section phase-primary-action">
+          <button className="primary-action accent-action" onClick={onOpenReview}>开始复盘</button>
+        </div>
+      )}
+
       <div className={`engine-status ${connectionState} ${engineAvailable === false ? 'engine-offline' : ''}`}>
         <span className="engine-status-dot" />
         <span>{formatEngineStatus(connectionState, engineAvailable, engineStatusMessage)}</span>
@@ -210,21 +216,21 @@ export default function GamePanel({
 
       <div className="panel-section">
         <div className="panel-section-title">常用操作</div>
-        <div className="panel-buttons panel-buttons-primary">
-          <button className="primary-action" onClick={onUndo} disabled={!canUndo} title="回到上一手">悔棋</button>
-          <button className="primary-action" onClick={onRedo} disabled={!canRedo} title="前进到下一手">重做</button>
+        <div className="panel-buttons">
+          <button onClick={onUndo} disabled={!canUndo} title="回到上一手">悔棋</button>
+          <button onClick={onRedo} disabled={!canRedo} title="前进到下一手">重做</button>
           {!isAiVsAi && (
-            <button className="primary-action accent-action" onClick={onHint} disabled={!canRequestHint} title="请求引擎给出当前方建议">
+            <button onClick={onHint} disabled={!canRequestHint} title="请求引擎给出当前方建议">
               {hintThinking ? '提示中...' : '提示'}
             </button>
           )}
           {gameMode === 'endgame' && (
-            <button className="primary-action" onClick={onTrainingHint} disabled={!canRequestTrainingHint} title="按标准解法逐层提示">
+            <button onClick={onTrainingHint} disabled={!canRequestTrainingHint} title="按标准解法逐层提示">
               训练提示
             </button>
           )}
           {isAiVsAi && (
-            <button className="primary-action accent-action" onClick={onNextAiMove} disabled={!canStepAi} title="让当前 AI 走一步">
+            <button onClick={onNextAiMove} disabled={!canStepAi} title="让当前 AI 走一步">
               {aiThinking ? '思考中...' : '下一步'}
             </button>
           )}
@@ -293,11 +299,17 @@ export default function GamePanel({
           <button onClick={onCopyMoveText}>复制棋谱</button>
           {!isJieqi && <button onClick={onCopyReplayLink}>复制回放链接</button>}
           {!isJieqi && <button onClick={onSaveAsEndgame}>另存残局</button>}
-          {gameMode === 'human-vs-human' && <button onClick={onDeclareDraw} disabled={!canDeclareDraw}>和棋</button>}
-          {!isAiVsAi && <button className="new-game" onClick={onResign} disabled={!canManualEnd}>认输</button>}
-          <button className="new-game" onClick={onNewGame}>新游戏</button>
         </div>
       </details>
+      {(gameMode === 'human-vs-human' || !isAiVsAi) && (
+        <details className="panel-section danger-actions">
+          <summary>结束棋局</summary>
+          <div className="panel-buttons">
+            {gameMode === 'human-vs-human' && <button onClick={onDeclareDraw} disabled={!canDeclareDraw}>和棋</button>}
+            {!isAiVsAi && <button className="danger-action" onClick={onResign} disabled={!canManualEnd}>认输</button>}
+          </div>
+        </details>
+      )}
     </div>
   )
 }

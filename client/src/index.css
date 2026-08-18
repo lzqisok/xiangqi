@@ -2971,6 +2971,101 @@ body {
 .lan-room-tool-meta span { margin-left: auto; }
 .lan-moves { max-height: min(180px, calc(100dvh - 410px)); overflow: auto; display: flex; flex-direction: column; gap: 4px; font-family: monospace; }
 .lan-chat-panel { position: relative; flex: 1 1 auto; min-height: 0; max-height: none; }
+
+/* LAN product flow: lobby, invitation and dedicated ready room */
+.lan-lobby-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: min(100%, 900px);
+  margin: 0 auto 18px;
+  padding: 5px;
+  border-radius: 13px;
+  background: rgba(123, 92, 57, .1);
+}
+.lan-lobby-switch button {
+  display: grid;
+  gap: 3px;
+  padding: 13px 16px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #665646;
+  text-align: left;
+  cursor: pointer;
+}
+.lan-lobby-switch button.active { border-color: rgba(123, 48, 40, .2); background: #fffaf0; color: #7b3028; box-shadow: 0 5px 14px rgba(70,45,24,.08); }
+.lan-lobby-switch strong { font-size: 15px; }
+.lan-lobby-switch span { color: #887866; font-size: 11px; }
+.lan-lobby-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.lan-lobby-heading h2, .lan-lobby-heading p { margin: 0; }
+.lan-lobby-heading p { margin-top: 4px; color: #81715f; font-size: 12px; }
+.lan-room-filters { display: flex; justify-content: flex-end; gap: 5px; flex-wrap: wrap; }
+.lan-room-filters button { padding: 6px 9px; border: 1px solid #d8c8ad; border-radius: 999px; background: transparent; color: #776654; cursor: pointer; font-size: 11px; }
+.lan-room-filters button.active { border-color: #7b3028; background: #7b3028; color: #fff; }
+.lan-room-list { display: grid; gap: 8px; }
+.lan-room-list .lan-room-card { margin: 0; cursor: pointer; }
+.lan-room-list .lan-room-card:hover { border-color: #a98663; background: #fffdf8; }
+.lan-empty { padding: 36px 12px; color: #81715f; text-align: center; }
+
+.lan-ready-shell { min-height: 100vh; height: auto; overflow: visible; }
+.lan-ready-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 680px) minmax(300px, 380px);
+  align-items: stretch;
+  gap: 16px;
+  width: min(100%, 1080px);
+  margin: 20px auto 0;
+}
+.lan-ready-layout > .lan-chat-panel { min-height: 560px; contain: none; }
+.lan-ready-room { min-width: 0; }
+.lan-ready-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.lan-ready-heading small { color: #9d4338; font-size: 11px; font-weight: 800; letter-spacing: 1px; }
+.lan-ready-heading h2 { margin: 4px 0 0; font: 900 24px 'Noto Serif SC', serif; }
+.lan-ready-heading p { margin: 7px 0 0; color: #796a59; font-size: 12px; line-height: 1.6; }
+.lan-ready-heading > span { flex: none; padding: 6px 9px; border-radius: 999px; background: #eee3d1; color: #77624a; font-size: 11px; }
+.lan-ready-nickname { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; margin: 24px 0 14px; color: #665646; font-size: 12px; font-weight: 800; }
+.lan-ready-nickname input { min-width: 0; padding: 10px 11px; border: 1px solid #c9b89e; border-radius: 8px; background: #fffdf8; }
+.lan-ready-seats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.lan-ready-seat { position: relative; display: grid; gap: 15px; min-width: 0; padding: 17px; border: 1px solid #d8c8ad; border-top: 4px solid #333; border-radius: 12px; background: #fffaf0; }
+.lan-ready-seat.red { border-top-color: #a43f35; }
+.lan-ready-seat.current { box-shadow: 0 0 0 2px rgba(63,107,88,.2), 0 9px 24px rgba(70,45,24,.08); }
+.lan-ready-seat > div { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.lan-ready-seat i { display: grid; flex: none; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: #38342e; color: #fff; font: 900 15px 'Noto Serif SC', serif; font-style: normal; }
+.lan-ready-seat.red i { background: #a44337; }
+.lan-ready-seat.gomoku i { border: 1px solid #bba98f; background: #2e2a25; font-size: 24px; }
+.lan-ready-seat.gomoku.black i { background: #fffdf8; color: #fffdf8; }
+.lan-ready-seat span { display: grid; min-width: 0; gap: 4px; }
+.lan-ready-seat strong { color: #3f342a; font-size: 14px; }
+.lan-ready-seat small { overflow: hidden; color: #7c6c5a; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.lan-ready-seat > button { min-height: 40px; border: 1px solid #bca98c; border-radius: 8px; background: #fffdf8; color: #493c30; cursor: pointer; font-weight: 800; }
+.lan-ready-seat > button.ready { border-color: #3f6b58; background: #3f6b58; color: #fff; }
+.lan-ready-seat > button.remove { position: absolute; top: 8px; right: 9px; min-height: 0; padding: 3px 5px; border: 0; background: transparent; color: #a44337; font-size: 10px; }
+.lan-ready-seat > button:disabled { cursor: not-allowed; opacity: .5; }
+.lan-ready-primary { display: flex; align-items: center; gap: 13px; margin-top: 18px; padding: 14px; border-radius: 11px; background: #eee7db; }
+.lan-ready-primary button.invite { min-height: 42px; padding: 0 22px; border: 0; border-radius: 8px; background: #a44337; color: #fff; cursor: pointer; font-weight: 900; }
+.lan-ready-primary button:disabled { cursor: not-allowed; opacity: .5; }
+.lan-ready-primary span { color: #716455; font-size: 12px; }
+.lan-room-management { margin-top: 14px; border-top: 1px solid rgba(74,61,45,.12); padding-top: 12px; }
+.lan-room-management summary { color: #756655; font-size: 12px; cursor: pointer; }
+.lan-room-management > div { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 10px; }
+.lan-room-management button { padding: 9px; border: 1px solid #c9b89e; border-radius: 7px; background: #fffaf0; color: #57483a; cursor: pointer; }
+.lan-room-management button.danger { border-color: rgba(164,67,55,.25); background: #fff0ed; color: #a44337; }
+.lan-proposal-bar { border-left: 4px solid #a44337; background: #fff2df; }
+
+@media (max-width: 1000px) {
+  .lan-ready-layout { grid-template-columns: 1fr; max-width: 680px; }
+  .lan-ready-layout > .lan-chat-panel { min-height: 430px; }
+}
+@media (max-width: 640px) {
+  .lan-lobby-switch, .lan-ready-seats { grid-template-columns: 1fr; }
+  .lan-lobby-heading { display: block; }
+  .lan-room-filters { justify-content: flex-start; margin-top: 12px; }
+  .lan-ready-heading { display: block; }
+  .lan-ready-heading > span { display: inline-block; margin-top: 10px; }
+  .lan-ready-primary { align-items: stretch; flex-direction: column; }
+  .lan-room-management > div { grid-template-columns: 1fr; }
+}
 .lan-chat-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .lan-chat-heading h2, .lan-chat-heading p { margin: 0; }
 .lan-chat-heading h2 { font-size: 18px; }
@@ -3274,4 +3369,13 @@ body {
   .workspace-context { display: none; }
   .workspace-save-state { max-width: 130px; }
   .product-dialog { padding: 22px; }
+}
+
+@media (min-width: 1001px) {
+  .gomoku-lan-shell.lan-room-shell.lan-ready-shell {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+  .gomoku-lan-shell.lan-ready-shell .lan-chat-panel { min-height: 560px; }
 }

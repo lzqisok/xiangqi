@@ -124,7 +124,7 @@ function GameModeScreen({ game }: { game: 'xiangqi' | 'gomoku' }) {
     <div className="home-brand"><span className={gomoku ? 'gomoku' : ''} aria-hidden="true">{gomoku ? '五' : '象'}</span><div><small>{gomoku ? 'GOMOKU' : 'XIANGQI'} STUDIO</small><h1>{gomoku ? '五子棋' : '中国象棋'}</h1><p>今天想怎么下？</p></div></div>
     <nav className="home-entries game-goal-entries" aria-label="棋局目标">
       <a href={gomoku ? '?gomoku=1&local=1' : '?local=1&intent=play'}><span className="home-entry-mark">弈</span><strong>开始一局</strong><small>{gomoku ? '人机挑战、本地双人或观看 AI 对决' : '选择对手、规则、执子方和 AI 强度'}</small><b>配置新对局 →</b></a>
-      <a href={gomoku ? '?gomoku=1&lan=1' : '?lan=1'}><span className="home-entry-mark online">友</span><strong>和朋友下</strong><small>创建局域网房间、邀请棋友、实时聊天与观战</small><b>进入局域网大厅 →</b></a>
+      <a href={gomoku ? '?gomoku=1&lan=1' : '?lan=1'}><span className="home-entry-mark online">友</span><strong>局域网对战</strong><small>创建局域网房间、邀请棋友、实时聊天与观战</small><b>进入局域网大厅 →</b></a>
       <a href={gomoku ? '?gomoku=1&local=1&history=1' : '?local=1&intent=study'}><span className="home-entry-mark study">研</span><strong>训练与研究</strong><small>{gomoku ? '打开历史棋局并查看局后复盘' : '进入残局训练、研究局面与棋谱回放'}</small><b>{gomoku ? '查看对局记录 →' : '打开训练中心 →'}</b></a>
     </nav>
     <a className="home-back-link" href="?">← 返回棋局空间</a>

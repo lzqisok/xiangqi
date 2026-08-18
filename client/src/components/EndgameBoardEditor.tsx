@@ -30,7 +30,10 @@ export default function EndgameBoardEditor({
   onChange: (fen: string) => void
 }) {
   const [{ board, turn }, setState] = useState(() => safeParseFen(fen || DEFAULT_EDITOR_FEN))
-  const [selectedPiece, setSelectedPiece] = useState<Piece | null>({ type: 'r', color: 'red' })
+  const [selectedPiece, setSelectedPiece] = useState<Piece | null>({
+    type: 'r',
+    color: 'red',
+  })
 
   useEffect(() => {
     if (!fen.trim()) return
@@ -48,15 +51,15 @@ export default function EndgameBoardEditor({
   }
 
   const handleCellClick = (pos: Position) => {
-    const nextBoard = board.map(row => row.slice())
+    const nextBoard = board.map((row) => row.slice())
     nextBoard[pos.row][pos.col] = selectedPiece ? { ...selectedPiece } : null
     sync(nextBoard, turn)
   }
 
   const palette = useMemo(() => {
     const pieces: Piece[] = []
-    ;(['red', 'black'] as const).forEach(color => {
-      ;(['k', 'a', 'b', 'n', 'r', 'c', 'p'] as const).forEach(type => {
+    ;(['red', 'black'] as const).forEach((color) => {
+      ;(['k', 'a', 'b', 'n', 'r', 'c', 'p'] as const).forEach((type) => {
         pieces.push({ color, type })
       })
     })
@@ -68,28 +71,26 @@ export default function EndgameBoardEditor({
       <div className="endgame-board-toolbar">
         <div className="endgame-board-turn">
           <span>轮到：</span>
-          <button
-            className={turn === 'red' ? 'active' : ''}
-            onClick={() => sync(board, 'red')}
-          >
+          <button className={turn === 'red' ? 'active' : ''} onClick={() => sync(board, 'red')}>
             红方
           </button>
-          <button
-            className={turn === 'black' ? 'active' : ''}
-            onClick={() => sync(board, 'black')}
-          >
+          <button className={turn === 'black' ? 'active' : ''} onClick={() => sync(board, 'black')}>
             黑方
           </button>
         </div>
         <div className="endgame-board-actions">
-          <button onClick={() => setSelectedPiece(null)} className={!selectedPiece ? 'active' : ''}>擦除</button>
+          <button onClick={() => setSelectedPiece(null)} className={!selectedPiece ? 'active' : ''}>
+            擦除
+          </button>
           <button onClick={() => sync(createEmptyBoard(), turn)}>清空棋盘</button>
-          <button onClick={() => sync(safeParseFen(DEFAULT_EDITOR_FEN).board, 'red')}>仅保留将帅</button>
+          <button onClick={() => sync(safeParseFen(DEFAULT_EDITOR_FEN).board, 'red')}>
+            仅保留将帅
+          </button>
         </div>
       </div>
 
       <div className="endgame-piece-palette">
-        {palette.map(piece => {
+        {palette.map((piece) => {
           const active = selectedPiece?.color === piece.color && selectedPiece?.type === piece.type
           return (
             <button

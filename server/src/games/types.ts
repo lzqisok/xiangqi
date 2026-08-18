@@ -2,7 +2,15 @@ export type LiveGameMode = 'human-vs-ai' | 'human-vs-human' | 'ai-vs-ai' | 'jieq
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'master'
 export type PlayerSide = 'red' | 'black'
 export type GameStatus = 'playing' | 'red-wins' | 'black-wins' | 'draw'
-export type GameStatusReason = 'checkmate' | 'stalemate' | 'illegal-position' | 'manual' | 'resignation' | 'repetition' | 'natural-limit' | 'move-limit'
+export type GameStatusReason =
+  | 'checkmate'
+  | 'stalemate'
+  | 'illegal-position'
+  | 'manual'
+  | 'resignation'
+  | 'repetition'
+  | 'natural-limit'
+  | 'move-limit'
 
 export interface GameConfig {
   difficulty: Difficulty

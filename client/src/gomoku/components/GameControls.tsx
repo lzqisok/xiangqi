@@ -1,4 +1,10 @@
-import { BLACK, GOMOKU_DIFFICULTIES, GOMOKU_DIFFICULTY_LABELS, WHITE, type Difficulty } from '../core/types'
+import {
+  BLACK,
+  GOMOKU_DIFFICULTIES,
+  GOMOKU_DIFFICULTY_LABELS,
+  WHITE,
+  type Difficulty,
+} from '../core/types'
 import { useGameStore } from '../store/gameStore'
 
 interface DifficultyButtonsProps {
@@ -8,18 +14,20 @@ interface DifficultyButtonsProps {
 }
 
 function DifficultyButtons({ value, disabled, onChange }: DifficultyButtonsProps) {
-  return <div className="gomoku-radio-group gomoku-difficulty-group">
-    {GOMOKU_DIFFICULTIES.map(difficulty => (
-      <button
-        key={difficulty}
-        className={`gomoku-radio-btn ${value === difficulty ? 'active' : ''}`}
-        disabled={disabled}
-        onClick={() => onChange(difficulty)}
-      >
-        {GOMOKU_DIFFICULTY_LABELS[difficulty]}
-      </button>
-    ))}
-  </div>
+  return (
+    <div className="gomoku-radio-group gomoku-difficulty-group">
+      {GOMOKU_DIFFICULTIES.map((difficulty) => (
+        <button
+          key={difficulty}
+          className={`gomoku-radio-btn ${value === difficulty ? 'active' : ''}`}
+          disabled={disabled}
+          onClick={() => onChange(difficulty)}
+        >
+          {GOMOKU_DIFFICULTY_LABELS[difficulty]}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 export function GameControls() {
@@ -90,51 +98,55 @@ export function GameControls() {
 
         {mode === 'ai' && (
           <>
-          <div className="gomoku-control-group gomoku-control-group--side">
-            <label className="gomoku-control-label">执子</label>
-            <div className="gomoku-radio-group">
-              <button
-                className={`gomoku-radio-btn ${humanPlayer === BLACK ? 'active' : ''}`}
-                disabled={locked}
-                onClick={() => setAiSide(BLACK)}
-              >
-                我执黑
-              </button>
-              <button
-                className={`gomoku-radio-btn ${humanPlayer === WHITE ? 'active' : ''}`}
-                disabled={locked}
-                onClick={() => setAiSide(WHITE)}
-              >
-                我执白
-              </button>
+            <div className="gomoku-control-group gomoku-control-group--side">
+              <label className="gomoku-control-label">执子</label>
+              <div className="gomoku-radio-group">
+                <button
+                  className={`gomoku-radio-btn ${humanPlayer === BLACK ? 'active' : ''}`}
+                  disabled={locked}
+                  onClick={() => setAiSide(BLACK)}
+                >
+                  我执黑
+                </button>
+                <button
+                  className={`gomoku-radio-btn ${humanPlayer === WHITE ? 'active' : ''}`}
+                  disabled={locked}
+                  onClick={() => setAiSide(WHITE)}
+                >
+                  我执白
+                </button>
+              </div>
             </div>
-          </div>
 
-          <div className="gomoku-control-group gomoku-control-group--difficulty">
-            <label className="gomoku-control-label">难度</label>
-            <DifficultyButtons value={difficulty} disabled={aiThinking} onChange={setDifficulty} />
-          </div>
+            <div className="gomoku-control-group gomoku-control-group--difficulty">
+              <label className="gomoku-control-label">难度</label>
+              <DifficultyButtons
+                value={difficulty}
+                disabled={aiThinking}
+                onChange={setDifficulty}
+              />
+            </div>
           </>
         )}
 
         {mode === 'ai-vs-ai' && (
           <>
-          <div className="gomoku-control-group gomoku-control-group--black-ai">
-            <label className="gomoku-control-label">黑方强度</label>
-            <DifficultyButtons
-              value={blackAiDifficulty}
-              disabled={locked || aiThinking}
-              onChange={difficulty => setAiMatchDifficulty(BLACK, difficulty)}
-            />
-          </div>
-          <div className="gomoku-control-group gomoku-control-group--white-ai">
-            <label className="gomoku-control-label">白方强度</label>
-            <DifficultyButtons
-              value={whiteAiDifficulty}
-              disabled={locked || aiThinking}
-              onChange={difficulty => setAiMatchDifficulty(WHITE, difficulty)}
-            />
-          </div>
+            <div className="gomoku-control-group gomoku-control-group--black-ai">
+              <label className="gomoku-control-label">黑方强度</label>
+              <DifficultyButtons
+                value={blackAiDifficulty}
+                disabled={locked || aiThinking}
+                onChange={(difficulty) => setAiMatchDifficulty(BLACK, difficulty)}
+              />
+            </div>
+            <div className="gomoku-control-group gomoku-control-group--white-ai">
+              <label className="gomoku-control-label">白方强度</label>
+              <DifficultyButtons
+                value={whiteAiDifficulty}
+                disabled={locked || aiThinking}
+                onChange={(difficulty) => setAiMatchDifficulty(WHITE, difficulty)}
+              />
+            </div>
           </>
         )}
       </div>
@@ -149,7 +161,9 @@ export function GameControls() {
           disabled={locked}
           className={`gomoku-switch ${forbiddenEnabled ? 'gomoku-switch--on' : ''} ${locked ? 'gomoku-switch--disabled' : ''}`}
           onClick={() => setForbiddenEnabled(!forbiddenEnabled)}
-        ><span className="gomoku-switch-knob" /></button>
+        >
+          <span className="gomoku-switch-knob" />
+        </button>
       </label>
 
       {locked && <p className="gomoku-tip">已开局，模式/禁手设置将在下一局生效。</p>}

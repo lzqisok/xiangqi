@@ -23,7 +23,7 @@ const config = {
   aiBlackDifficulty: 'hard' as const,
 }
 
-test('JSON repository persists games and enforces revisions across concurrent writes', async t => {
+test('JSON repository persists games and enforces revisions across concurrent writes', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-games-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const repository = new JsonGameRepository(directory)
@@ -34,8 +34,8 @@ test('JSON repository persists games and enforces revisions across concurrent wr
     repository.rename(created.id, 0, '第一局'),
     repository.rename(created.id, 0, '冲突局'),
   ])
-  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1)
-  const rejected = results.find(result => result.status === 'rejected')
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
+  const rejected = results.find((result) => result.status === 'rejected')
   assert.ok(rejected?.status === 'rejected' && rejected.reason instanceof GameRevisionConflictError)
   await repository.flush()
 
@@ -43,11 +43,25 @@ test('JSON repository persists games and enforces revisions across concurrent wr
   await reloaded.init()
   assert.equal(reloaded.get(created.id).revision, 1)
   assert.equal(reloaded.list()[0].moveCount, 0)
-  assert.equal((JSON.parse(await readFile(path.join(directory, 'index.json'), 'utf8')) as { schemaVersion: number }).schemaVersion, 2)
-  assert.equal((JSON.parse(await readFile(path.join(directory, `${created.id}.json`), 'utf8')) as { schemaVersion: number }).schemaVersion, 2)
+  assert.equal(
+    (
+      JSON.parse(await readFile(path.join(directory, 'index.json'), 'utf8')) as {
+        schemaVersion: number
+      }
+    ).schemaVersion,
+    2,
+  )
+  assert.equal(
+    (
+      JSON.parse(await readFile(path.join(directory, `${created.id}.json`), 'utf8')) as {
+        schemaVersion: number
+      }
+    ).schemaVersion,
+    2,
+  )
 })
 
-test('JSON repository restores the last valid backup when the main file is corrupt', async t => {
+test('JSON repository restores the last valid backup when the main file is corrupt', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-games-backup-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const repository = new JsonGameRepository(directory)

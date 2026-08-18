@@ -10,7 +10,13 @@ test('chat sensitive words normalize separators, case, and full-width text', () 
 })
 
 test('room sensitive words are trimmed, deduplicated, and bounded', () => {
-  assert.deepEqual(normalizeRoomSensitiveWords([' 坏词 ', '坏词', 'Advert', 'advert']), ['坏词', 'Advert'])
-  assert.throws(() => normalizeRoomSensitiveWords(Array.from({ length: 21 }, (_, index) => `词${index}`)), /最多设置/)
+  assert.deepEqual(normalizeRoomSensitiveWords([' 坏词 ', '坏词', 'Advert', 'advert']), [
+    '坏词',
+    'Advert',
+  ])
+  assert.throws(
+    () => normalizeRoomSensitiveWords(Array.from({ length: 21 }, (_, index) => `词${index}`)),
+    /最多设置/,
+  )
   assert.throws(() => normalizeRoomSensitiveWords(['字'.repeat(21)]), /单个敏感词/)
 })

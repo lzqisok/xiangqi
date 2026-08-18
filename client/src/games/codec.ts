@@ -21,9 +21,10 @@ import { getVariationLine } from '../variations/tree'
 const JIEQI_TYPES = /^[rabncp]{30}$/
 
 export function encodeJieqiLayout(board: Board): string {
-  return board.flatMap(row => row)
-    .filter(piece => piece && piece.type !== 'k')
-    .map(piece => piece!.type)
+  return board
+    .flatMap((row) => row)
+    .filter((piece) => piece && piece.type !== 'k')
+    .map((piece) => piece!.type)
     .join('')
 }
 
@@ -31,15 +32,24 @@ export function decodeJieqiLayout(layout: string): Board {
   if (!JIEQI_TYPES.test(layout)) throw new Error('Invalid compact Jieqi layout')
   const { board } = parseFen(INITIAL_FEN)
   let offset = 0
-  const result = board.map(row => row.map(piece => {
-    if (!piece || piece.type === 'k') return piece ? { ...piece } : null
-    const type = layout[offset++] as PieceType
-    return { color: piece.color, type, hidden: true, darkType: piece.type }
-  }))
+  const result = board.map((row) =>
+    row.map((piece) => {
+      if (!piece || piece.type === 'k') return piece ? { ...piece } : null
+      const type = layout[offset++] as PieceType
+      return { color: piece.color, type, hidden: true, darkType: piece.type }
+    }),
+  )
   const validInventory = (start: number) => {
     const counts = { r: 0, a: 0, b: 0, n: 0, c: 0, p: 0 }
     for (const type of layout.slice(start, start + 15)) counts[type as keyof typeof counts]++
-    return counts.r === 2 && counts.a === 2 && counts.b === 2 && counts.n === 2 && counts.c === 2 && counts.p === 5
+    return (
+      counts.r === 2 &&
+      counts.a === 2 &&
+      counts.b === 2 &&
+      counts.n === 2 &&
+      counts.c === 2 &&
+      counts.p === 5
+    )
   }
   if (!validInventory(0) || !validInventory(15)) throw new Error('Invalid compact Jieqi inventory')
   return result
@@ -52,20 +62,29 @@ export function encodeGameState(state: PersistedGameState, mode: LiveGameMode): 
       p: node.parentId,
       c: node.children,
       x: node.mainChildId,
-      v: node.move ? {
-        u: moveToUci(node.move.move.from, node.move.move.to),
-        q: node.move.notation || undefined,
-        e: node.move.elapsedMs,
-        s: node.move.source,
-        m: node.move.marked ? 1 : undefined,
-        n: node.move.note,
-      } : undefined,
+      v: node.move
+        ? {
+            u: moveToUci(node.move.move.from, node.move.move.to),
+            q: node.move.notation || undefined,
+            e: node.move.elapsedMs,
+            s: node.move.source,
+            m: node.move.marked ? 1 : undefined,
+            n: node.move.note,
+          }
+        : undefined,
     }
   }
   return {
     f: state.initialFen,
-    j: mode === 'jieqi' && state.initialJieqiBoard ? encodeJieqiLayout(state.initialJieqiBoard) : undefined,
-    t: { r: state.variationTree.rootId, c: state.variationTree.currentNodeId, n: nodes },
+    j:
+      mode === 'jieqi' && state.initialJieqiBoard
+        ? encodeJieqiLayout(state.initialJieqiBoard)
+        : undefined,
+    t: {
+      r: state.variationTree.rootId,
+      c: state.variationTree.currentNodeId,
+      n: nodes,
+    },
     s: state.gameStatus,
     g: state.gameStatusReason,
   }
@@ -75,9 +94,8 @@ export function decodeGameState(state: CompactGameState, mode: LiveGameMode): Pe
   const initialJieqiBoard = mode === 'jieqi' ? decodeJieqiLayout(state.j || '') : undefined
   const boardByNode = new Map<string, Board>()
   const turnByNode = new Map<string, 'red' | 'black'>()
-  const { board: standardBoard, turn: standardTurn } = mode === 'jieqi'
-    ? { board: initialJieqiBoard!, turn: 'red' as const }
-    : parseFen(state.f)
+  const { board: standardBoard, turn: standardTurn } =
+    mode === 'jieqi' ? { board: initialJieqiBoard!, turn: 'red' as const } : parseFen(state.f)
   boardByNode.set(state.t.r, standardBoard)
   turnByNode.set(state.t.r, standardTurn)
   const nodes: Record<string, VariationNode> = {}
@@ -98,14 +116,21 @@ export function decodeGameState(state: CompactGameState, mode: LiveGameMode): Pe
       const { from, to } = uciToMove(compact.v.u)
       const piece = parentBoard[from.row]?.[from.col]
       if (!piece || piece.color !== turn) throw new Error('Invalid compact move')
-      const legal = getLegalMoves(parentBoard, from, mode === 'jieqi' ? 'jieqi' : 'xiangqi')
-        .some(target => target.row === to.row && target.col === to.col)
+      const legal = getLegalMoves(parentBoard, from, mode === 'jieqi' ? 'jieqi' : 'xiangqi').some(
+        (target) => target.row === to.row && target.col === to.col,
+      )
       if (!legal) throw new Error('Illegal compact move')
-      const move: Move = { from, to, piece: { ...piece }, captured: parentBoard[to.row][to.col] ? { ...parentBoard[to.row][to.col]! } : undefined }
+      const move: Move = {
+        from,
+        to,
+        piece: { ...piece },
+        captured: parentBoard[to.row][to.col] ? { ...parentBoard[to.row][to.col]! } : undefined,
+      }
       const nextTurn = turn === 'red' ? 'black' : 'red'
-      const nextBoard = mode === 'jieqi'
-        ? applyJieqiMove(parentBoard, from, to).newBoard
-        : applyMove(parentBoard, from, to).newBoard
+      const nextBoard =
+        mode === 'jieqi'
+          ? applyJieqiMove(parentBoard, from, to).newBoard
+          : applyMove(parentBoard, from, to).newBoard
       fen = mode === 'jieqi' ? JIEQI_INITIAL_FEN : boardToFen(nextBoard, nextTurn)
       record = {
         move,
@@ -132,7 +157,11 @@ export function decodeGameState(state: CompactGameState, mode: LiveGameMode): Pe
     }
     pending.push(...compact.c)
   }
-  const variationTree: VariationTree = { rootId: state.t.r, currentNodeId: state.t.c, nodes }
+  const variationTree: VariationTree = {
+    rootId: state.t.r,
+    currentNodeId: state.t.c,
+    nodes,
+  }
   const line = getVariationLine(variationTree)
   return {
     initialFen: mode === 'jieqi' ? JIEQI_INITIAL_FEN : state.f,

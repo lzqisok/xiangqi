@@ -39,7 +39,12 @@ function translateLine(fen: string, pv: string[]): string[] {
       const { from, to } = uciToMove(uci)
       const piece = board[from.row][from.col]
       if (!piece) break
-      const move = { from, to, piece, captured: board[to.row][to.col] || undefined }
+      const move = {
+        from,
+        to,
+        piece,
+        captured: board[to.row][to.col] || undefined,
+      }
       line.push(moveToNotation(board, move))
       board = applyMove(board, from, to).newBoard
     } catch {
@@ -54,7 +59,7 @@ export function buildMoveReviews(
   records: MoveRecord[],
   positions: ReviewPosition[],
 ): MoveReview[] {
-  const byIndex = new Map(positions.map(position => [position.moveIndex, position]))
+  const byIndex = new Map(positions.map((position) => [position.moveIndex, position]))
 
   return records.flatMap((record, moveIndex) => {
     const before = byIndex.get(moveIndex - 1)
@@ -65,26 +70,29 @@ export function buildMoveReviews(
     const mover = parseFen(positionFen).turn
     const beforeEvaluation = clampEvaluation(before.evaluation)
     const afterEvaluation = clampEvaluation(after.evaluation)
-    const loss = Math.max(0, Math.round(
-      mover === 'red'
-        ? beforeEvaluation - afterEvaluation
-        : afterEvaluation - beforeEvaluation,
-    ))
+    const loss = Math.max(
+      0,
+      Math.round(
+        mover === 'red' ? beforeEvaluation - afterEvaluation : afterEvaluation - beforeEvaluation,
+      ),
+    )
     const playedMove = moveToUci(record.move.from, record.move.to)
     const recommendedLine = translateLine(positionFen, before.pv)
 
-    return [{
-      moveIndex,
-      mover,
-      playedNotation: record.notation,
-      category: classifyMoveLoss(loss, playedMove === before.bestMove),
-      loss,
-      beforeEvaluation: before.evaluation,
-      afterEvaluation: after.evaluation,
-      bestMove: before.bestMove,
-      recommendedNotation: recommendedLine[0] || before.bestMove,
-      recommendedLine,
-    }]
+    return [
+      {
+        moveIndex,
+        mover,
+        playedNotation: record.notation,
+        category: classifyMoveLoss(loss, playedMove === before.bestMove),
+        loss,
+        beforeEvaluation: before.evaluation,
+        afterEvaluation: after.evaluation,
+        bestMove: before.bestMove,
+        recommendedNotation: recommendedLine[0] || before.bestMove,
+        recommendedLine,
+      },
+    ]
   })
 }
 

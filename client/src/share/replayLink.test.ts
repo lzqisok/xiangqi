@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildMoveRecordsFromUci, createReplayUrl, MAX_REPLAY_MOVES, parseReplayStudyFromSearch } from './replayLink'
+import {
+  buildMoveRecordsFromUci,
+  createReplayUrl,
+  MAX_REPLAY_MOVES,
+  parseReplayStudyFromSearch,
+} from './replayLink'
 
 const INITIAL_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
 function encodeReplayPayload(value: unknown): string {
-  return btoa(JSON.stringify(value))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '')
+  return btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 
 test('buildMoveRecordsFromUci replays legal UCI moves into records', () => {
@@ -47,5 +49,8 @@ test('parseReplayStudyFromSearch rejects oversized move arrays before replaying 
   })
   const parsed = parseReplayStudyFromSearch(`?replay=${payload}`)
 
-  assert.deepEqual(parsed, { ok: false, error: `回放链接最多支持 ${MAX_REPLAY_MOVES} 手。` })
+  assert.deepEqual(parsed, {
+    ok: false,
+    error: `回放链接最多支持 ${MAX_REPLAY_MOVES} 手。`,
+  })
 })

@@ -9,7 +9,14 @@ const DIRECTIONS: Array<[number, number]> = [
   [1, -1],
 ]
 
-function countInDirection(board: Board, row: number, col: number, player: Player, dr: number, dc: number): Position[] {
+function countInDirection(
+  board: Board,
+  row: number,
+  col: number,
+  player: Player,
+  dr: number,
+  dc: number,
+): Position[] {
   const points: Position[] = [{ row, col }]
 
   let r = row + dr
@@ -63,7 +70,14 @@ function lineAt(
   return { pattern, center, points }
 }
 
-function chainLength(board: Board, row: number, col: number, player: Player, dr: number, dc: number): number {
+function chainLength(
+  board: Board,
+  row: number,
+  col: number,
+  player: Player,
+  dr: number,
+  dc: number,
+): number {
   return countInDirection(board, row, col, player, dr, dc).length
 }
 
@@ -91,7 +105,11 @@ function exactFiveRange(pattern: LinePattern, idx: number): { left: number; righ
   return { left, right }
 }
 
-function canCreateExactFiveIncludingCenter(pattern: LinePattern, idx: number, center: number): boolean {
+function canCreateExactFiveIncludingCenter(
+  pattern: LinePattern,
+  idx: number,
+  center: number,
+): boolean {
   if (pattern[idx] !== '_') return false
   const temp = [...pattern]
   temp[idx] = 'x'
@@ -151,14 +169,26 @@ function hasOpenFourIncluding(
 
   for (let i = 0; i <= pattern.length - 6; i += 1) {
     if (pattern[i] !== '_' || pattern[i + 5] !== '_') continue
-    if (pattern[i + 1] !== 'x' || pattern[i + 2] !== 'x' || pattern[i + 3] !== 'x' || pattern[i + 4] !== 'x') continue
+    if (
+      pattern[i + 1] !== 'x' ||
+      pattern[i + 2] !== 'x' ||
+      pattern[i + 3] !== 'x' ||
+      pattern[i + 4] !== 'x'
+    )
+      continue
     const covered = requiredIdx.every((idx) => idx >= i + 1 && idx <= i + 4)
     if (covered) return true
   }
   return false
 }
 
-function isLegalBlackMoveForRenju(board: Board, row: number, col: number, config: RuleConfig, checking: Set<number>): boolean {
+function isLegalBlackMoveForRenju(
+  board: Board,
+  row: number,
+  col: number,
+  config: RuleConfig,
+  checking: Set<number>,
+): boolean {
   if (!inBounds(row, col)) return false
   if (getCell(board, row, col) !== EMPTY) return false
   const idx = toIndex(row, col)
@@ -188,14 +218,10 @@ function collectOpenThreeThreatsFromMove(
 
       const idx = toIndex(p.row, p.col)
       board[idx] = BLACK
-      const hasOpenFour = hasOpenFourIncluding(
-        board,
-        p.row,
-        p.col,
-        dr,
-        dc,
-        [{ row, col }, { row: p.row, col: p.col }],
-      )
+      const hasOpenFour = hasOpenFourIncluding(board, p.row, p.col, dr, dc, [
+        { row, col },
+        { row: p.row, col: p.col },
+      ])
       board[idx] = EMPTY
 
       if (hasOpenFour) {
@@ -209,7 +235,13 @@ function collectOpenThreeThreatsFromMove(
   return total
 }
 
-function isForbiddenMoveInternal(board: Board, row: number, col: number, config: RuleConfig, checking: Set<number>): boolean {
+function isForbiddenMoveInternal(
+  board: Board,
+  row: number,
+  col: number,
+  config: RuleConfig,
+  checking: Set<number>,
+): boolean {
   if (!config.forbiddenEnabled) return false
   if (getCell(board, row, col) !== BLACK) return false
 
@@ -227,7 +259,12 @@ function isForbiddenMoveInternal(board: Board, row: number, col: number, config:
   return totalThrees >= 2
 }
 
-export function isForbiddenMove(board: Board, row: number, col: number, config: RuleConfig): boolean {
+export function isForbiddenMove(
+  board: Board,
+  row: number,
+  col: number,
+  config: RuleConfig,
+): boolean {
   return isForbiddenMoveInternal(board, row, col, config, new Set())
 }
 
@@ -237,7 +274,11 @@ export function checkWinResult(
   player: Player,
   config: RuleConfig,
 ): WinResult | null {
-  if (config.forbiddenEnabled && player === BLACK && isForbiddenMove(board, lastMove.row, lastMove.col, config)) {
+  if (
+    config.forbiddenEnabled &&
+    player === BLACK &&
+    isForbiddenMove(board, lastMove.row, lastMove.col, config)
+  ) {
     return {
       winner: 2,
       line: [{ row: lastMove.row, col: lastMove.col }],

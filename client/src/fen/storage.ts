@@ -25,7 +25,7 @@ export function loadRecentFenPositions(): RecentFenPosition[] {
     if (!raw) return []
     const parsed = JSON.parse(raw) as RecentFenPosition[]
     return parsed
-      .filter(item => item?.fen && validateFenPosition(item.fen).ok)
+      .filter((item) => item?.fen && validateFenPosition(item.fen).ok)
       .slice(0, MAX_RECENT_FENS)
   } catch {
     return []
@@ -40,7 +40,7 @@ export function saveRecentFenPosition(fen: string, label = '最近局面'): Rece
 
   const next = [
     { fen: normalizedFen, label, savedAt: Date.now() },
-    ...loadRecentFenPositions().filter(item => item.fen !== normalizedFen),
+    ...loadRecentFenPositions().filter((item) => item.fen !== normalizedFen),
   ].slice(0, MAX_RECENT_FENS)
 
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))

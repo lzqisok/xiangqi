@@ -34,15 +34,19 @@ function findRapfiBinary(engineDirectory: string): string | null {
     path.join(engineDirectory, 'rapfi'),
     path.join(engineDirectory, 'rapfi.exe'),
   ].filter((candidate): candidate is string => Boolean(candidate))
-  return candidates.find(candidate => fs.existsSync(candidate)) || null
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null
 }
 
 function availableThreadCount(): number {
-  const available = typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length
+  const available =
+    typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length
   return Math.max(1, available)
 }
 
-export function getRapfiThreadCount(difficulty: GomokuDifficulty, available = availableThreadCount()): number {
+export function getRapfiThreadCount(
+  difficulty: GomokuDifficulty,
+  available = availableThreadCount(),
+): number {
   return Math.max(1, Math.min(RAPFI_THREAD_LIMITS[difficulty], available))
 }
 
@@ -79,7 +83,9 @@ export class RapfiEngine extends EventEmitter {
 
     const binary = findRapfiBinary(this.engineDirectory)
     if (!binary) {
-      console.warn(`Rapfi engine binary not found. Expected ${path.join(this.engineDirectory, 'rapfi')}`)
+      console.warn(
+        `Rapfi engine binary not found. Expected ${path.join(this.engineDirectory, 'rapfi')}`,
+      )
       return false
     }
 
@@ -104,20 +110,20 @@ export class RapfiEngine extends EventEmitter {
         const message = data.toString().trim()
         if (message) console.error('[rapfi stderr]', message)
       })
-      child.on('error', error => {
+      child.on('error', (error) => {
         if (this.process === child) {
           this.ready = false
           this.emit('engine-error', error)
         }
       })
-      child.on('exit', code => {
+      child.on('exit', (code) => {
         if (this.process !== child) return
         this.process = null
         this.ready = false
         this.emit('engine-exit', code)
       })
 
-      const started = this.waitForLine(line => line === 'OK', 20_000)
+      const started = this.waitForLine((line) => line === 'OK', 20_000)
       this.send('START 15')
       await started
       this.send(`INFO thread_num ${getRapfiThreadCount('medium')}`)
@@ -145,7 +151,11 @@ export class RapfiEngine extends EventEmitter {
 
   interrupt(): void {
     if (!this.process) return
-    try { this.send('STOP') } catch { /* process already closed */ }
+    try {
+      this.send('STOP')
+    } catch {
+      /* process already closed */
+    }
   }
 
   destroy(): void {
@@ -155,12 +165,18 @@ export class RapfiEngine extends EventEmitter {
     this.buffer = ''
     if (!child) return
     this.emit('engine-exit', null)
-    try { child.stdin?.write('END\n') } catch { /* process already closed */ }
+    try {
+      child.stdin?.write('END\n')
+    } catch {
+      /* process already closed */
+    }
     child.kill()
   }
 
-  private async getBestMoveLocked(request: RapfiSearchRequest): Promise<{ row: number; col: number }> {
-    if (!this.available && !await this.init()) throw new Error('Rapfi engine is unavailable')
+  private async getBestMoveLocked(
+    request: RapfiSearchRequest,
+  ): Promise<{ row: number; col: number }> {
+    if (!this.available && !(await this.init())) throw new Error('Rapfi engine is unavailable')
 
     const timeLimit = RAPFI_TIME_LIMITS[request.difficulty]
     this.send(`INFO rule ${request.forbiddenEnabled ? 4 : 0}`)
@@ -169,7 +185,10 @@ export class RapfiEngine extends EventEmitter {
     this.send(`INFO timeout_match ${timeLimit}`)
     this.send(`INFO time_left ${timeLimit}`)
 
-    const response = this.waitForLine(line => Boolean(parseRapfiMove(line)), timeLimit + RAPFI_STOP_GRACE_MS)
+    const response = this.waitForLine(
+      (line) => Boolean(parseRapfiMove(line)),
+      timeLimit + RAPFI_STOP_GRACE_MS,
+    )
     for (const line of buildRapfiBoardCommand(request.moves, request.aiPlayer)) this.send(line)
     let output: string
     try {
@@ -180,7 +199,7 @@ export class RapfiEngine extends EventEmitter {
     }
     const move = parseRapfiMove(output)
     if (!move) throw new Error('Rapfi returned an invalid move')
-    if (request.moves.some(previous => previous.row === move.row && previous.col === move.col)) {
+    if (request.moves.some((previous) => previous.row === move.row && previous.col === move.col)) {
       throw new Error('Rapfi returned an occupied point')
     }
     return move

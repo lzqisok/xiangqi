@@ -1,15 +1,31 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getLanChatContentLength, getLanChatLineCount, getLanChatRole, mergeLanChatMessage, parseLanRoomSensitiveWords } from './chat.js'
+import {
+  getLanChatContentLength,
+  getLanChatLineCount,
+  getLanChatRole,
+  mergeLanChatMessage,
+  parseLanRoomSensitiveWords,
+} from './chat.js'
 import { LanChatMessage } from './types.js'
 
 function message(sequence: number, id = String(sequence)): LanChatMessage {
-  return { id, sequence, authorId: 'a'.repeat(64), nickname: '棋友', role: 'spectator', isOwner: false, content: `消息 ${sequence}`, createdAt: sequence }
+  return {
+    id,
+    sequence,
+    authorId: 'a'.repeat(64),
+    nickname: '棋友',
+    role: 'spectator',
+    isOwner: false,
+    content: `消息 ${sequence}`,
+    createdAt: sequence,
+  }
 }
 
 test('LAN chat messages are ordered, deduplicated, and bounded', () => {
   let messages: LanChatMessage[] = []
-  for (let sequence = 105; sequence >= 1; sequence--) messages = mergeLanChatMessage(messages, message(sequence))
+  for (let sequence = 105; sequence >= 1; sequence--)
+    messages = mergeLanChatMessage(messages, message(sequence))
   assert.equal(messages.length, 100)
   assert.equal(messages[0].sequence, 6)
   assert.equal(messages[99].sequence, 105)
@@ -32,5 +48,9 @@ test('LAN chat line counting matches the server limit across newline formats', (
 })
 
 test('room sensitive words support common separators and deduplication', () => {
-  assert.deepEqual(parseLanRoomSensitiveWords('广告，诈骗\n广告、 恶意词 '), ['广告', '诈骗', '恶意词'])
+  assert.deepEqual(parseLanRoomSensitiveWords('广告，诈骗\n广告、 恶意词 '), [
+    '广告',
+    '诈骗',
+    '恶意词',
+  ])
 })

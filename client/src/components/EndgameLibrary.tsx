@@ -39,9 +39,14 @@ export default function EndgameLibrary({
   onExportJson,
   onBack,
 }: Props) {
-  const [selectedId, setSelectedId] = useState<string | null>(builtinEndgames[0]?.id ?? customEndgames[0]?.id ?? null)
+  const [selectedId, setSelectedId] = useState<string | null>(
+    builtinEndgames[0]?.id ?? customEndgames[0]?.id ?? null,
+  )
   const [redConfig, setRedConfig] = useState<PlayerConfig>(DEFAULT_PLAYER_CONFIG)
-  const [blackConfig, setBlackConfig] = useState<PlayerConfig>({ type: 'ai', difficulty: 'medium' })
+  const [blackConfig, setBlackConfig] = useState<PlayerConfig>({
+    type: 'ai',
+    difficulty: 'medium',
+  })
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<'all' | 'builtin' | 'custom' | 'favorite'>('all')
 
@@ -52,7 +57,7 @@ export default function EndgameLibrary({
 
   const visibleEndgames = useMemo(() => {
     const keyword = query.trim().toLowerCase()
-    return allEndgames.filter(item => {
+    return allEndgames.filter((item) => {
       const matchesFilter =
         filter === 'all' ||
         (filter === 'builtin' && item.source === 'builtin') ||
@@ -63,19 +68,26 @@ export default function EndgameLibrary({
         item.name.toLowerCase().includes(keyword) ||
         item.fen.toLowerCase().includes(keyword) ||
         item.description?.toLowerCase().includes(keyword) ||
-        item.tags?.some(tag => tag.toLowerCase().includes(keyword))
+        item.tags?.some((tag) => tag.toLowerCase().includes(keyword))
       return matchesFilter && matchesQuery
     })
   }, [allEndgames, query, filter, favoriteIds])
 
-  const selectedEndgame = visibleEndgames.find(item => item.id === selectedId) ?? allEndgames.find(item => item.id === selectedId) ?? null
+  const selectedEndgame =
+    visibleEndgames.find((item) => item.id === selectedId) ??
+    allEndgames.find((item) => item.id === selectedId) ??
+    null
 
   const updatePlayer = (
     setter: (config: PlayerConfig) => void,
     nextType: PlayerConfig['type'],
     nextDifficulty?: Difficulty,
   ) => {
-    setter(nextType === 'human' ? { type: 'human' } : { type: 'ai', difficulty: nextDifficulty || 'medium' })
+    setter(
+      nextType === 'human'
+        ? { type: 'human' }
+        : { type: 'ai', difficulty: nextDifficulty || 'medium' },
+    )
   }
 
   return (
@@ -88,7 +100,9 @@ export default function EndgameLibrary({
           <button onClick={onBack}>返回</button>
           <div className="endgame-library-action-group">
             <button onClick={onCreate}>新建残局</button>
-            <button onClick={onExportJson} disabled={customEndgames.length === 0}>导出 JSON</button>
+            <button onClick={onExportJson} disabled={customEndgames.length === 0}>
+              导出 JSON
+            </button>
             <label className="endgame-import-btn">
               导入 JSON
               <input
@@ -108,19 +122,36 @@ export default function EndgameLibrary({
           <input
             className="endgame-input"
             value={query}
-            onChange={e => setQuery(e.target.value)}
+            onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索残局名称、描述或 FEN..."
           />
           <div className="btn-group endgame-filter-group">
-            <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button>
-            <button className={filter === 'builtin' ? 'active' : ''} onClick={() => setFilter('builtin')}>内置</button>
-            <button className={filter === 'custom' ? 'active' : ''} onClick={() => setFilter('custom')}>自定义</button>
-            <button className={filter === 'favorite' ? 'active' : ''} onClick={() => setFilter('favorite')}>收藏</button>
+            <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>
+              全部
+            </button>
+            <button
+              className={filter === 'builtin' ? 'active' : ''}
+              onClick={() => setFilter('builtin')}
+            >
+              内置
+            </button>
+            <button
+              className={filter === 'custom' ? 'active' : ''}
+              onClick={() => setFilter('custom')}
+            >
+              自定义
+            </button>
+            <button
+              className={filter === 'favorite' ? 'active' : ''}
+              onClick={() => setFilter('favorite')}
+            >
+              收藏
+            </button>
           </div>
         </div>
 
         <div className="endgame-library-list">
-          {visibleEndgames.map(item => (
+          {visibleEndgames.map((item) => (
             <div
               key={item.id}
               className={`endgame-card ${item.id === selectedId ? 'active' : ''}`}
@@ -139,13 +170,17 @@ export default function EndgameLibrary({
                   >
                     {favoriteIds.includes(item.id) ? '★' : '☆'}
                   </button>
-                  <span className={`endgame-source ${item.source}`}>{item.source === 'builtin' ? '内置' : '自定义'}</span>
+                  <span className={`endgame-source ${item.source}`}>
+                    {item.source === 'builtin' ? '内置' : '自定义'}
+                  </span>
                 </div>
               </div>
               {item.description && <p>{item.description}</p>}
               {item.tags && item.tags.length > 0 && (
                 <div className="endgame-tags">
-                  {item.tags.map(tag => <span key={tag}>{tag}</span>)}
+                  {item.tags.map((tag) => (
+                    <span key={tag}>{tag}</span>
+                  ))}
                 </div>
               )}
               {(item.target || item.solution?.length) && (
@@ -182,7 +217,7 @@ export default function EndgameLibrary({
                       e.stopPropagation()
                       onDelete(item.id)
                       if (selectedId === item.id) {
-                        setSelectedId(allEndgames.find(other => other.id !== item.id)?.id ?? null)
+                        setSelectedId(allEndgames.find((other) => other.id !== item.id)?.id ?? null)
                       }
                     }}
                   >
@@ -237,7 +272,11 @@ function PlayerConfigSection({
   label: string
   value: PlayerConfig
   onChange: (config: PlayerConfig) => void
-  updatePlayer: (setter: (config: PlayerConfig) => void, nextType: PlayerConfig['type'], nextDifficulty?: Difficulty) => void
+  updatePlayer: (
+    setter: (config: PlayerConfig) => void,
+    nextType: PlayerConfig['type'],
+    nextDifficulty?: Difficulty,
+  ) => void
 }) {
   return (
     <div className="option-group">
@@ -259,13 +298,19 @@ function PlayerConfigSection({
 
       {value.type === 'ai' && (
         <div className="btn-group endgame-difficulty-group">
-          {(['easy', 'medium', 'hard', 'master'] as const).map(diff => (
+          {(['easy', 'medium', 'hard', 'master'] as const).map((diff) => (
             <button
               key={diff}
               className={value.difficulty === diff ? 'active' : ''}
               onClick={() => updatePlayer(onChange, 'ai', diff)}
             >
-              {diff === 'easy' ? '初级 · D8' : diff === 'medium' ? '中级 · D14' : diff === 'hard' ? '高级 · D20' : '大师 · D26'}
+              {diff === 'easy'
+                ? '初级 · D8'
+                : diff === 'medium'
+                  ? '中级 · D14'
+                  : diff === 'hard'
+                    ? '高级 · D20'
+                    : '大师 · D26'}
             </button>
           ))}
         </div>

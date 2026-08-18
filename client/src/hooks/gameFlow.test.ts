@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { canNavigateHistory, getManualDrawStatus, getRedoTargetIndex, getResignationStatus, getUndoTargetIndex, sendStopForActiveEngineRequests, shouldAutoRequestAiMove } from './gameFlow'
+import {
+  canNavigateHistory,
+  getManualDrawStatus,
+  getRedoTargetIndex,
+  getResignationStatus,
+  getUndoTargetIndex,
+  sendStopForActiveEngineRequests,
+  shouldAutoRequestAiMove,
+} from './gameFlow'
 
 const human = { type: 'human' as const }
 const ai = { type: 'ai' as const, difficulty: 'medium' as const }
@@ -32,29 +40,38 @@ test('endgame single AI side follows paired undo flow', () => {
 })
 
 test('AI move auto trigger excludes ai-vs-ai and blocked states', () => {
-  assert.equal(shouldAutoRequestAiMove({
-    gameStatus: 'playing',
-    aiThinking: false,
-    gameMode: 'human-vs-ai',
-    currentPlayer: ai,
-    connected: true,
-  }), true)
+  assert.equal(
+    shouldAutoRequestAiMove({
+      gameStatus: 'playing',
+      aiThinking: false,
+      gameMode: 'human-vs-ai',
+      currentPlayer: ai,
+      connected: true,
+    }),
+    true,
+  )
 
-  assert.equal(shouldAutoRequestAiMove({
-    gameStatus: 'playing',
-    aiThinking: false,
-    gameMode: 'ai-vs-ai',
-    currentPlayer: ai,
-    connected: true,
-  }), false)
+  assert.equal(
+    shouldAutoRequestAiMove({
+      gameStatus: 'playing',
+      aiThinking: false,
+      gameMode: 'ai-vs-ai',
+      currentPlayer: ai,
+      connected: true,
+    }),
+    false,
+  )
 
-  assert.equal(shouldAutoRequestAiMove({
-    gameStatus: 'playing',
-    aiThinking: true,
-    gameMode: 'human-vs-ai',
-    currentPlayer: ai,
-    connected: true,
-  }), false)
+  assert.equal(
+    shouldAutoRequestAiMove({
+      gameStatus: 'playing',
+      aiThinking: true,
+      gameMode: 'human-vs-ai',
+      currentPlayer: ai,
+      connected: true,
+    }),
+    false,
+  )
 })
 
 test('manual draw and resignation produce manual game-over states', () => {

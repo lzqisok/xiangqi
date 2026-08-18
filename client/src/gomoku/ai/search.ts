@@ -95,12 +95,26 @@ function getDifficultyProfile(difficulty: Difficulty): DifficultyProfile {
     return { baseTimeMs: 950, rootCandidates: 24, qDepth: 10, forcingLimit: 6 }
   }
   if (difficulty === 'hard') {
-    return { baseTimeMs: 4_500, rootCandidates: 40, qDepth: 16, forcingLimit: 9 }
+    return {
+      baseTimeMs: 4_500,
+      rootCandidates: 40,
+      qDepth: 16,
+      forcingLimit: 9,
+    }
   }
-  return { baseTimeMs: 9_000, rootCandidates: 48, qDepth: 18, forcingLimit: 10 }
+  return {
+    baseTimeMs: 9_000,
+    rootCandidates: 48,
+    qDepth: 18,
+    forcingLimit: 10,
+  }
 }
 
-function estimateComplexity(board: Board, currentPlayer: Player, forbiddenEnabled: boolean): number {
+function estimateComplexity(
+  board: Board,
+  currentPlayer: Player,
+  forbiddenEnabled: boolean,
+): number {
   const frontier = collectFrontier(board, 2)
   const opp = nextPlayer(currentPlayer)
   let danger = 0
@@ -125,7 +139,13 @@ function unplace(board: Board, row: number, col: number): void {
   board[moveKey(row, col)] = EMPTY
 }
 
-function isLegalMove(board: Board, row: number, col: number, player: Player, forbiddenEnabled: boolean): boolean {
+function isLegalMove(
+  board: Board,
+  row: number,
+  col: number,
+  player: Player,
+  forbiddenEnabled: boolean,
+): boolean {
   if (!inBounds(row, col)) return false
   if (board[moveKey(row, col)] !== EMPTY) return false
   if (!forbiddenEnabled || player !== BLACK) return true
@@ -244,7 +264,11 @@ function generateCandidates(
       }
       if (isLegalMove(board, p.row, p.col, opp, forbiddenEnabled)) {
         const oppThreat = evaluateMoveThreat(board, p.row, p.col, opp)
-        if (oppThreat.level === 'open-four' || oppThreat.level === 'blocked-four' || oppThreat.level === 'five') {
+        if (
+          oppThreat.level === 'open-four' ||
+          oppThreat.level === 'blocked-four' ||
+          oppThreat.level === 'five'
+        ) {
           blockOppFourSet.add(keyPos)
         }
       }
@@ -292,15 +316,29 @@ function generateForcingMoves(
 
   const oppWins = findImmediateWins(board, nextPlayer(turn), config.forbiddenEnabled)
   if (oppWins.length > 0) {
-    return oppWins.filter((p) => isLegalMove(board, p.row, p.col, turn, config.forbiddenEnabled)).slice(0, 4)
+    return oppWins
+      .filter((p) => isLegalMove(board, p.row, p.col, turn, config.forbiddenEnabled))
+      .slice(0, 4)
   }
 
-  const tactical = generateCandidates(board, hash, turn, config.forbiddenEnabled, config.context, Math.max(8, config.forcingLimit * 2), true)
+  const tactical = generateCandidates(
+    board,
+    hash,
+    turn,
+    config.forbiddenEnabled,
+    config.context,
+    Math.max(8, config.forcingLimit * 2),
+    true,
+  )
   return tactical
     .map((m) => ({ row: m.row, col: m.col }))
     .filter((m) => {
       const threat = evaluateMoveThreat(board, m.row, m.col, turn)
-      return threat.level === 'open-four' || threat.level === 'blocked-four' || threat.level === 'open-three'
+      return (
+        threat.level === 'open-four' ||
+        threat.level === 'blocked-four' ||
+        threat.level === 'open-three'
+      )
     })
     .slice(0, config.forcingLimit)
 }
@@ -326,7 +364,9 @@ function quiescence(
     if (board[idx] !== EMPTY) continue
 
     place(board, move.row, move.col, turn)
-    const ended = checkWinResult(board, move, turn, { forbiddenEnabled: config.forbiddenEnabled })
+    const ended = checkWinResult(board, move, turn, {
+      forbiddenEnabled: config.forbiddenEnabled,
+    })
     const nextHash = config.context.tt.applyMoveHash(hash, move.row, move.col, turn)
     const opponent = nextPlayer(turn)
     const nextEval = evaluatePositionForTurn(board, opponent)
@@ -335,7 +375,17 @@ function quiescence(
     if (ended) {
       score = ended.winner === turn ? 9_000_000 - ply : -9_000_000 + ply
     } else {
-      score = -quiescence(board, nextHash, nextEval, -beta, -a, opponent, config, ply + 1, qDepth - 1)
+      score = -quiescence(
+        board,
+        nextHash,
+        nextEval,
+        -beta,
+        -a,
+        opponent,
+        config,
+        ply + 1,
+        qDepth - 1,
+      )
     }
     unplace(board, move.row, move.col)
 
@@ -375,19 +425,41 @@ function negamax(
   }
 
   if (lastMove) {
-    const ended = checkWinResult(board, lastMove, nextPlayer(turn), { forbiddenEnabled: config.forbiddenEnabled })
+    const ended = checkWinResult(board, lastMove, nextPlayer(turn), {
+      forbiddenEnabled: config.forbiddenEnabled,
+    })
     if (ended) return ended.winner === turn ? 9_000_000 + depth : -9_000_000 - depth
   }
 
-  if (depth === 0) return quiescence(board, hash, currentEval, alpha, beta, turn, config, ply, config.qDepth)
+  if (depth === 0)
+    return quiescence(board, hash, currentEval, alpha, beta, turn, config, ply, config.qDepth)
 
   if (depth >= 3 && Math.abs(currentEval) < 8_000_000) {
     const nullHash = config.context.tt.applyNullHash(hash)
-    const nullScore = -negamax(board, nullHash, -currentEval, depth - 3, -beta, -beta + 1, nextPlayer(turn), lastMove, config, ply + 1)
+    const nullScore = -negamax(
+      board,
+      nullHash,
+      -currentEval,
+      depth - 3,
+      -beta,
+      -beta + 1,
+      nextPlayer(turn),
+      lastMove,
+      config,
+      ply + 1,
+    )
     if (nullScore >= beta) return nullScore
   }
 
-  const moves = generateCandidates(board, hash, turn, config.forbiddenEnabled, config.context, 24, true)
+  const moves = generateCandidates(
+    board,
+    hash,
+    turn,
+    config.forbiddenEnabled,
+    config.context,
+    24,
+    true,
+  )
   if (moves.length === 0) return currentEval
 
   const killers = config.context.killers[ply] ?? [null, null]
@@ -435,18 +507,62 @@ function negamax(
 
     let score: number
     if (i === 0) {
-      score = -negamax(board, nextHash, nextEval, depth - 1, -beta, -a, opponent, move, config, ply + 1)
+      score = -negamax(
+        board,
+        nextHash,
+        nextEval,
+        depth - 1,
+        -beta,
+        -a,
+        opponent,
+        move,
+        config,
+        ply + 1,
+      )
     } else {
       const isTactical = samePos(ttBest, move) || samePos(killerA, move) || samePos(killerB, move)
-      const reduction = (!isTactical && i >= 4 && depth >= 3) ? 2 : 0
+      const reduction = !isTactical && i >= 4 && depth >= 3 ? 2 : 0
 
-      score = -negamax(board, nextHash, nextEval, depth - 1 - reduction, -a - 1, -a, opponent, move, config, ply + 1)
+      score = -negamax(
+        board,
+        nextHash,
+        nextEval,
+        depth - 1 - reduction,
+        -a - 1,
+        -a,
+        opponent,
+        move,
+        config,
+        ply + 1,
+      )
       if (score > a) {
         if (reduction > 0) {
-          score = -negamax(board, nextHash, nextEval, depth - 1, -a - 1, -a, opponent, move, config, ply + 1)
+          score = -negamax(
+            board,
+            nextHash,
+            nextEval,
+            depth - 1,
+            -a - 1,
+            -a,
+            opponent,
+            move,
+            config,
+            ply + 1,
+          )
         }
         if (score > a && score < beta) {
-          score = -negamax(board, nextHash, nextEval, depth - 1, -beta, -a, opponent, move, config, ply + 1)
+          score = -negamax(
+            board,
+            nextHash,
+            nextEval,
+            depth - 1,
+            -beta,
+            -a,
+            opponent,
+            move,
+            config,
+            ply + 1,
+          )
         }
       }
     }
@@ -485,7 +601,8 @@ export function findBestMoveScored(
   const stones = countStones(board)
   if (stones <= 2) {
     const book = getOpeningMoveWithConfig(board, currentPlayer, forbiddenEnabled)
-    if (book && isLegalMove(board, book.row, book.col, currentPlayer, forbiddenEnabled)) return { move: book, score: 0 }
+    if (book && isLegalMove(board, book.row, book.col, currentPlayer, forbiddenEnabled))
+      return { move: book, score: 0 }
   }
   if (stones === 0) return { move: { row: 7, col: 7 }, score: 0 }
 
@@ -494,20 +611,31 @@ export function findBestMoveScored(
 
   const oppImmediateWins = findImmediateWins(board, nextPlayer(currentPlayer), forbiddenEnabled)
   if (oppImmediateWins.length > 0) {
-    const defensive = oppImmediateWins.find((p) => isLegalMove(board, p.row, p.col, currentPlayer, forbiddenEnabled))
+    const defensive = oppImmediateWins.find((p) =>
+      isLegalMove(board, p.row, p.col, currentPlayer, forbiddenEnabled),
+    )
     if (defensive) return { move: defensive, score: 8_500_000 }
   }
 
   const doubleThreeHint = collectFrontier(board, 2)
     .filter((p) => isLegalMove(board, p.row, p.col, currentPlayer, forbiddenEnabled))
-    .map((p) => ({ p, t: evaluateMoveThreat(board, p.row, p.col, currentPlayer), s: evaluateMove(board, p.row, p.col, currentPlayer) }))
+    .map((p) => ({
+      p,
+      t: evaluateMoveThreat(board, p.row, p.col, currentPlayer),
+      s: evaluateMove(board, p.row, p.col, currentPlayer),
+    }))
     .filter((x) => x.t.openThree >= 2)
     .sort((a, b) => b.s - a.s)
 
   const profile = getDifficultyProfile(difficulty)
   const complexity = estimateComplexity(board, currentPlayer, forbiddenEnabled)
   const deadline = Date.now() + getTimeBudget(difficulty) + complexity * 60
-  const context: SearchContext = { tt: new GomokuTransTable(), history: new Map(), killers: [], candidateCache: new Map() }
+  const context: SearchContext = {
+    tt: new GomokuTransTable(),
+    history: new Map(),
+    killers: [],
+    candidateCache: new Map(),
+  }
   const rootHash = context.tt.hash(board, currentPlayer)
 
   let bestMove: Position | null = null
@@ -525,9 +653,19 @@ export function findBestMoveScored(
       forcingLimit: profile.forcingLimit,
     }
     const dynamicRootLimit = Math.min(48, profile.rootCandidates + complexity)
-    let candidates = generateCandidates(board, rootHash, currentPlayer, forbiddenEnabled, context, dynamicRootLimit, true)
+    let candidates = generateCandidates(
+      board,
+      rootHash,
+      currentPlayer,
+      forbiddenEnabled,
+      context,
+      dynamicRootLimit,
+      true,
+    )
     if (options.partitionModulo && options.partitionIndex !== undefined) {
-      candidates = candidates.filter((m) => moveKey(m.row, m.col) % options.partitionModulo! === options.partitionIndex)
+      candidates = candidates.filter(
+        (m) => moveKey(m.row, m.col) % options.partitionModulo! === options.partitionIndex,
+      )
     }
     if (candidates.length === 0) break
 
@@ -547,7 +685,9 @@ export function findBestMoveScored(
       if (board[idx] !== EMPTY) continue
 
       place(board, move.row, move.col, currentPlayer)
-      const ended = checkWinResult(board, move, currentPlayer, { forbiddenEnabled })
+      const ended = checkWinResult(board, move, currentPlayer, {
+        forbiddenEnabled,
+      })
       const nextHash = context.tt.applyMoveHash(rootHash, move.row, move.col, currentPlayer)
       const opponent = nextPlayer(currentPlayer)
       const nextEval = evaluatePositionForTurn(board, opponent)
@@ -556,12 +696,34 @@ export function findBestMoveScored(
       if (ended?.winner === currentPlayer) {
         score = 9_600_000
       } else {
-        score = -negamax(board, nextHash, nextEval, depth - 1, -beta, -alpha, opponent, move, config, 1)
+        score = -negamax(
+          board,
+          nextHash,
+          nextEval,
+          depth - 1,
+          -beta,
+          -alpha,
+          opponent,
+          move,
+          config,
+          1,
+        )
         if (score <= alpha || score >= beta) {
           window *= 2
           alpha = -INF
           beta = INF
-          score = -negamax(board, nextHash, nextEval, depth - 1, -beta, -alpha, opponent, move, config, 1)
+          score = -negamax(
+            board,
+            nextHash,
+            nextEval,
+            depth - 1,
+            -beta,
+            -alpha,
+            opponent,
+            move,
+            config,
+            1,
+          )
         }
       }
       unplace(board, move.row, move.col)
@@ -583,13 +745,26 @@ export function findBestMoveScored(
   }
 
   if (!bestMove) {
-    const fallback = generateCandidates(board, rootHash, currentPlayer, forbiddenEnabled, context, 1, true)
-    if (fallback.length > 0) return { move: { row: fallback[0].row, col: fallback[0].col }, score: -1000 }
+    const fallback = generateCandidates(
+      board,
+      rootHash,
+      currentPlayer,
+      forbiddenEnabled,
+      context,
+      1,
+      true,
+    )
+    if (fallback.length > 0)
+      return {
+        move: { row: fallback[0].row, col: fallback[0].col },
+        score: -1000,
+      }
     const fresh = createEmptyBoard()
     if (board.every((v, i) => v === fresh[i])) return { move: { row: 7, col: 7 }, score: 0 }
   }
 
-  if (bestScore < -8_000_000 && oppImmediateWins.length > 0) return { move: oppImmediateWins[0], score: bestScore }
+  if (bestScore < -8_000_000 && oppImmediateWins.length > 0)
+    return { move: oppImmediateWins[0], score: bestScore }
   return { move: bestMove, score: bestScore }
 }
 
@@ -601,7 +776,8 @@ export function findBestMove(
   difficulty: Difficulty,
   options: SearchOptions = {},
 ): Position | null {
-  return findBestMoveScored(board, currentPlayer, aiPlayer, forbiddenEnabled, difficulty, options).move
+  return findBestMoveScored(board, currentPlayer, aiPlayer, forbiddenEnabled, difficulty, options)
+    .move
 }
 
 export function findTopMovesScored(
@@ -613,9 +789,22 @@ export function findTopMovesScored(
 ): ScoredMove[] {
   const profile = getDifficultyProfile(difficulty)
   const complexity = estimateComplexity(board, currentPlayer, forbiddenEnabled)
-  const context: SearchContext = { tt: new GomokuTransTable(), history: new Map(), killers: [], candidateCache: new Map() }
+  const context: SearchContext = {
+    tt: new GomokuTransTable(),
+    history: new Map(),
+    killers: [],
+    candidateCache: new Map(),
+  }
   const rootHash = context.tt.hash(board, currentPlayer)
   const dynamicRootLimit = Math.min(48, profile.rootCandidates + complexity)
-  const candidates = generateCandidates(board, rootHash, currentPlayer, forbiddenEnabled, context, dynamicRootLimit, true)
+  const candidates = generateCandidates(
+    board,
+    rootHash,
+    currentPlayer,
+    forbiddenEnabled,
+    context,
+    dynamicRootLimit,
+    true,
+  )
   return candidates.slice(0, topK).map((c) => ({ row: c.row, col: c.col, score: c.score }))
 }

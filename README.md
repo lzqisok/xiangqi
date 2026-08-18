@@ -278,12 +278,12 @@ pnpm --filter server start       # 运行已构建服务端
 
 ### 对局棋力
 
-| 难度 | 默认搜索深度 | 使用场景 |
-| --- | ---: | --- |
-| 初级 | D8 | 快速、入门 |
-| 中级 | D14 | 日常对弈 |
-| 高级 | D20 | 较强对手 |
-| 大师 | D26 | 最高默认棋力，耗时与 CPU 占用最高 |
+| 难度 | 默认搜索深度 | 使用场景                          |
+| ---- | -----------: | --------------------------------- |
+| 初级 |           D8 | 快速、入门                        |
+| 中级 |          D14 | 日常对弈                          |
+| 高级 |          D20 | 较强对手                          |
+| 大师 |          D26 | 最高默认棋力，耗时与 CPU 占用最高 |
 
 对局 AI 的难度深度由所选档位决定。当前没有开局库，因此大师模式第一步也会从初始局面完整搜索，在普通桌面设备上等待十几秒属于正常情况。
 
@@ -328,13 +328,13 @@ pnpm --filter server start       # 运行已构建服务端
 
 目前没有账号或云端数据库，以下内容保存在浏览器 `localStorage`：
 
-| 内容 | Key |
-| --- | --- |
-| 自定义残局 | `xiangqi.custom-endgames.v1` |
-| 残局收藏 | `xiangqi.favorite-endgames.v1` |
-| 研究局面与变招树 | `xiangqi.study-positions.v1` |
-| 最近 FEN | `xiangqi_recent_fens` |
-| 引擎设置 | `xiangqi_engine_settings` |
+| 内容             | Key                            |
+| ---------------- | ------------------------------ |
+| 自定义残局       | `xiangqi.custom-endgames.v1`   |
+| 残局收藏         | `xiangqi.favorite-endgames.v1` |
+| 研究局面与变招树 | `xiangqi.study-positions.v1`   |
+| 最近 FEN         | `xiangqi_recent_fens`          |
+| 引擎设置         | `xiangqi_engine_settings`      |
 
 清除浏览器站点数据会删除这些内容。重要的残局和研究请先导出 JSON 备份；分享回放只包含当前活动线，不等同于完整研究备份。
 

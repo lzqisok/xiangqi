@@ -51,7 +51,14 @@ test('normalizeEngineRuntimeOptions keeps safe runtime ranges', () => {
 test('waitForBestMoveWithStop returns a normal result before the deadline', async () => {
   const emitter = new EventEmitter()
   let stopCalls = 0
-  const pending = waitForBestMoveWithStop(emitter, () => { stopCalls++ }, 50, 20)
+  const pending = waitForBestMoveWithStop(
+    emitter,
+    () => {
+      stopCalls++
+    },
+    50,
+    20,
+  )
 
   emitter.emit('line', 'bestmove h2e2')
 
@@ -62,10 +69,15 @@ test('waitForBestMoveWithStop returns a normal result before the deadline', asyn
 test('waitForBestMoveWithStop stops at the deadline and keeps the current best move', async () => {
   const emitter = new EventEmitter()
   let stopCalls = 0
-  const pending = waitForBestMoveWithStop(emitter, () => {
-    stopCalls++
-    emitter.emit('line', 'bestmove b2e2')
-  }, 5, 20)
+  const pending = waitForBestMoveWithStop(
+    emitter,
+    () => {
+      stopCalls++
+      emitter.emit('line', 'bestmove b2e2')
+    },
+    5,
+    20,
+  )
 
   assert.deepEqual(await pending, { line: 'bestmove b2e2', searchCapped: true })
   assert.equal(stopCalls, 1)

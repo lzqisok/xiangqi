@@ -3,10 +3,30 @@ import { applyMove, createEmptyBoard, getCell, inBounds, removeLastMove } from '
 import { checkWinResult, isDraw, isForbiddenMove } from '../core/rules'
 import { getUndoStepCount } from '../core/gameFlow'
 import { getDifficultyForTurn, shouldRequestAiMove } from '../core/aiMatchFlow'
-import { BLACK, EMPTY, WHITE, type Difficulty, type GameMode, type Move, type Player, type Position } from '../core/types'
+import {
+  BLACK,
+  EMPTY,
+  WHITE,
+  type Difficulty,
+  type GameMode,
+  type Move,
+  type Player,
+  type Position,
+} from '../core/types'
 import type { Board } from '../core/board'
-import type { ComputeAiPayload, ReviewPayload, ReviewReport, WorkerRequest, WorkerResponse } from '../ai/types'
-import { cancelRapfiRequests, probeRapfi, RapfiRequestCancelledError, requestRapfiMove } from '../rapfi/client'
+import type {
+  ComputeAiPayload,
+  ReviewPayload,
+  ReviewReport,
+  WorkerRequest,
+  WorkerResponse,
+} from '../ai/types'
+import {
+  cancelRapfiRequests,
+  probeRapfi,
+  RapfiRequestCancelledError,
+  requestRapfiMove,
+} from '../rapfi/client'
 
 export type GomokuAiEngine = 'checking' | 'rapfi' | 'browser'
 
@@ -78,12 +98,17 @@ function clearAiAutoTimer(): void {
 
 function getWorker(index = 0): Worker {
   if (!workers[index]) {
-    workers[index] = new Worker(new URL('../ai/worker.ts', import.meta.url), { type: 'module' })
+    workers[index] = new Worker(new URL('../ai/worker.ts', import.meta.url), {
+      type: 'module',
+    })
   }
   return workers[index]!
 }
 
-function requestBrowserAiMove(payload: ComputeAiPayload, workerIndex = 0): Promise<{ move: Position | null; score: number }> {
+function requestBrowserAiMove(
+  payload: ComputeAiPayload,
+  workerIndex = 0,
+): Promise<{ move: Position | null; score: number }> {
   return new Promise((resolve) => {
     const w = getWorker(workerIndex)
     const id = ++requestId
@@ -109,7 +134,9 @@ function requestReviewAnalysis(
   onProgress: (completed: number, total: number) => void,
 ): Promise<ReviewRequestResult> {
   return new Promise((resolve) => {
-    const w = new Worker(new URL('../ai/worker.ts', import.meta.url), { type: 'module' })
+    const w = new Worker(new URL('../ai/worker.ts', import.meta.url), {
+      type: 'module',
+    })
     const id = ++requestId
     let settled = false
 
@@ -152,7 +179,12 @@ function other(player: Player): Player {
   return player === BLACK ? WHITE : BLACK
 }
 
-function isValidAiMove(board: Board, move: Position, player: Player, forbiddenEnabled: boolean): boolean {
+function isValidAiMove(
+  board: Board,
+  move: Position,
+  player: Player,
+  forbiddenEnabled: boolean,
+): boolean {
   if (!inBounds(move.row, move.col) || getCell(board, move.row, move.col) !== EMPTY) return false
   if (!forbiddenEnabled || player !== BLACK) return true
   const nextBoard = applyMove(board, { ...move, player })
@@ -165,10 +197,15 @@ function buildNextState(
   currentPlayer: Player,
   forbiddenEnabled: boolean,
   message = '',
-): Pick<GameState, 'board' | 'moveHistory' | 'currentPlayer' | 'winner' | 'winningLine' | 'lastMove' | 'message'> {
+): Pick<
+  GameState,
+  'board' | 'moveHistory' | 'currentPlayer' | 'winner' | 'winningLine' | 'lastMove' | 'message'
+> {
   const lastMove = moveHistory.length ? moveHistory[moveHistory.length - 1] : null
   if (lastMove) {
-    const ended = checkWinResult(board, lastMove, lastMove.player, { forbiddenEnabled })
+    const ended = checkWinResult(board, lastMove, lastMove.player, {
+      forbiddenEnabled,
+    })
     if (ended) {
       return {
         board,
@@ -177,7 +214,10 @@ function buildNextState(
         winner: ended.winner,
         winningLine: ended.line,
         lastMove,
-        message: ended.reason === 'forbidden' ? '黑方触发禁手，白方胜' : `${ended.winner === BLACK ? '黑' : '白'}方胜`,
+        message:
+          ended.reason === 'forbidden'
+            ? '黑方触发禁手，白方胜'
+            : `${ended.winner === BLACK ? '黑' : '白'}方胜`,
       }
     }
   }
@@ -218,7 +258,16 @@ function scheduleAiTurn(set: StoreSet, get: StoreGet, delay: number): void {
 function triggerAiTurn(set: StoreSet, get: StoreGet, forceAiMatchStep = false): void {
   const after = get()
   if (!after.isStarted || after.winner || after.draw || after.aiThinking) return
-  if (!shouldRequestAiMove(after.mode, after.currentPlayer, after.aiPlayer, after.aiAutoPlaying, forceAiMatchStep)) return
+  if (
+    !shouldRequestAiMove(
+      after.mode,
+      after.currentPlayer,
+      after.aiPlayer,
+      after.aiAutoPlaying,
+      forceAiMatchStep,
+    )
+  )
+    return
 
   const activeAiPlayer = after.currentPlayer
   const activeDifficulty = getDifficultyForTurn(
@@ -229,7 +278,10 @@ function triggerAiTurn(set: StoreSet, get: StoreGet, forceAiMatchStep = false): 
     after.whiteAiDifficulty,
   )
 
-  set({ aiThinking: true, message: after.aiEngine === 'browser' ? '内置 AI 思考中...' : 'Rapfi 思考中...' })
+  set({
+    aiThinking: true,
+    message: after.aiEngine === 'browser' ? '内置 AI 思考中...' : 'Rapfi 思考中...',
+  })
   const snapshotMoveCount = after.moveHistory.length
   const payload = {
     board: after.board,
@@ -242,11 +294,13 @@ function triggerAiTurn(set: StoreSet, get: StoreGet, forceAiMatchStep = false): 
 
   const requestBrowserFallback = () => {
     const partitionCount = getParallelPartitions(activeDifficulty)
-    return (
-    partitionCount > 1
+    return partitionCount > 1
       ? Promise.all(
           Array.from({ length: partitionCount }, (_, partitionIndex) =>
-            requestBrowserAiMove({ ...payload, partitionModulo: partitionCount, partitionIndex }, partitionIndex),
+            requestBrowserAiMove(
+              { ...payload, partitionModulo: partitionCount, partitionIndex },
+              partitionIndex,
+            ),
           ),
         ).then((results) => {
           const valid = results.filter((r) => r.move)
@@ -254,32 +308,40 @@ function triggerAiTurn(set: StoreSet, get: StoreGet, forceAiMatchStep = false): 
           return valid.reduce((best, cur) => (cur.score > best.score ? cur : best))
         })
       : requestBrowserAiMove(payload, 0)
-    )
   }
 
-  const computePromise = (after.aiEngine === 'browser'
-    ? requestBrowserFallback()
-    : requestRapfiMove({
-        moves: after.moveHistory,
-        aiPlayer: activeAiPlayer,
-        difficulty: activeDifficulty,
-        forbiddenEnabled: after.forbiddenEnabled,
-      }).then(move => {
-        if (!isValidAiMove(payload.board, move, payload.aiPlayer, payload.forbiddenEnabled)) {
-          throw new Error('Rapfi returned an illegal move')
-        }
-        return { move, score: 0 }
-      }).catch((error: unknown) => {
-        if (error instanceof RapfiRequestCancelledError) {
-          return null
-        }
-        const current = get()
-        if (current.board !== payload.board || current.moveHistory.length !== snapshotMoveCount) {
-          return { move: null as Position | null, score: -Infinity }
-        }
-        set({ aiEngine: 'browser', message: 'Rapfi 不可用，已切换至内置 AI…' })
-        return requestBrowserFallback()
-      }))
+  const computePromise =
+    after.aiEngine === 'browser'
+      ? requestBrowserFallback()
+      : requestRapfiMove({
+          moves: after.moveHistory,
+          aiPlayer: activeAiPlayer,
+          difficulty: activeDifficulty,
+          forbiddenEnabled: after.forbiddenEnabled,
+        })
+          .then((move) => {
+            if (!isValidAiMove(payload.board, move, payload.aiPlayer, payload.forbiddenEnabled)) {
+              throw new Error('Rapfi returned an illegal move')
+            }
+            return { move, score: 0 }
+          })
+          .catch((error: unknown) => {
+            if (error instanceof RapfiRequestCancelledError) {
+              return null
+            }
+            const current = get()
+            if (
+              current.board !== payload.board ||
+              current.moveHistory.length !== snapshotMoveCount
+            ) {
+              return { move: null as Position | null, score: -Infinity }
+            }
+            set({
+              aiEngine: 'browser',
+              message: 'Rapfi 不可用，已切换至内置 AI…',
+            })
+            return requestBrowserFallback()
+          })
 
   void computePromise.then((result) => {
     const now = get()
@@ -295,18 +357,31 @@ function triggerAiTurn(set: StoreSet, get: StoreGet, forceAiMatchStep = false): 
     }
     if (!result.move) {
       clearAiAutoTimer()
-      set({ aiThinking: false, aiAutoPlaying: false, message: 'AI 无法找到可用落点' })
+      set({
+        aiThinking: false,
+        aiAutoPlaying: false,
+        message: 'AI 无法找到可用落点',
+      })
       return
     }
     if (!isValidAiMove(now.board, result.move, now.currentPlayer, now.forbiddenEnabled)) {
       clearAiAutoTimer()
-      set({ aiThinking: false, aiAutoPlaying: false, message: 'AI 返回了无效落点，请重试' })
+      set({
+        aiThinking: false,
+        aiAutoPlaying: false,
+        message: 'AI 返回了无效落点，请重试',
+      })
       return
     }
 
     const aiMove: Move = { ...result.move, player: now.currentPlayer }
     const aiBoard = applyMove(now.board, aiMove)
-    const aiNext = buildNextState(aiBoard, [...now.moveHistory, aiMove], other(now.currentPlayer), now.forbiddenEnabled)
+    const aiNext = buildNextState(
+      aiBoard,
+      [...now.moveHistory, aiMove],
+      other(now.currentPlayer),
+      now.forbiddenEnabled,
+    )
     const aiDraw = aiNext.message === '平局'
     if (now.reviewLoading) cancelReviewAnalysis()
     set({
@@ -315,9 +390,10 @@ function triggerAiTurn(set: StoreSet, get: StoreGet, forceAiMatchStep = false): 
       aiThinking: false,
       reviewLoading: false,
       reviewProgress: null,
-      message: aiNext.winner || aiDraw
-        ? aiNext.message
-        : `${aiMove.player === BLACK ? '黑' : '白'}方 AI 已落子 · 第 ${aiNext.moveHistory.length} 手`,
+      message:
+        aiNext.winner || aiDraw
+          ? aiNext.message
+          : `${aiMove.player === BLACK ? '黑' : '白'}方 AI 已落子 · 第 ${aiNext.moveHistory.length} 手`,
     })
     if (aiNext.winner || aiDraw) {
       clearAiAutoTimer()
@@ -370,8 +446,16 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (state.mode === 'ai' && state.currentPlayer !== state.humanPlayer) return
 
     if (state.forbiddenEnabled && state.currentPlayer === BLACK) {
-      const tempBoard = applyMove(state.board, { row, col, player: state.currentPlayer })
-      if (isForbiddenMove(tempBoard, row, col, { forbiddenEnabled: state.forbiddenEnabled })) {
+      const tempBoard = applyMove(state.board, {
+        row,
+        col,
+        player: state.currentPlayer,
+      })
+      if (
+        isForbiddenMove(tempBoard, row, col, {
+          forbiddenEnabled: state.forbiddenEnabled,
+        })
+      ) {
         set({ message: '⚠️ 此处为禁手，不可落子！' })
         return
       }
@@ -385,7 +469,12 @@ export const useGameStore = create<GameState>((set, get) => ({
     const next = buildNextState(nextBoard, moveHistory, nextPlayer, state.forbiddenEnabled)
     const isDrawNow = next.message === '平局'
     if (state.reviewLoading) cancelReviewAnalysis()
-    set({ ...next, draw: isDrawNow, reviewLoading: false, reviewProgress: null })
+    set({
+      ...next,
+      draw: isDrawNow,
+      reviewLoading: false,
+      reviewProgress: null,
+    })
     if (next.winner || isDrawNow) {
       setTimeout(() => get().runReviewAnalysis(), 0)
     }
@@ -409,7 +498,17 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
     const turn = moveHistory.length % 2 === 0 ? BLACK : WHITE
     const next = buildNextState(board, moveHistory, turn, state.forbiddenEnabled, '已悔棋')
-    set({ ...next, draw: false, aiThinking: false, aiAutoPlaying: false, review: null, reviewLoading: false, reviewProgress: null, reviewError: '', reviewCursor: 0 })
+    set({
+      ...next,
+      draw: false,
+      aiThinking: false,
+      aiAutoPlaying: false,
+      review: null,
+      reviewLoading: false,
+      reviewProgress: null,
+      reviewError: '',
+      reviewCursor: 0,
+    })
   },
 
   newGame: () => {
@@ -429,9 +528,10 @@ export const useGameStore = create<GameState>((set, get) => ({
       aiThinking: false,
       aiAutoPlaying: false,
       isStarted: true,
-      message: state.mode === 'ai-vs-ai'
-        ? 'AI 对战已开始，请单步执行或开始自动'
-        : `对局已开始，${state.humanPlayer === BLACK ? '你执黑先行' : '黑方先行'}`,
+      message:
+        state.mode === 'ai-vs-ai'
+          ? 'AI 对战已开始，请单步执行或开始自动'
+          : `对局已开始，${state.humanPlayer === BLACK ? '你执黑先行' : '黑方先行'}`,
       review: null,
       reviewLoading: false,
       reviewProgress: null,
@@ -474,7 +574,12 @@ export const useGameStore = create<GameState>((set, get) => ({
     let board = createEmptyBoard()
     for (const move of moves) board = applyMove(board, move)
     const currentPlayer = moves.length % 2 === 0 ? BLACK : WHITE
-    const next = buildNextState(board, moves.map(move => ({ ...move })), currentPlayer, forbiddenEnabled)
+    const next = buildNextState(
+      board,
+      moves.map((move) => ({ ...move })),
+      currentPlayer,
+      forbiddenEnabled,
+    )
     set({
       ...next,
       mode: 'pvp',
@@ -503,36 +608,61 @@ export const useGameStore = create<GameState>((set, get) => ({
     const snapshotLen = state.moveHistory.length
     cancelReviewAnalysis()
     const generation = ++reviewGeneration
-    set({ reviewLoading: true, reviewProgress: { completed: 0, total: snapshotLen }, reviewError: '' })
+    set({
+      reviewLoading: true,
+      reviewProgress: { completed: 0, total: snapshotLen },
+      reviewError: '',
+    })
     void requestReviewAnalysis(payload, (completed, total) => {
       if (generation !== reviewGeneration) return
       set({ reviewProgress: { completed, total } })
-    }).then((result) => {
-      if (generation !== reviewGeneration) return
-      const now = get()
-      if (now.moveHistory.length !== snapshotLen) {
-        set({ reviewLoading: false, reviewProgress: null })
-        return
-      }
-      if (!result.review) {
-        const error = result.error === 'timeout'
-          ? '复盘分析超过 20 秒，已自动停止，请重试'
-          : '复盘分析异常，请重试'
-        set({ reviewLoading: false, reviewProgress: null, reviewError: error })
-        return
-      }
-      set({ review: result.review, reviewLoading: false, reviewProgress: null, reviewError: '', reviewCursor: Math.max(0, result.review.steps.length - 1) })
-    }).catch(() => {
-      if (generation !== reviewGeneration) return
-      set({ reviewLoading: false, reviewProgress: null, reviewError: '复盘分析启动失败，请刷新后重试' })
     })
+      .then((result) => {
+        if (generation !== reviewGeneration) return
+        const now = get()
+        if (now.moveHistory.length !== snapshotLen) {
+          set({ reviewLoading: false, reviewProgress: null })
+          return
+        }
+        if (!result.review) {
+          const error =
+            result.error === 'timeout'
+              ? '复盘分析超过 20 秒，已自动停止，请重试'
+              : '复盘分析异常，请重试'
+          set({
+            reviewLoading: false,
+            reviewProgress: null,
+            reviewError: error,
+          })
+          return
+        }
+        set({
+          review: result.review,
+          reviewLoading: false,
+          reviewProgress: null,
+          reviewError: '',
+          reviewCursor: Math.max(0, result.review.steps.length - 1),
+        })
+      })
+      .catch(() => {
+        if (generation !== reviewGeneration) return
+        set({
+          reviewLoading: false,
+          reviewProgress: null,
+          reviewError: '复盘分析启动失败，请刷新后重试',
+        })
+      })
   },
 
   stopReviewAnalysis: () => {
     const state = get()
     if (!state.reviewLoading) return
     cancelReviewAnalysis()
-    set({ reviewLoading: false, reviewProgress: null, reviewError: '分析已停止，可以重新分析' })
+    set({
+      reviewLoading: false,
+      reviewProgress: null,
+      reviewError: '分析已停止，可以重新分析',
+    })
   },
 
   setReviewCursor: (cursor) => {
@@ -544,7 +674,13 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   clearReview: () => {
     cancelReviewAnalysis()
-    set({ review: null, reviewLoading: false, reviewProgress: null, reviewError: '', reviewCursor: 0 })
+    set({
+      review: null,
+      reviewLoading: false,
+      reviewProgress: null,
+      reviewError: '',
+      reviewCursor: 0,
+    })
   },
 
   setMode: (mode) => {
@@ -603,7 +739,14 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   nextAiMove: () => {
     const state = get()
-    if (state.mode !== 'ai-vs-ai' || !state.isStarted || state.winner || state.draw || state.aiThinking) return
+    if (
+      state.mode !== 'ai-vs-ai' ||
+      !state.isStarted ||
+      state.winner ||
+      state.draw ||
+      state.aiThinking
+    )
+      return
     clearAiAutoTimer()
     triggerAiTurn(set, get, true)
   },
@@ -613,7 +756,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (state.mode !== 'ai-vs-ai' || !state.isStarted || state.winner || state.draw) return
     if (state.aiAutoPlaying) {
       clearAiAutoTimer()
-      set({ aiAutoPlaying: false, message: state.aiThinking ? '将在当前手完成后暂停' : 'AI 自动对战已暂停' })
+      set({
+        aiAutoPlaying: false,
+        message: state.aiThinking ? '将在当前手完成后暂停' : 'AI 自动对战已暂停',
+      })
       return
     }
     set({ aiAutoPlaying: true, message: 'AI 自动对战进行中' })

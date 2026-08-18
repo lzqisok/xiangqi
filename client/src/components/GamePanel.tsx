@@ -1,4 +1,12 @@
-import { ConnectionState, GameMode, Difficulty, GameStatus, GameStatusReason, PieceColor, PlayerConfig } from '../types'
+import {
+  ConnectionState,
+  GameMode,
+  Difficulty,
+  GameStatus,
+  GameStatusReason,
+  PieceColor,
+  PlayerConfig,
+} from '../types'
 
 interface Props {
   currentTurn: PieceColor
@@ -111,7 +119,11 @@ function formatPlayerConfig(config: PlayerConfig): string {
   return `AI ${formatDifficulty(config.difficulty || 'medium')}`
 }
 
-function formatEngineStatus(connectionState: ConnectionState, engineAvailable: boolean | null, message: string): string {
+function formatEngineStatus(
+  connectionState: ConnectionState,
+  engineAvailable: boolean | null,
+  message: string,
+): string {
   if (connectionState === 'connecting') return '后端连接中'
   if (connectionState === 'disconnected') return '后端未连接'
   if (engineAvailable === false) return message || '引擎不可用'
@@ -121,7 +133,15 @@ function formatEngineStatus(connectionState: ConnectionState, engineAvailable: b
 }
 
 export default function GamePanel({
-  currentTurn, gameMode, difficulty, aiRedDifficulty, aiBlackDifficulty, redPlayerConfig, blackPlayerConfig, gameStatus, gameStatusReason,
+  currentTurn,
+  gameMode,
+  difficulty,
+  aiRedDifficulty,
+  aiBlackDifficulty,
+  redPlayerConfig,
+  blackPlayerConfig,
+  gameStatus,
+  gameStatusReason,
   showAnalysis,
   scenarioName,
   studySaveStatus,
@@ -142,21 +162,54 @@ export default function GamePanel({
   canStudyReplay,
   canJumpToPrevMarked,
   canJumpToNextMarked,
-  onOpenReview, onUndo, onRedo, onFlip, onToggleAnalysis,
-  onExportFen, onImportFen, onCopyMoveText, onCopyReplayLink, onSaveRecentFen, onSaveAsEndgame, onSaveStudy, onExportImage, onTrainingHint,
-  onHint, onNextAiMove, onDeclareDraw, onResign, onToggleAiAutoPlay, onAiAutoDelayChange,
-  onToggleStudyAutoPlay, onStudyReplayDelayChange, onJumpToPrevMarked, onJumpToNextMarked,
-  canUndo, canRedo, canRequestHint, canStepAi, hintThinking,
+  onOpenReview,
+  onUndo,
+  onRedo,
+  onFlip,
+  onToggleAnalysis,
+  onExportFen,
+  onImportFen,
+  onCopyMoveText,
+  onCopyReplayLink,
+  onSaveRecentFen,
+  onSaveAsEndgame,
+  onSaveStudy,
+  onExportImage,
+  onTrainingHint,
+  onHint,
+  onNextAiMove,
+  onDeclareDraw,
+  onResign,
+  onToggleAiAutoPlay,
+  onAiAutoDelayChange,
+  onToggleStudyAutoPlay,
+  onStudyReplayDelayChange,
+  onJumpToPrevMarked,
+  onJumpToNextMarked,
+  canUndo,
+  canRedo,
+  canRequestHint,
+  canStepAi,
+  hintThinking,
 }: Props) {
   const isAiVsAi = gameMode === 'ai-vs-ai'
   const isJieqi = gameMode === 'jieqi'
   const isHumanVsAi = gameMode === 'human-vs-ai' || isJieqi
   const canManualEnd = gameStatus === 'playing' && !aiThinking && !hintThinking
   const canDeclareDraw = canManualEnd && gameMode === 'human-vs-human'
-  const modeText = isJieqi ? '揭棋对弈' : isHumanVsAi ? '人机对弈' : isAiVsAi ? 'AI 对战' : gameMode === 'endgame' ? '残局模式' : gameMode === 'study' ? '研究局面' : '双人对弈'
-  const activeDifficulty = currentTurn === 'red'
-    ? redPlayerConfig.difficulty
-    : blackPlayerConfig.difficulty
+  const modeText = isJieqi
+    ? '揭棋对弈'
+    : isHumanVsAi
+      ? '人机对弈'
+      : isAiVsAi
+        ? 'AI 对战'
+        : gameMode === 'endgame'
+          ? '残局模式'
+          : gameMode === 'study'
+            ? '研究局面'
+            : '双人对弈'
+  const activeDifficulty =
+    currentTurn === 'red' ? redPlayerConfig.difficulty : blackPlayerConfig.difficulty
 
   return (
     <div className="game-panel">
@@ -165,7 +218,9 @@ export default function GamePanel({
           <div className={`turn-indicator ${currentTurn}`}>
             {aiThinking
               ? `${currentTurn === 'red' ? '红方' : '黑方'} AI · ${formatDifficulty(activeDifficulty || difficulty)}`
-              : currentTurn === 'red' ? '红方走棋' : '黑方走棋'}
+              : currentTurn === 'red'
+                ? '红方走棋'
+                : '黑方走棋'}
           </div>
         ) : (
           <div className="game-over">{formatStatus(gameStatus, gameStatusReason)}</div>
@@ -180,7 +235,11 @@ export default function GamePanel({
       <div className="info-row">
         <span className="info-chip">{modeText}</span>
         {isHumanVsAi && <span className="info-chip">{formatDifficulty(difficulty)}</span>}
-        {isAiVsAi && <span className="info-chip">红 {formatDifficulty(aiRedDifficulty)} / 黑 {formatDifficulty(aiBlackDifficulty)}</span>}
+        {isAiVsAi && (
+          <span className="info-chip">
+            红 {formatDifficulty(aiRedDifficulty)} / 黑 {formatDifficulty(aiBlackDifficulty)}
+          </span>
+        )}
         {gameMode === 'endgame' && (
           <span className="info-chip">
             红: {formatPlayerConfig(redPlayerConfig)} / 黑: {formatPlayerConfig(blackPlayerConfig)}
@@ -192,7 +251,11 @@ export default function GamePanel({
           <span>{scenarioName}</span>
           {studySaveStatus && (
             <span className={`study-save-status ${studySaveStatus}`}>
-              {studySaveStatus === 'saved' ? '已自动保存' : studySaveStatus === 'unsaved' ? '等待自动保存' : '分享回放 · 尚未保存'}
+              {studySaveStatus === 'saved'
+                ? '已自动保存'
+                : studySaveStatus === 'unsaved'
+                  ? '等待自动保存'
+                  : '分享回放 · 尚未保存'}
             </span>
           )}
         </div>
@@ -212,7 +275,9 @@ export default function GamePanel({
         </div>
       )}
 
-      <div className={`engine-status ${connectionState} ${engineAvailable === false ? 'engine-offline' : ''}`}>
+      <div
+        className={`engine-status ${connectionState} ${engineAvailable === false ? 'engine-offline' : ''}`}
+      >
         <span className="engine-status-dot" />
         <span>{formatEngineStatus(connectionState, engineAvailable, engineStatusMessage)}</span>
       </div>
@@ -220,15 +285,23 @@ export default function GamePanel({
       <div className="panel-section">
         <div className="panel-section-title">常用操作</div>
         <div className="panel-buttons">
-          <button onClick={onUndo} disabled={!canUndo} title="回到上一手">悔棋</button>
-          <button onClick={onRedo} disabled={!canRedo} title="前进到下一手">重做</button>
+          <button onClick={onUndo} disabled={!canUndo} title="回到上一手">
+            悔棋
+          </button>
+          <button onClick={onRedo} disabled={!canRedo} title="前进到下一手">
+            重做
+          </button>
           {!isAiVsAi && (
             <button onClick={onHint} disabled={!canRequestHint} title="请求引擎给出当前方建议">
               {hintThinking ? '提示中...' : '提示'}
             </button>
           )}
           {gameMode === 'endgame' && (
-            <button onClick={onTrainingHint} disabled={!canRequestTrainingHint} title="按标准解法逐层提示">
+            <button
+              onClick={onTrainingHint}
+              disabled={!canRequestTrainingHint}
+              title="按标准解法逐层提示"
+            >
               训练提示
             </button>
           )}
@@ -244,14 +317,18 @@ export default function GamePanel({
         <div className="panel-section">
           <div className="panel-section-title">自动播放</div>
           <div className="panel-buttons panel-buttons-primary">
-            <button className="primary-action accent-action" onClick={onToggleAiAutoPlay} disabled={!canStepAi && !aiAutoPlaying}>
+            <button
+              className="primary-action accent-action"
+              onClick={onToggleAiAutoPlay}
+              disabled={!canStepAi && !aiAutoPlaying}
+            >
               {aiAutoPlaying ? '暂停自动' : '开始自动'}
             </button>
           </div>
           <select
             className="speed-select"
             value={aiAutoDelay}
-            onChange={e => onAiAutoDelayChange(Number(e.target.value))}
+            onChange={(e) => onAiAutoDelayChange(Number(e.target.value))}
           >
             <option value={400}>快速</option>
             <option value={900}>标准</option>
@@ -264,16 +341,32 @@ export default function GamePanel({
         <div className="panel-section">
           <div className="panel-section-title">研究回放</div>
           <div className="panel-buttons panel-buttons-primary">
-            <button className="primary-action accent-action" onClick={onToggleStudyAutoPlay} disabled={!canStudyReplay && !studyAutoPlaying}>
+            <button
+              className="primary-action accent-action"
+              onClick={onToggleStudyAutoPlay}
+              disabled={!canStudyReplay && !studyAutoPlaying}
+            >
               {studyAutoPlaying ? '暂停回放' : '自动回放'}
             </button>
-            <button className="primary-action" onClick={onJumpToPrevMarked} disabled={!canJumpToPrevMarked}>上一星标</button>
-            <button className="primary-action" onClick={onJumpToNextMarked} disabled={!canJumpToNextMarked}>下一星标</button>
+            <button
+              className="primary-action"
+              onClick={onJumpToPrevMarked}
+              disabled={!canJumpToPrevMarked}
+            >
+              上一星标
+            </button>
+            <button
+              className="primary-action"
+              onClick={onJumpToNextMarked}
+              disabled={!canJumpToNextMarked}
+            >
+              下一星标
+            </button>
           </div>
           <select
             className="speed-select"
             value={studyReplayDelay}
-            onChange={e => onStudyReplayDelayChange(Number(e.target.value))}
+            onChange={(e) => onStudyReplayDelayChange(Number(e.target.value))}
           >
             <option value={400}>快速</option>
             <option value={900}>标准</option>
@@ -287,10 +380,7 @@ export default function GamePanel({
         <div className="panel-buttons">
           <button onClick={onFlip}>翻转棋盘</button>
           {!isJieqi && (
-            <button
-              className={showAnalysis ? 'analysis-active' : ''}
-              onClick={onToggleAnalysis}
-            >
+            <button className={showAnalysis ? 'analysis-active' : ''} onClick={onToggleAnalysis}>
               {showAnalysis ? '关闭分析' : '引擎分析'}
             </button>
           )}
@@ -308,8 +398,16 @@ export default function GamePanel({
         <details className="panel-section danger-actions">
           <summary>结束棋局</summary>
           <div className="panel-buttons">
-            {gameMode === 'human-vs-human' && <button onClick={onDeclareDraw} disabled={!canDeclareDraw}>和棋</button>}
-            {!isAiVsAi && <button className="danger-action" onClick={onResign} disabled={!canManualEnd}>认输</button>}
+            {gameMode === 'human-vs-human' && (
+              <button onClick={onDeclareDraw} disabled={!canDeclareDraw}>
+                和棋
+              </button>
+            )}
+            {!isAiVsAi && (
+              <button className="danger-action" onClick={onResign} disabled={!canManualEnd}>
+                认输
+              </button>
+            )}
           </div>
         </details>
       )}

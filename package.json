@@ -3,7 +3,9 @@
   "private": true,
   "packageManager": "pnpm@9.15.9",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   },
   "scripts": {
     "dev": "concurrently \"pnpm --filter server dev\" \"pnpm --filter client dev\"",
@@ -11,9 +13,12 @@
     "dev:server": "pnpm --filter server dev",
     "lan": "pnpm build && node scripts/start-lan.mjs",
     "build": "pnpm --filter client build && pnpm --filter server build",
-    "test": "pnpm --filter client test && pnpm --filter server test"
+    "test": "pnpm --filter client test && pnpm --filter server test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "prettier": "^3.9.6"
   }
 }

@@ -9,9 +9,17 @@ test('local Gomoku undo removes one move', () => {
 })
 
 test('AI undo returns to the human turn after either side moved last', () => {
-  assert.equal(getUndoStepCount(8, 'ai', BLACK), 2, 'undo the AI reply and the preceding human move')
+  assert.equal(
+    getUndoStepCount(8, 'ai', BLACK),
+    2,
+    'undo the AI reply and the preceding human move',
+  )
   assert.equal(getUndoStepCount(9, 'ai', BLACK), 1, 'undo only the human winning move')
-  assert.equal(getUndoStepCount(3, 'ai', WHITE), 2, 'undo the AI reply and the preceding human move')
+  assert.equal(
+    getUndoStepCount(3, 'ai', WHITE),
+    2,
+    'undo the AI reply and the preceding human move',
+  )
   assert.equal(getUndoStepCount(2, 'ai', WHITE), 1, 'undo only the human winning move')
 })
 

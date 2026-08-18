@@ -26,7 +26,10 @@ export function getResignationStatus(color: PieceColor): ManualGameStatusDetail 
   }
 }
 
-export function getHistoryStepSize(gameMode: GameMode | null, players: { red: PlayerConfig; black: PlayerConfig }): number {
+export function getHistoryStepSize(
+  gameMode: GameMode | null,
+  players: { red: PlayerConfig; black: PlayerConfig },
+): number {
   return gameMode === 'human-vs-ai' || (gameMode === 'endgame' && hasSingleAiSide(players)) ? 2 : 1
 }
 

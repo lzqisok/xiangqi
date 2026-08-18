@@ -76,7 +76,7 @@ export function useGamePersistence({
       setError('')
       let savedSuccessfully = false
       const task = saveGameState(currentGame, pending, currentLeaseToken)
-        .then(saved => {
+        .then((saved) => {
           gameRef.current = saved
           savedSignatureRef.current = signature(pending)
           onSavedRef.current(saved)
@@ -84,7 +84,7 @@ export function useGamePersistence({
           savedSuccessfully = true
           setStatus('saved')
         })
-        .catch(cause => {
+        .catch((cause) => {
           // A newer snapshot may have been queued while this request was in flight.
           // Keep that snapshot; otherwise retain the failed one for an explicit retry.
           pendingRef.current = retainNewestPendingState(pendingRef.current, pending)

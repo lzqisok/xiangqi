@@ -23,8 +23,20 @@ test('an engine best move is best even when score noise is present', () => {
 test('buildMoveReviews computes loss from each movers perspective', () => {
   const records = buildMoveRecordsFromUci(INITIAL_FEN, ['h2e2', 'h7e7'])
   const positions: ReviewPosition[] = [
-    { moveIndex: -1, evaluation: 20, depth: 12, bestMove: 'h2e2', pv: ['h2e2'] },
-    { moveIndex: 0, evaluation: -30, depth: 12, bestMove: 'b7e7', pv: ['b7e7'] },
+    {
+      moveIndex: -1,
+      evaluation: 20,
+      depth: 12,
+      bestMove: 'h2e2',
+      pv: ['h2e2'],
+    },
+    {
+      moveIndex: 0,
+      evaluation: -30,
+      depth: 12,
+      bestMove: 'b7e7',
+      pv: ['b7e7'],
+    },
     { moveIndex: 1, evaluation: 40, depth: 12, bestMove: 'b0c2', pv: ['b0c2'] },
   ]
 

@@ -11,17 +11,16 @@ export type RapfiClientMessage =
   | { type: 'init' }
   | { type: 'stop'; requestId?: string }
   | {
-    type: 'move'
-    requestId: string
-    moves: GomokuMove[]
-    aiPlayer: GomokuPlayer
-    difficulty: GomokuDifficulty
-    forbiddenEnabled: boolean
-  }
+      type: 'move'
+      requestId: string
+      moves: GomokuMove[]
+      aiPlayer: GomokuPlayer
+      difficulty: GomokuDifficulty
+      forbiddenEnabled: boolean
+    }
 
 export type RapfiProtocolValidation =
-  | { ok: true; message: RapfiClientMessage }
-  | { ok: false; requestId?: string; error: string }
+  { ok: true; message: RapfiClientMessage } | { ok: false; requestId?: string; error: string }
 
 const DIFFICULTIES = new Set<GomokuDifficulty>(['easy', 'medium', 'hard', 'master'])
 export const RAPFI_BOARD_SIZE = 15
@@ -57,8 +56,12 @@ export function parseRapfiClientMessage(raw: string): RapfiProtocolValidation {
   if (input.type !== 'move') return { ok: false, requestId, error: 'Unsupported message type' }
 
   if (!requestId?.trim()) return { ok: false, error: 'requestId is required' }
-  if (input.aiPlayer !== 1 && input.aiPlayer !== 2) return { ok: false, requestId, error: 'aiPlayer is invalid' }
-  if (typeof input.difficulty !== 'string' || !DIFFICULTIES.has(input.difficulty as GomokuDifficulty)) {
+  if (input.aiPlayer !== 1 && input.aiPlayer !== 2)
+    return { ok: false, requestId, error: 'aiPlayer is invalid' }
+  if (
+    typeof input.difficulty !== 'string' ||
+    !DIFFICULTIES.has(input.difficulty as GomokuDifficulty)
+  ) {
     return { ok: false, requestId, error: 'difficulty is invalid' }
   }
   if (typeof input.forbiddenEnabled !== 'boolean') {
@@ -72,18 +75,26 @@ export function parseRapfiClientMessage(raw: string): RapfiProtocolValidation {
   const moves: GomokuMove[] = []
   for (let index = 0; index < input.moves.length; index++) {
     const item = input.moves[index]
-    if (!item || typeof item !== 'object') return { ok: false, requestId, error: `moves[${index}] is invalid` }
+    if (!item || typeof item !== 'object')
+      return { ok: false, requestId, error: `moves[${index}] is invalid` }
     const move = item as Record<string, unknown>
     const expectedPlayer: GomokuPlayer = index % 2 === 0 ? 1 : 2
     if (
-      typeof move.row !== 'number' || !Number.isInteger(move.row) || move.row < 0 || move.row >= RAPFI_BOARD_SIZE ||
-      typeof move.col !== 'number' || !Number.isInteger(move.col) || move.col < 0 || move.col >= RAPFI_BOARD_SIZE ||
+      typeof move.row !== 'number' ||
+      !Number.isInteger(move.row) ||
+      move.row < 0 ||
+      move.row >= RAPFI_BOARD_SIZE ||
+      typeof move.col !== 'number' ||
+      !Number.isInteger(move.col) ||
+      move.col < 0 ||
+      move.col >= RAPFI_BOARD_SIZE ||
       move.player !== expectedPlayer
     ) {
       return { ok: false, requestId, error: `moves[${index}] is invalid` }
     }
     const key = `${move.row},${move.col}`
-    if (occupied.has(key)) return { ok: false, requestId, error: `moves[${index}] repeats an occupied point` }
+    if (occupied.has(key))
+      return { ok: false, requestId, error: `moves[${index}] repeats an occupied point` }
     occupied.add(key)
     moves.push({ row: move.row, col: move.col, player: move.player as GomokuPlayer })
   }
@@ -109,7 +120,7 @@ export function parseRapfiClientMessage(raw: string): RapfiProtocolValidation {
 export function buildRapfiBoardCommand(moves: GomokuMove[], aiPlayer: GomokuPlayer): string[] {
   return [
     'BOARD',
-    ...moves.map(move => `${move.col},${move.row},${move.player === aiPlayer ? 1 : 2}`),
+    ...moves.map((move) => `${move.col},${move.row},${move.player === aiPlayer ? 1 : 2}`),
     'DONE',
   ]
 }

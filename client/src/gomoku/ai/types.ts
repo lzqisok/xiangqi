@@ -83,4 +83,5 @@ export interface ReviewProgressWorkerResponse {
   total: number
 }
 
-export type WorkerResponse = BestMoveWorkerResponse | ReviewWorkerResponse | ReviewProgressWorkerResponse
+export type WorkerResponse =
+  BestMoveWorkerResponse | ReviewWorkerResponse | ReviewProgressWorkerResponse

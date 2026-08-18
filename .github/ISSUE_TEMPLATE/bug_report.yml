@@ -1,7 +1,7 @@
 name: Bug Report
 description: 提交一个可复现的问题报告
-title: "[Bug] "
-labels: ["bug"]
+title: '[Bug] '
+labels: ['bug']
 body:
   - type: markdown
     attributes:

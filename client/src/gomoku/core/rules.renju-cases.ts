@@ -213,7 +213,9 @@ export function runRenjuRegressionCases(): RenjuCaseResult[] {
   return RENJU_REGRESSION_CASES.map((item) => {
     const board = boardFromMoves(item.moves)
     const actualForbidden =
-      item.lastMove.player === BLACK ? isForbiddenMove(board, item.lastMove.row, item.lastMove.col, item.config) : false
+      item.lastMove.player === BLACK
+        ? isForbiddenMove(board, item.lastMove.row, item.lastMove.col, item.config)
+        : false
     const ended = checkWinResult(board, item.lastMove, item.lastMove.player, item.config)
     const actualWinner = ended?.winner ?? null
     const pass = actualForbidden === item.expectForbidden && actualWinner === item.expectWinner

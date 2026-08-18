@@ -12,7 +12,15 @@ interface Props {
   initialTarget?: EndgameTarget
   initialMaxMoves?: number
   initialSolution?: string[]
-  onSave: (payload: { name: string; description: string; fen: string; tags: string[]; target?: EndgameTarget; maxMoves?: number; solution: string[] }) => void
+  onSave: (payload: {
+    name: string
+    description: string
+    fen: string
+    tags: string[]
+    target?: EndgameTarget
+    maxMoves?: number
+    solution: string[]
+  }) => void
   onCancel: () => void
 }
 
@@ -57,7 +65,7 @@ export default function EndgameEditor({
           <input
             className="endgame-input"
             value={name}
-            onChange={e => setName(e.target.value)}
+            onChange={(e) => setName(e.target.value)}
             placeholder="例如：单车巧胜"
           />
         </div>
@@ -67,7 +75,7 @@ export default function EndgameEditor({
           <textarea
             className="endgame-textarea"
             value={description}
-            onChange={e => setDescription(e.target.value)}
+            onChange={(e) => setDescription(e.target.value)}
             placeholder="可选，简单说明残局目的或思路"
             rows={3}
           />
@@ -78,7 +86,7 @@ export default function EndgameEditor({
           <input
             className="endgame-input"
             value={tags}
-            onChange={e => setTags(e.target.value)}
+            onChange={(e) => setTags(e.target.value)}
             placeholder="例如：车炮兵、三步杀、守和"
           />
         </div>
@@ -109,7 +117,7 @@ export default function EndgameEditor({
           <input
             className="endgame-input"
             value={maxMoves}
-            onChange={e => setMaxMoves(e.target.value.replace(/[^\d]/g, ''))}
+            onChange={(e) => setMaxMoves(e.target.value.replace(/[^\d]/g, ''))}
             placeholder="可选，例如 6"
           />
         </div>
@@ -119,7 +127,7 @@ export default function EndgameEditor({
           <textarea
             className="endgame-textarea fen-field"
             value={solution}
-            onChange={e => setSolution(e.target.value)}
+            onChange={(e) => setSolution(e.target.value)}
             placeholder="可选，输入 UCI 走法，如 h2e2 h9g7"
             rows={2}
           />
@@ -135,7 +143,7 @@ export default function EndgameEditor({
           <textarea
             className="endgame-textarea fen-field"
             value={fen}
-            onChange={e => setFen(e.target.value)}
+            onChange={(e) => setFen(e.target.value)}
             placeholder="输入完整 FEN，例如：4k4/9/9/9/9/9/9/9/4R4/4K4 w - - 0 1"
             rows={4}
           />
@@ -144,19 +152,26 @@ export default function EndgameEditor({
         {error && <div className="endgame-error">{error}</div>}
 
         <div className="endgame-editor-actions">
-          <button className="cancel" onClick={onCancel}>取消</button>
+          <button className="cancel" onClick={onCancel}>
+            取消
+          </button>
           <button
             className="start-btn"
             disabled={Boolean(error)}
-            onClick={() => onSave({
-              name: name.trim(),
-              description: description.trim(),
-              fen: fen.trim(),
-              tags: parseTags(tags),
-              target: target || undefined,
-              maxMoves: maxMoves ? Number(maxMoves) : undefined,
-              solution: solution.split(/[\s,，、]+/).map(item => item.trim()).filter(Boolean),
-            })}
+            onClick={() =>
+              onSave({
+                name: name.trim(),
+                description: description.trim(),
+                fen: fen.trim(),
+                tags: parseTags(tags),
+                target: target || undefined,
+                maxMoves: maxMoves ? Number(maxMoves) : undefined,
+                solution: solution
+                  .split(/[\s,，、]+/)
+                  .map((item) => item.trim())
+                  .filter(Boolean),
+              })
+            }
           >
             保存残局
           </button>

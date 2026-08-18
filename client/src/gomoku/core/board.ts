@@ -1,4 +1,12 @@
-import { BOARD_CELLS, BOARD_SIZE, EMPTY, type Cell, type Move, type Player, type Position } from './types'
+import {
+  BOARD_CELLS,
+  BOARD_SIZE,
+  EMPTY,
+  type Cell,
+  type Move,
+  type Player,
+  type Position,
+} from './types'
 
 export type Board = Int8Array
 

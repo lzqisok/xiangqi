@@ -9,7 +9,7 @@ test('LAN command IDs do not require crypto.randomUUID or a secure context', () 
 
 test('LAN command IDs use getRandomValues when randomUUID is unavailable', () => {
   const commandId = createLanCommandId({
-    getRandomValues: array => {
+    getRandomValues: (array) => {
       new Uint8Array(array.buffer, array.byteOffset, array.byteLength).fill(0x12)
       return array
     },

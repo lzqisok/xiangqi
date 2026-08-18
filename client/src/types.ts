@@ -43,7 +43,15 @@ export type Difficulty = 'easy' | 'medium' | 'hard' | 'master'
 export type EngineSearchMode = 'depth' | 'time'
 export type PlayerSide = 'red' | 'black'
 export type GameStatus = 'playing' | 'red-wins' | 'black-wins' | 'draw'
-export type GameStatusReason = 'checkmate' | 'stalemate' | 'illegal-position' | 'manual' | 'resignation' | 'repetition' | 'natural-limit' | 'move-limit'
+export type GameStatusReason =
+  | 'checkmate'
+  | 'stalemate'
+  | 'illegal-position'
+  | 'manual'
+  | 'resignation'
+  | 'repetition'
+  | 'natural-limit'
+  | 'move-limit'
 export type PlayerType = 'human' | 'ai'
 
 export interface PlayerConfig {
@@ -243,20 +251,78 @@ export interface EngineRuntimeOptions {
 }
 
 export type WSMessage =
-  | ({ type: 'init'; difficulty: Difficulty; variant?: EngineVariant } & EngineRuntimeOptions)
-  | ({ type: 'move'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty; variant?: EngineVariant } & EngineSearchLimit)
-  | ({ type: 'hint'; requestId: string; fen: string; moves: string[]; difficulty?: Difficulty; variant?: EngineVariant } & EngineSearchLimit)
-  | ({ type: 'analyze'; requestId: string; fen: string; moves: string[]; variant?: EngineVariant } & EngineSearchLimit)
-  | ({ type: 'candidates'; requestId?: string; fen?: string; moves?: string[]; difficulty?: Difficulty; count?: number; candidates?: MoveCandidate[]; variant?: EngineVariant } & EngineSearchLimit)
-  | { type: 'review'; requestId: string; fen: string; moves: string[]; searchDepth: number }
+  | ({
+      type: 'init'
+      difficulty: Difficulty
+      variant?: EngineVariant
+    } & EngineRuntimeOptions)
+  | ({
+      type: 'move'
+      requestId: string
+      fen: string
+      moves: string[]
+      difficulty?: Difficulty
+      variant?: EngineVariant
+    } & EngineSearchLimit)
+  | ({
+      type: 'hint'
+      requestId: string
+      fen: string
+      moves: string[]
+      difficulty?: Difficulty
+      variant?: EngineVariant
+    } & EngineSearchLimit)
+  | ({
+      type: 'analyze'
+      requestId: string
+      fen: string
+      moves: string[]
+      variant?: EngineVariant
+    } & EngineSearchLimit)
+  | ({
+      type: 'candidates'
+      requestId?: string
+      fen?: string
+      moves?: string[]
+      difficulty?: Difficulty
+      count?: number
+      candidates?: MoveCandidate[]
+      variant?: EngineVariant
+    } & EngineSearchLimit)
+  | {
+      type: 'review'
+      requestId: string
+      fen: string
+      moves: string[]
+      searchDepth: number
+    }
   | { type: 'stop'; requestId?: string }
   | { type: 'claim-game' | 'takeover-game'; requestId: string; gameId: string }
   | { type: 'release-game'; gameId: string }
-  | { type: 'bestmove'; requestId?: string; move: string; ponder?: string; elapsedMs?: number; requestKind?: 'move' | 'hint'; searchCapped?: boolean }
+  | {
+      type: 'bestmove'
+      requestId?: string
+      move: string
+      ponder?: string
+      elapsedMs?: number
+      requestKind?: 'move' | 'hint'
+      searchCapped?: boolean
+    }
   | { type: 'info'; requestId?: string; data: EngineInfo }
-  | { type: 'review-progress'; requestId: string; completed: number; total: number }
+  | {
+      type: 'review-progress'
+      requestId: string
+      completed: number
+      total: number
+    }
   | { type: 'review-result'; requestId: string; positions: ReviewPosition[] }
   | { type: 'engine-status'; available: boolean; message?: string }
-  | { type: 'game-lease'; requestId?: string; gameId: string; status: 'granted' | 'readonly'; leaseToken?: string }
+  | {
+      type: 'game-lease'
+      requestId?: string
+      gameId: string
+      status: 'granted' | 'readonly'
+      leaseToken?: string
+    }
   | { type: 'game-lease-lost'; gameId: string }
   | { type: 'error'; requestId?: string; message: string }

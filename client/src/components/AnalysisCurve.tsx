@@ -17,14 +17,17 @@ export default function AnalysisCurve({ points }: Props) {
   const padding = 10
   const maxEval = 1200
 
-  const path = sorted.map((point, index) => {
-    const x = sorted.length === 1
-      ? width / 2
-      : padding + (index / (sorted.length - 1)) * (width - padding * 2)
-    const clamped = Math.max(-maxEval, Math.min(maxEval, point.evaluation))
-    const y = height / 2 - (clamped / maxEval) * (height / 2 - padding)
-    return `${index === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`
-  }).join(' ')
+  const path = sorted
+    .map((point, index) => {
+      const x =
+        sorted.length === 1
+          ? width / 2
+          : padding + (index / (sorted.length - 1)) * (width - padding * 2)
+      const clamped = Math.max(-maxEval, Math.min(maxEval, point.evaluation))
+      const y = height / 2 - (clamped / maxEval) * (height / 2 - padding)
+      return `${index === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`
+    })
+    .join(' ')
 
   return (
     <div className="analysis-curve">
@@ -33,16 +36,37 @@ export default function AnalysisCurve({ points }: Props) {
         <span>{latest ? formatScore(latest.evaluation) : '等待分析'}</span>
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="分析曲线">
-        <line x1={padding} y1={height / 2} x2={width - padding} y2={height / 2} className="analysis-curve-zero" />
-        <rect x={padding} y={padding} width={width - padding * 2} height={height - padding * 2} className="analysis-curve-frame" />
+        <line
+          x1={padding}
+          y1={height / 2}
+          x2={width - padding}
+          y2={height / 2}
+          className="analysis-curve-zero"
+        />
+        <rect
+          x={padding}
+          y={padding}
+          width={width - padding * 2}
+          height={height - padding * 2}
+          className="analysis-curve-frame"
+        />
         {path && <path d={path} className="analysis-curve-line" />}
         {sorted.map((point, index) => {
-          const x = sorted.length === 1
-            ? width / 2
-            : padding + (index / (sorted.length - 1)) * (width - padding * 2)
+          const x =
+            sorted.length === 1
+              ? width / 2
+              : padding + (index / (sorted.length - 1)) * (width - padding * 2)
           const clamped = Math.max(-maxEval, Math.min(maxEval, point.evaluation))
           const y = height / 2 - (clamped / maxEval) * (height / 2 - padding)
-          return <circle key={point.moveIndex} cx={x} cy={y} r="2.8" className={point.evaluation >= 0 ? 'red-point' : 'black-point'} />
+          return (
+            <circle
+              key={point.moveIndex}
+              cx={x}
+              cy={y}
+              r="2.8"
+              className={point.evaluation >= 0 ? 'red-point' : 'black-point'}
+            />
+          )
         })}
       </svg>
     </div>

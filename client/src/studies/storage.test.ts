@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { deleteStudyPositions, duplicateStudyPosition, exportStudyPositionsJson, importStudyPositionsJson, renameStudyPosition, saveStudyPosition } from './storage'
+import {
+  deleteStudyPositions,
+  duplicateStudyPosition,
+  exportStudyPositionsJson,
+  importStudyPositionsJson,
+  renameStudyPosition,
+  saveStudyPosition,
+} from './storage'
 import { createVariationTree } from '../variations/tree'
 
 const MOVE = {
@@ -15,31 +22,33 @@ const MOVE = {
 
 test('importStudyPositionsJson imports wrapped studies and filters invalid entries', () => {
   mockStudies([])
-  const result = importStudyPositionsJson(JSON.stringify({
-    studies: [
-      {
-        id: 'study-new',
-        name: '研究一',
-        initialFen: 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1',
-        moves: [MOVE],
-        currentMoveIndex: 0,
-        analysisPoints: [],
-        createdAt: 1,
-        updatedAt: 2,
-      },
-      { id: 'bad' },
-      {
-        id: 'bad-moves',
-        name: '坏走法',
-        initialFen: 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1',
-        moves: [{}],
-        currentMoveIndex: 0,
-        analysisPoints: [],
-        createdAt: 1,
-        updatedAt: 3,
-      },
-    ],
-  }))
+  const result = importStudyPositionsJson(
+    JSON.stringify({
+      studies: [
+        {
+          id: 'study-new',
+          name: '研究一',
+          initialFen: 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1',
+          moves: [MOVE],
+          currentMoveIndex: 0,
+          analysisPoints: [],
+          createdAt: 1,
+          updatedAt: 2,
+        },
+        { id: 'bad' },
+        {
+          id: 'bad-moves',
+          name: '坏走法',
+          initialFen: 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1',
+          moves: [{}],
+          currentMoveIndex: 0,
+          analysisPoints: [],
+          createdAt: 1,
+          updatedAt: 3,
+        },
+      ],
+    }),
+  )
 
   assert.equal(result.length, 1)
   assert.equal(result[0].id, 'study-new')
@@ -49,12 +58,22 @@ test('importStudyPositionsJson imports wrapped studies and filters invalid entri
 test('study JSON v3 preserves annotated trees and rejects disconnected nodes', () => {
   const valid = makeStudy('study-tree', 1)
   valid.variationTree = createVariationTree(valid.initialFen, valid.moves, 0, 1)
-  valid.variationTree.nodes['variation-node-1'].annotations = [{
-    id: 'arrow-1', type: 'arrow', color: 'red', from: { row: 9, col: 7 }, to: { row: 7, col: 7 },
-  }]
+  valid.variationTree.nodes['variation-node-1'].annotations = [
+    {
+      id: 'arrow-1',
+      type: 'arrow',
+      color: 'red',
+      from: { row: 9, col: 7 },
+      to: { row: 7, col: 7 },
+    },
+  ]
   mockStudies([valid])
   assert.equal(JSON.parse(exportStudyPositionsJson()).version, 3)
-  assert.equal(JSON.parse(exportStudyPositionsJson()).studies[0].variationTree.nodes['variation-node-1'].annotations.length, 1)
+  assert.equal(
+    JSON.parse(exportStudyPositionsJson()).studies[0].variationTree.nodes['variation-node-1']
+      .annotations.length,
+    1,
+  )
 
   const invalid = structuredClone(valid)
   invalid.id = 'study-invalid-tree'
@@ -63,26 +82,39 @@ test('study JSON v3 preserves annotated trees and rejects disconnected nodes', (
     id: 'orphan',
   }
   const imported = importStudyPositionsJson(JSON.stringify({ version: 2, studies: [invalid] }))
-  assert.deepEqual(imported.map(study => study.id), ['study-tree'])
+  assert.deepEqual(
+    imported.map((study) => study.id),
+    ['study-tree'],
+  )
 
   const invalidAnnotation = structuredClone(valid)
   invalidAnnotation.id = 'study-invalid-annotation'
-  invalidAnnotation.variationTree!.nodes['variation-node-1'].annotations = [{
-    id: 'bad-arrow', type: 'arrow', color: 'red', from: { row: 9, col: 7 }, to: { row: 9, col: 7 },
-  }]
-  assert.deepEqual(importStudyPositionsJson(JSON.stringify({ version: 3, studies: [invalidAnnotation] })).map(study => study.id), ['study-tree'])
+  invalidAnnotation.variationTree!.nodes['variation-node-1'].annotations = [
+    {
+      id: 'bad-arrow',
+      type: 'arrow',
+      color: 'red',
+      from: { row: 9, col: 7 },
+      to: { row: 9, col: 7 },
+    },
+  ]
+  assert.deepEqual(
+    importStudyPositionsJson(JSON.stringify({ version: 3, studies: [invalidAnnotation] })).map(
+      (study) => study.id,
+    ),
+    ['study-tree'],
+  )
 })
 
 test('deleteStudyPositions removes multiple selected studies', () => {
-  mockStudies([
-    makeStudy('study-a', 1),
-    makeStudy('study-b', 2),
-    makeStudy('study-c', 3),
-  ])
+  mockStudies([makeStudy('study-a', 1), makeStudy('study-b', 2), makeStudy('study-c', 3)])
 
   const result = deleteStudyPositions(['study-a', 'study-c'])
 
-  assert.deepEqual(result.map(study => study.id), ['study-b'])
+  assert.deepEqual(
+    result.map((study) => study.id),
+    ['study-b'],
+  )
 })
 
 test('renameStudyPosition trims names and preserves blank names', () => {
@@ -98,9 +130,14 @@ test('renameStudyPosition trims names and preserves blank names', () => {
 test('duplicateStudyPosition copies a study with a new id and name', () => {
   const source = makeStudy('study-a', 1)
   source.variationTree = createVariationTree(source.initialFen, source.moves, 0, 1)
-  source.variationTree.nodes['variation-node-1'].annotations = [{
-    id: 'circle-1', type: 'circle', color: 'blue', from: { row: 7, col: 7 },
-  }]
+  source.variationTree.nodes['variation-node-1'].annotations = [
+    {
+      id: 'circle-1',
+      type: 'circle',
+      color: 'blue',
+      from: { row: 7, col: 7 },
+    },
+  ]
   mockStudies([source])
 
   const result = duplicateStudyPosition('study-a')
@@ -111,7 +148,10 @@ test('duplicateStudyPosition copies a study with a new id and name', () => {
   assert.equal(result[0].moves.length, 1)
   assert.deepEqual(result[0].variationTree, source.variationTree)
   assert.notEqual(result[0].variationTree, source.variationTree)
-  assert.notEqual(result[0].variationTree!.nodes['variation-node-1'].annotations, source.variationTree.nodes['variation-node-1'].annotations)
+  assert.notEqual(
+    result[0].variationTree!.nodes['variation-node-1'].annotations,
+    source.variationTree.nodes['variation-node-1'].annotations,
+  )
   assert.equal(result[1].id, 'study-a')
 })
 

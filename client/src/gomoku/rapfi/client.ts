@@ -44,13 +44,15 @@ class RapfiClient {
     if (this.probePromise) return this.probePromise
 
     this.status = 'connecting'
-    this.probePromise = new Promise(resolve => { this.probeResolve = resolve })
+    this.probePromise = new Promise((resolve) => {
+      this.probeResolve = resolve
+    })
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const socket = new WebSocket(`${protocol}//${window.location.host}/gomoku-ws`)
     this.socket = socket
 
     socket.onopen = () => socket.send(JSON.stringify({ type: 'init' }))
-    socket.onmessage = event => this.handleMessage(event.data)
+    socket.onmessage = (event) => this.handleMessage(event.data)
     socket.onerror = () => socket.close()
     socket.onclose = () => {
       if (this.socket !== socket) return
@@ -67,7 +69,7 @@ class RapfiClient {
   }
 
   async requestMove(request: RapfiMoveRequest): Promise<Position> {
-    if (!await this.probe() || this.socket?.readyState !== WebSocket.OPEN) {
+    if (!(await this.probe()) || this.socket?.readyState !== WebSocket.OPEN) {
       throw new Error('Rapfi engine is unavailable')
     }
 
@@ -86,7 +88,8 @@ class RapfiClient {
   }
 
   cancelPending(): void {
-    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: 'stop' }))
+    if (this.socket?.readyState === WebSocket.OPEN)
+      this.socket.send(JSON.stringify({ type: 'stop' }))
     this.rejectPending(new RapfiRequestCancelledError())
   }
 
@@ -123,7 +126,9 @@ class RapfiClient {
         return
       }
     }
-    pending.reject(new Error(typeof message.message === 'string' ? message.message : 'Rapfi request failed'))
+    pending.reject(
+      new Error(typeof message.message === 'string' ? message.message : 'Rapfi request failed'),
+    )
   }
 
   private finishProbe(available: boolean, unavailableStatus: RapfiStatus = 'unavailable'): void {

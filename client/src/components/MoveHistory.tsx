@@ -29,9 +29,14 @@ export default function MoveHistory({
   onShowOnlyAnnotatedChange,
 }: Props) {
   const listRef = useRef<HTMLDivElement>(null)
-  const [editingNote, setEditingNote] = useState<{ index: number; note: string } | null>(null)
+  const [editingNote, setEditingNote] = useState<{
+    index: number
+    note: string
+  } | null>(null)
   const visibleMoves = showOnlyAnnotated
-    ? moves.map((record, index) => ({ record, index })).filter(item => item.record.marked || item.record.note)
+    ? moves
+        .map((record, index) => ({ record, index }))
+        .filter((item) => item.record.marked || item.record.note)
     : moves.map((record, index) => ({ record, index }))
 
   useEffect(() => {
@@ -60,7 +65,7 @@ export default function MoveHistory({
             <input
               type="checkbox"
               checked={showOnlyAnnotated}
-              onChange={e => onShowOnlyAnnotatedChange(e.target.checked)}
+              onChange={(e) => onShowOnlyAnnotatedChange(e.target.checked)}
             />
             标注
           </label>
@@ -68,12 +73,24 @@ export default function MoveHistory({
       </div>
       <div className="move-list" ref={listRef}>
         {moves.length === 0 && (
-          <div style={{ color: 'var(--text-secondary)', fontSize: '13px', padding: '8px 0' }}>
+          <div
+            style={{
+              color: 'var(--text-secondary)',
+              fontSize: '13px',
+              padding: '8px 0',
+            }}
+          >
             暂无走棋记录
           </div>
         )}
         {moves.length > 0 && visibleMoves.length === 0 && (
-          <div style={{ color: 'var(--text-secondary)', fontSize: '13px', padding: '8px 0' }}>
+          <div
+            style={{
+              color: 'var(--text-secondary)',
+              fontSize: '13px',
+              padding: '8px 0',
+            }}
+          >
             暂无标注记录
           </div>
         )}
@@ -90,10 +107,12 @@ export default function MoveHistory({
             >
               {isRed && <span className="move-number">{moveNum}.</span>}
               {!isRed && <span className="move-number" />}
-              <span className={`move-text ${isRed ? 'red' : 'black'}`}>
-                {record.notation}
-              </span>
-              {record.note && <span className="move-note" title={record.note}>注</span>}
+              <span className={`move-text ${isRed ? 'red' : 'black'}`}>{record.notation}</span>
+              {record.note && (
+                <span className="move-note" title={record.note}>
+                  注
+                </span>
+              )}
               <button
                 className={`move-mark ${record.marked ? 'active' : ''}`}
                 onClick={(e) => {
@@ -121,16 +140,26 @@ export default function MoveHistory({
           )
         })}
       </div>
-      {editingNote && <ProductDialog
-        title="编辑备注"
-        confirmLabel="保存"
-        fields={[{ name: 'note', label: '局面备注', initialValue: editingNote.note, multiline: true, maxLength: 300 }]}
-        onCancel={() => setEditingNote(null)}
-        onConfirm={values => {
-          onUpdateNote(editingNote.index, values.note.trim())
-          setEditingNote(null)
-        }}
-      />}
+      {editingNote && (
+        <ProductDialog
+          title="编辑备注"
+          confirmLabel="保存"
+          fields={[
+            {
+              name: 'note',
+              label: '局面备注',
+              initialValue: editingNote.note,
+              multiline: true,
+              maxLength: 300,
+            },
+          ]}
+          onCancel={() => setEditingNote(null)}
+          onConfirm={(values) => {
+            onUpdateNote(editingNote.index, values.note.trim())
+            setEditingNote(null)
+          }}
+        />
+      )}
     </div>
   )
 }

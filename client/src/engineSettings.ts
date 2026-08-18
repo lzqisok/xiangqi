@@ -36,7 +36,8 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
 
 function normalizeThreads(value: unknown): EngineThreads {
   if (value === 'auto') return 'auto'
-  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_ENGINE_SETTINGS.engineThreads
+  if (typeof value !== 'number' || !Number.isFinite(value))
+    return DEFAULT_ENGINE_SETTINGS.engineThreads
   return Math.max(1, Math.min(8, Math.round(value)))
 }
 
@@ -48,7 +49,9 @@ function canUseStorage(): boolean {
   }
 }
 
-export function normalizeEngineSettings(value: Partial<EngineSettings> | null | undefined): EngineSettings {
+export function normalizeEngineSettings(
+  value: Partial<EngineSettings> | null | undefined,
+): EngineSettings {
   return {
     candidateCount: clampInteger(
       value?.candidateCount,
@@ -68,12 +71,7 @@ export function normalizeEngineSettings(value: Partial<EngineSettings> | null | 
     searchMode: SEARCH_MODES.has(value?.searchMode as EngineSearchMode)
       ? value!.searchMode!
       : DEFAULT_ENGINE_SETTINGS.searchMode,
-    searchDepth: clampInteger(
-      value?.searchDepth,
-      4,
-      30,
-      DEFAULT_ENGINE_SETTINGS.searchDepth,
-    ),
+    searchDepth: clampInteger(value?.searchDepth, 4, 30, DEFAULT_ENGINE_SETTINGS.searchDepth),
     searchTimeMs: clampInteger(
       value?.searchTimeMs,
       500,
@@ -81,12 +79,7 @@ export function normalizeEngineSettings(value: Partial<EngineSettings> | null | 
       DEFAULT_ENGINE_SETTINGS.searchTimeMs,
     ),
     engineThreads: normalizeThreads(value?.engineThreads),
-    engineHashMb: clampInteger(
-      value?.engineHashMb,
-      16,
-      512,
-      DEFAULT_ENGINE_SETTINGS.engineHashMb,
-    ),
+    engineHashMb: clampInteger(value?.engineHashMb, 16, 512, DEFAULT_ENGINE_SETTINGS.engineHashMb),
   }
 }
 

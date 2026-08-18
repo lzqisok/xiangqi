@@ -1,8 +1,23 @@
 import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, open, readFile, readdir, rename, stat, unlink } from 'node:fs/promises'
 import path from 'node:path'
-import { GameConfig, GameDocument, GameExportFile, GameIndexFile, GameSummary, LiveGameMode, StoredGameState } from './types.js'
-import { getCompactLineMoveCount, isGameConfig, isGameDocument, isLiveGameMode, isStoredGameState, MAX_STORED_GAMES } from './validation.js'
+import {
+  GameConfig,
+  GameDocument,
+  GameExportFile,
+  GameIndexFile,
+  GameSummary,
+  LiveGameMode,
+  StoredGameState,
+} from './types.js'
+import {
+  getCompactLineMoveCount,
+  isGameConfig,
+  isGameDocument,
+  isLiveGameMode,
+  isStoredGameState,
+  MAX_STORED_GAMES,
+} from './validation.js'
 
 export class GameStoreUnavailableError extends Error {}
 export class GameNotFoundError extends Error {}
@@ -34,10 +49,12 @@ export class JsonGameRepository {
     try {
       await mkdir(this.directory, { recursive: true })
       const files = await readdir(this.directory)
-      const ids = new Set(files.flatMap(file => {
-        const match = /^([0-9a-f-]{36})\.json(?:\.bak)?$/i.exec(file)
-        return match ? [match[1]] : []
-      }))
+      const ids = new Set(
+        files.flatMap((file) => {
+          const match = /^([0-9a-f-]{36})\.json(?:\.bak)?$/i.exec(file)
+          return match ? [match[1]] : []
+        }),
+      )
       for (const id of ids) {
         const game = await this.readGameWithBackup(id)
         if (game) this.games.set(id, game)
@@ -45,7 +62,9 @@ export class JsonGameRepository {
       await this.writeIndex().catch(() => undefined)
     } catch (error) {
       this.available = false
-      throw new GameStoreUnavailableError(error instanceof Error ? error.message : 'Game store unavailable')
+      throw new GameStoreUnavailableError(
+        error instanceof Error ? error.message : 'Game store unavailable',
+      )
     }
   }
 
@@ -55,7 +74,9 @@ export class JsonGameRepository {
 
   list(): GameSummary[] {
     this.assertAvailable()
-    return [...this.games.values()].sort((a, b) => b.updatedAt - a.updatedAt).map(game => this.summary(game))
+    return [...this.games.values()]
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .map((game) => this.summary(game))
   }
 
   get(id: string): GameDocument {
@@ -68,8 +89,14 @@ export class JsonGameRepository {
   async create(input: CreateGameInput): Promise<GameDocument> {
     return this.runMutation(async () => {
       this.assertAvailable()
-      if (this.games.size >= MAX_STORED_GAMES) throw new InvalidGameDataError('Game store limit exceeded')
-      if (!isLiveGameMode(input.mode) || !isGameConfig(input.config) || !isStoredGameState(input.state, input.mode)) throw new InvalidGameDataError('Invalid game data')
+      if (this.games.size >= MAX_STORED_GAMES)
+        throw new InvalidGameDataError('Game store limit exceeded')
+      if (
+        !isLiveGameMode(input.mode) ||
+        !isGameConfig(input.config) ||
+        !isStoredGameState(input.state, input.mode)
+      )
+        throw new InvalidGameDataError('Invalid game data')
       const now = Date.now()
       const game: GameDocument = {
         id: randomUUID(),
@@ -89,12 +116,23 @@ export class JsonGameRepository {
     })
   }
 
-  async updateState(id: string, expectedRevision: number, state: StoredGameState): Promise<GameDocument> {
+  async updateState(
+    id: string,
+    expectedRevision: number,
+    state: StoredGameState,
+  ): Promise<GameDocument> {
     return this.runMutation(async () => {
       const current = this.get(id)
-      if (current.revision !== expectedRevision) throw new GameRevisionConflictError(current.revision)
-      if (!isStoredGameState(state, current.mode)) throw new InvalidGameDataError('Invalid game state')
-      const next = { ...current, revision: current.revision + 1, state: structuredClone(state), updatedAt: Date.now() }
+      if (current.revision !== expectedRevision)
+        throw new GameRevisionConflictError(current.revision)
+      if (!isStoredGameState(state, current.mode))
+        throw new InvalidGameDataError('Invalid game state')
+      const next = {
+        ...current,
+        revision: current.revision + 1,
+        state: structuredClone(state),
+        updatedAt: Date.now(),
+      }
       await this.writeGame(next)
       this.games.set(id, next)
       await this.writeIndex().catch(() => undefined)
@@ -105,10 +143,16 @@ export class JsonGameRepository {
   async rename(id: string, expectedRevision: number, name: string): Promise<GameDocument> {
     return this.runMutation(async () => {
       const current = this.get(id)
-      if (current.revision !== expectedRevision) throw new GameRevisionConflictError(current.revision)
+      if (current.revision !== expectedRevision)
+        throw new GameRevisionConflictError(current.revision)
       const trimmed = name.trim()
       if (!trimmed || trimmed.length > 100) throw new InvalidGameDataError('Invalid game name')
-      const next = { ...current, revision: current.revision + 1, name: trimmed, updatedAt: Date.now() }
+      const next = {
+        ...current,
+        revision: current.revision + 1,
+        name: trimmed,
+        updatedAt: Date.now(),
+      }
       await this.writeGame(next)
       this.games.set(id, next)
       await this.writeIndex().catch(() => undefined)
@@ -119,10 +163,15 @@ export class JsonGameRepository {
   async delete(id: string, expectedRevision: number): Promise<void> {
     await this.runMutation(async () => {
       const current = this.get(id)
-      if (current.revision !== expectedRevision) throw new GameRevisionConflictError(current.revision)
+      if (current.revision !== expectedRevision)
+        throw new GameRevisionConflictError(current.revision)
       await Promise.all([
-        unlink(this.gamePath(id)).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }),
-        unlink(this.backupPath(id)).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }),
+        unlink(this.gamePath(id)).catch((error) => {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        }),
+        unlink(this.backupPath(id)).catch((error) => {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        }),
       ])
       this.games.delete(id)
       await this.writeIndex().catch(() => undefined)
@@ -131,20 +180,32 @@ export class JsonGameRepository {
 
   export(ids?: string[]): GameExportFile {
     this.assertAvailable()
-    const selected = ids ? ids.map(id => this.get(id)) : [...this.games.values()].map(game => structuredClone(game))
+    const selected = ids
+      ? ids.map((id) => this.get(id))
+      : [...this.games.values()].map((game) => structuredClone(game))
     return { exportVersion: 2, exportedAt: Date.now(), games: selected }
   }
 
-  async import(value: unknown): Promise<{ imported: GameDocument[]; idMap: Record<string, string> }> {
+  async import(
+    value: unknown,
+  ): Promise<{ imported: GameDocument[]; idMap: Record<string, string> }> {
     return this.runMutation(async () => {
       this.assertAvailable()
-      const raw = value && typeof value === 'object' ? value as Record<string, unknown> : null
-      if (!raw || raw.exportVersion !== 2 || !Array.isArray(raw.games) || raw.games.length > MAX_STORED_GAMES || !raw.games.every(isGameDocument)) {
+      const raw = value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+      if (
+        !raw ||
+        raw.exportVersion !== 2 ||
+        !Array.isArray(raw.games) ||
+        raw.games.length > MAX_STORED_GAMES ||
+        !raw.games.every(isGameDocument)
+      ) {
         throw new InvalidGameDataError('Invalid game export')
       }
-      if (this.games.size + raw.games.length > MAX_STORED_GAMES) throw new InvalidGameDataError('Game store limit exceeded')
-      const sourceIds = (raw.games as GameDocument[]).map(game => game.id)
-      if (new Set(sourceIds).size !== sourceIds.length) throw new InvalidGameDataError('Duplicate game ids in export')
+      if (this.games.size + raw.games.length > MAX_STORED_GAMES)
+        throw new InvalidGameDataError('Game store limit exceeded')
+      const sourceIds = (raw.games as GameDocument[]).map((game) => game.id)
+      if (new Set(sourceIds).size !== sourceIds.length)
+        throw new InvalidGameDataError('Duplicate game ids in export')
       const imported: GameDocument[] = []
       const idMap: Record<string, string> = {}
       const writtenIds: string[] = []
@@ -152,13 +213,19 @@ export class JsonGameRepository {
         for (const source of raw.games as GameDocument[]) {
           const id = this.games.has(source.id) ? randomUUID() : source.id
           idMap[source.id] = id
-          const game = structuredClone({ ...source, id, schemaVersion: 2 as const, revision: 0, updatedAt: Date.now() })
+          const game = structuredClone({
+            ...source,
+            id,
+            schemaVersion: 2 as const,
+            revision: 0,
+            updatedAt: Date.now(),
+          })
           await this.writeGame(game)
           writtenIds.push(id)
           imported.push(game)
         }
       } catch (error) {
-        await Promise.all(writtenIds.map(id => unlink(this.gamePath(id)).catch(() => undefined)))
+        await Promise.all(writtenIds.map((id) => unlink(this.gamePath(id)).catch(() => undefined)))
         throw error
       }
       for (const game of imported) this.games.set(game.id, game)
@@ -173,7 +240,10 @@ export class JsonGameRepository {
 
   private runMutation<T>(action: () => Promise<T>): Promise<T> {
     const result = this.mutationQueue.then(action, action)
-    this.mutationQueue = result.then(() => undefined, () => undefined)
+    this.mutationQueue = result.then(
+      () => undefined,
+      () => undefined,
+    )
     return result
   }
 
@@ -196,13 +266,16 @@ export class JsonGameRepository {
   }
 
   private async writeIndex(): Promise<void> {
-    const index: GameIndexFile = { schemaVersion: 2, games: Object.fromEntries([...this.games].map(([id, game]) => [id, this.summary(game)])) }
+    const index: GameIndexFile = {
+      schemaVersion: 2,
+      games: Object.fromEntries([...this.games].map(([id, game]) => [id, this.summary(game)])),
+    }
     await this.atomicWrite(path.join(this.directory, 'index.json'), index, true)
   }
 
   private async atomicWrite(target: string, value: unknown, backup: boolean): Promise<void> {
     await mkdir(path.dirname(target), { recursive: true })
-    if (backup && await this.exists(target)) await copyFile(target, `${target}.bak`)
+    if (backup && (await this.exists(target))) await copyFile(target, `${target}.bak`)
     const temporary = `${target}.${randomUUID()}.tmp`
     try {
       const handle = await open(temporary, 'w', 0o600)
@@ -237,11 +310,20 @@ export class JsonGameRepository {
     }
   }
 
-  private gamePath(id: string): string { return path.join(this.directory, `${id}.json`) }
-  private backupPath(id: string): string { return `${this.gamePath(id)}.bak` }
+  private gamePath(id: string): string {
+    return path.join(this.directory, `${id}.json`)
+  }
+  private backupPath(id: string): string {
+    return `${this.gamePath(id)}.bak`
+  }
 
   private async exists(file: string): Promise<boolean> {
-    try { await stat(file); return true } catch { return false }
+    try {
+      await stat(file)
+      return true
+    } catch {
+      return false
+    }
   }
 
   private assertAvailable(): void {
@@ -250,7 +332,10 @@ export class JsonGameRepository {
 
   private defaultName(mode: LiveGameMode, now: number): string {
     const names: Record<LiveGameMode, string> = {
-      'human-vs-ai': '人机对弈', 'human-vs-human': '双人对弈', 'ai-vs-ai': 'AI 对战', jieqi: '揭棋对弈',
+      'human-vs-ai': '人机对弈',
+      'human-vs-human': '双人对弈',
+      'ai-vs-ai': 'AI 对战',
+      jieqi: '揭棋对弈',
     }
     return `${names[mode]} ${new Date(now).toLocaleString('zh-CN', { hour12: false })}`
   }

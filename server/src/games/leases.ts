@@ -7,7 +7,11 @@ export class GameLeaseManager {
   private readonly leases = new Map<string, Lease>()
   private readonly gamesBySocket = new Map<WebSocket, Set<string>>()
 
-  claim(gameId: string, ws: WebSocket, force = false): { status: 'granted' | 'readonly'; leaseToken?: string } {
+  claim(
+    gameId: string,
+    ws: WebSocket,
+    force = false,
+  ): { status: 'granted' | 'readonly'; leaseToken?: string } {
     const current = this.leases.get(gameId)
     if (current?.ws === ws) return { status: 'granted', leaseToken: current.token }
     if (current && !force) return { status: 'readonly' }

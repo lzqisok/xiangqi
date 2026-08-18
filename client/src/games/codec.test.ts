@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { applyJieqiMove, cloneJieqiSnapshot, createJieqiInitialBoard, JIEQI_INITIAL_FEN } from '../engine/jieqi'
+import {
+  applyJieqiMove,
+  cloneJieqiSnapshot,
+  createJieqiInitialBoard,
+  JIEQI_INITIAL_FEN,
+} from '../engine/jieqi'
 import { formatJieqiNotation } from '../engine/jieqi'
 import { Move, MoveRecord, PersistedGameState } from '../types'
 import { createVariationTree } from '../variations/tree'
@@ -10,7 +15,11 @@ test('compact Jieqi state restores hidden layout and per-move snapshots by repla
   const initialBoard = createJieqiInitialBoard(() => 0)
   const from = { row: 6, col: 0 }
   const to = { row: 5, col: 0 }
-  const move: Move = { from, to, piece: { ...initialBoard[from.row][from.col]! } }
+  const move: Move = {
+    from,
+    to,
+    piece: { ...initialBoard[from.row][from.col]! },
+  }
   const moved = applyJieqiMove(initialBoard, from, to).newBoard
   const record: MoveRecord = {
     move,
@@ -41,7 +50,11 @@ test('compact Jieqi state restores hidden layout and per-move snapshots by repla
 
 test('compact state keeps annotations without persisting duplicate history records', () => {
   const initialBoard = createJieqiInitialBoard(() => 0)
-  const move: Move = { from: { row: 6, col: 0 }, to: { row: 5, col: 0 }, piece: { ...initialBoard[6][0]! } }
+  const move: Move = {
+    from: { row: 6, col: 0 },
+    to: { row: 5, col: 0 },
+    piece: { ...initialBoard[6][0]! },
+  }
   const moved = applyJieqiMove(initialBoard, move.from, move.to).newBoard
   const record: MoveRecord = {
     move,

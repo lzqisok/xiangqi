@@ -31,7 +31,10 @@ function pointToCanvas(row: number, col: number) {
 
 export function Board() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const [hoverForbidden, setHoverForbidden] = useState<{row: number, col: number} | null>(null)
+  const [hoverForbidden, setHoverForbidden] = useState<{
+    row: number
+    col: number
+  } | null>(null)
   const hoverTimeoutRef = useRef<number | null>(null)
 
   const board = useGameStore((s) => s.board)
@@ -94,7 +97,10 @@ export function Board() {
 
     if (winningLine.length > 1) {
       const start = pointToCanvas(winningLine[0].row, winningLine[0].col)
-      const end = pointToCanvas(winningLine[winningLine.length - 1].row, winningLine[winningLine.length - 1].col)
+      const end = pointToCanvas(
+        winningLine[winningLine.length - 1].row,
+        winningLine[winningLine.length - 1].col,
+      )
       ctx.strokeStyle = '#c92020'
       ctx.lineWidth = 4
       ctx.beginPath()

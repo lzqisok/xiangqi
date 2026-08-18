@@ -8,7 +8,13 @@ interface VariationPanelProps {
   onSetMain: (nodeId: string) => void
 }
 
-export default function VariationPanel({ children, mainChildId, branchCount, onSelect, onSetMain }: VariationPanelProps) {
+export default function VariationPanel({
+  children,
+  mainChildId,
+  branchCount,
+  onSelect,
+  onSetMain,
+}: VariationPanelProps) {
   return (
     <section className="variation-panel">
       <div className="variation-header">
@@ -21,7 +27,7 @@ export default function VariationPanel({ children, mainChildId, branchCount, onS
       {branchCount > 0 && children.length > 0 ? (
         <div className="variation-options">
           <span className="variation-help">当前局面的后续走法</span>
-          {children.map(node => {
+          {children.map((node) => {
             const isMain = node.id === mainChildId
             return (
               <div className={`variation-option ${isMain ? 'main' : ''}`} key={node.id}>
@@ -30,7 +36,9 @@ export default function VariationPanel({ children, mainChildId, branchCount, onS
                   <span>{isMain ? '主线' : '支线'}</span>
                 </button>
                 {!isMain && (
-                  <button className="variation-promote" onClick={() => onSetMain(node.id)}>设为主线</button>
+                  <button className="variation-promote" onClick={() => onSetMain(node.id)}>
+                    设为主线
+                  </button>
                 )}
               </div>
             )

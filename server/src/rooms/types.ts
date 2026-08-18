@@ -3,7 +3,19 @@ export type RoomColor = 'red' | 'black'
 export type RoomPhase = 'waiting' | 'playing' | 'finished'
 export type RoomRole = 'owner' | RoomColor | 'spectator'
 export type RoomStatus = 'playing' | 'red-wins' | 'black-wins' | 'draw'
-export type RoomStatusReason = 'checkmate' | 'stalemate' | 'resignation' | 'agreement' | 'repetition' | 'natural-limit' | 'move-limit' | 'disconnect' | 'abandoned' | 'five' | 'forbidden' | 'full-board'
+export type RoomStatusReason =
+  | 'checkmate'
+  | 'stalemate'
+  | 'resignation'
+  | 'agreement'
+  | 'repetition'
+  | 'natural-limit'
+  | 'move-limit'
+  | 'disconnect'
+  | 'abandoned'
+  | 'five'
+  | 'forbidden'
+  | 'full-board'
 
 export type RoomChatMessage = {
   id: string
@@ -26,7 +38,12 @@ export type StoredRoomChat = {
   roomSensitiveWords: string[]
 }
 
-export type RoomChatSettings = { everyoneMuted: boolean; muted: boolean; mutedAuthorIds?: string[]; roomSensitiveWords?: string[] }
+export type RoomChatSettings = {
+  everyoneMuted: boolean
+  muted: boolean
+  mutedAuthorIds?: string[]
+  roomSensitiveWords?: string[]
+}
 
 export type RoomPiece = {
   type: 'k' | 'a' | 'b' | 'n' | 'r' | 'c' | 'p'
@@ -94,7 +111,12 @@ export type RoomSummary = {
   updatedAt: number
 }
 
-export type PublicCapturedPiece = { color: RoomColor; type: RoomPiece['type'] | null; hidden: boolean; capturedBy: RoomColor }
+export type PublicCapturedPiece = {
+  color: RoomColor
+  type: RoomPiece['type'] | null
+  hidden: boolean
+  capturedBy: RoomColor
+}
 
 export type RoomSnapshot = {
   id: string
@@ -106,10 +128,21 @@ export type RoomSnapshot = {
   role: RoomRole
   isOwner: boolean
   inviteAvailable: boolean
-  seats: Partial<Record<RoomColor, { nickname: string; ready: boolean; online: boolean; hintsRemaining: number }>>
+  seats: Partial<
+    Record<RoomColor, { nickname: string; ready: boolean; online: boolean; hintsRemaining: number }>
+  >
   board: RoomBoard | GomokuRoomBoard
   turn: RoomColor
-  moves: Array<{ uci: string; color: RoomColor; row?: number; col?: number; notation?: string; revealed?: RoomPiece['type']; captured?: RoomPiece['type'] | null; capturedHidden?: boolean }>
+  moves: Array<{
+    uci: string
+    color: RoomColor
+    row?: number
+    col?: number
+    notation?: string
+    revealed?: RoomPiece['type']
+    captured?: RoomPiece['type'] | null
+    capturedHidden?: boolean
+  }>
   captured: PublicCapturedPiece[]
   status: RoomStatus
   statusReason?: RoomStatusReason

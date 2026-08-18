@@ -27,7 +27,13 @@ test('compact room moves still detect threefold repetition by replaying position
   const moves: ReturnType<typeof executeRoomMove>['move'][] = []
   let result: ReturnType<typeof executeRoomMove> | undefined
   for (const uci of line) {
-    result = executeRoomMove('xiangqi', undefined, moves, uci, moves.length % 2 === 0 ? 'red' : 'black')
+    result = executeRoomMove(
+      'xiangqi',
+      undefined,
+      moves,
+      uci,
+      moves.length % 2 === 0 ? 'red' : 'black',
+    )
     moves.push(result.move)
   }
   assert.equal(result?.detail.status, 'draw')

@@ -52,7 +52,14 @@ function cellAt(board: Board, row: number, col: number): number {
   return board[row * BOARD_SIZE + col]
 }
 
-function countConsecutive(board: Board, row: number, col: number, player: Player, dr: number, dc: number): number {
+function countConsecutive(
+  board: Board,
+  row: number,
+  col: number,
+  player: Player,
+  dr: number,
+  dc: number,
+): number {
   let count = 1
   let r = row + dr
   let c = col + dc
@@ -71,7 +78,14 @@ function countConsecutive(board: Board, row: number, col: number, player: Player
   return count
 }
 
-function lineToChars(board: Board, row: number, col: number, dr: number, dc: number, radius = 5): { chars: string[]; center: number } {
+function lineToChars(
+  board: Board,
+  row: number,
+  col: number,
+  dr: number,
+  dc: number,
+  radius = 5,
+): { chars: string[]; center: number } {
   const chars: string[] = []
   let center = 0
   for (let i = -radius; i <= radius; i += 1) {
@@ -90,10 +104,31 @@ function lineToChars(board: Board, row: number, col: number, dr: number, dc: num
 function scoreFeaturesByPhase(feature: FeatureCount, phase: Phase): number {
   const phaseMul =
     phase === 'opening'
-      ? { openFour: 0.95, blockedFour: 0.95, openThree: 1.15, brokenThree: 1.1, openTwo: 1.2, blockedTwo: 1.1 }
+      ? {
+          openFour: 0.95,
+          blockedFour: 0.95,
+          openThree: 1.15,
+          brokenThree: 1.1,
+          openTwo: 1.2,
+          blockedTwo: 1.1,
+        }
       : phase === 'endgame'
-      ? { openFour: 1.12, blockedFour: 1.12, openThree: 0.95, brokenThree: 0.92, openTwo: 0.85, blockedTwo: 0.85 }
-      : { openFour: 1, blockedFour: 1, openThree: 1, brokenThree: 1, openTwo: 1, blockedTwo: 1 }
+        ? {
+            openFour: 1.12,
+            blockedFour: 1.12,
+            openThree: 0.95,
+            brokenThree: 0.92,
+            openTwo: 0.85,
+            blockedTwo: 0.85,
+          }
+        : {
+            openFour: 1,
+            blockedFour: 1,
+            openThree: 1,
+            brokenThree: 1,
+            openTwo: 1,
+            blockedTwo: 1,
+          }
 
   let score = 0
   score += feature.five * FEATURE_WEIGHT.five
@@ -110,13 +145,23 @@ function scoreFeaturesByPhase(feature: FeatureCount, phase: Phase): number {
 }
 
 function emptyFeature(): FeatureCount {
-  return { five: 0, openFour: 0, blockedFour: 0, openThree: 0, brokenThree: 0, openTwo: 0, blockedTwo: 0 }
+  return {
+    five: 0,
+    openFour: 0,
+    blockedFour: 0,
+    openThree: 0,
+    brokenThree: 0,
+    openTwo: 0,
+    blockedTwo: 0,
+  }
 }
 
 function scanLineGaps(
   board: Board,
-  r0: number, c0: number,
-  dr: number, dc: number,
+  r0: number,
+  c0: number,
+  dr: number,
+  dc: number,
   len: number,
   player: Player,
   out: FeatureCount,
@@ -144,8 +189,18 @@ function scanLineGaps(
 
   for (let i = 0; i <= n - 6; i += 1) {
     if (
-      (a[i] === 0 && a[i + 1] === 1 && a[i + 2] === 0 && a[i + 3] === 1 && a[i + 4] === 1 && a[i + 5] === 0) ||
-      (a[i] === 0 && a[i + 1] === 1 && a[i + 2] === 1 && a[i + 3] === 0 && a[i + 4] === 1 && a[i + 5] === 0)
+      (a[i] === 0 &&
+        a[i + 1] === 1 &&
+        a[i + 2] === 0 &&
+        a[i + 3] === 1 &&
+        a[i + 4] === 1 &&
+        a[i + 5] === 0) ||
+      (a[i] === 0 &&
+        a[i + 1] === 1 &&
+        a[i + 2] === 1 &&
+        a[i + 3] === 0 &&
+        a[i + 4] === 1 &&
+        a[i + 5] === 0)
     ) {
       out.openThree += 1
     }
@@ -201,7 +256,7 @@ function collectRunFeatures(board: Board, player: Player): FeatureCount {
         } else if (len === 3) {
           if (open === 2) out.openThree += 1
           else if (open === 1) out.brokenThree += 1
-        }         else if (len === 2) {
+        } else if (len === 2) {
           if (open === 2) out.openTwo += 1
           else if (open === 1) out.blockedTwo += 1
         }
@@ -260,7 +315,12 @@ function countOpenThreeAtMove(board: Board, row: number, col: number, player: Pl
   return total
 }
 
-export function evaluateMoveThreat(board: Board, row: number, col: number, player: Player): MoveThreat {
+export function evaluateMoveThreat(
+  board: Board,
+  row: number,
+  col: number,
+  player: Player,
+): MoveThreat {
   const idx = row * BOARD_SIZE + col
   const original = board[idx]
   board[idx] = player
@@ -297,19 +357,32 @@ export function evaluateMoveThreat(board: Board, row: number, col: number, playe
 
     if (len < 4) {
       for (let off = -4; off <= 0; off += 1) {
-        let sc = 0, gc = 0, ig = false, ok = true
+        let sc = 0,
+          gc = 0,
+          ig = false,
+          ok = true
         for (let j = 0; j < 5; j += 1) {
           const pr = row + dr * (off + j)
           const pc = col + dc * (off + j)
-          if (!inBounds(pr, pc)) { ok = false; break }
+          if (!inBounds(pr, pc)) {
+            ok = false
+            break
+          }
           const v = cellAt(board, pr, pc)
           if (v === player) sc += 1
-          else if (v === EMPTY) { gc += 1; if (j > 0 && j < 4) ig = true }
-          else { ok = false; break }
+          else if (v === EMPTY) {
+            gc += 1
+            if (j > 0 && j < 4) ig = true
+          } else {
+            ok = false
+            break
+          }
         }
         if (!ok || sc !== 4 || gc !== 1 || !ig) continue
-        const lr = row + dr * (off - 1), lc = col + dc * (off - 1)
-        const rr = row + dr * (off + 5), rc = col + dc * (off + 5)
+        const lr = row + dr * (off - 1),
+          lc = col + dc * (off - 1)
+        const rr = row + dr * (off + 5),
+          rc = col + dc * (off + 5)
         if (inBounds(lr, lc) && cellAt(board, lr, lc) === player) continue
         if (inBounds(rr, rc) && cellAt(board, rr, rc) === player) continue
         blockedFour += 1
@@ -320,7 +393,8 @@ export function evaluateMoveThreat(board: Board, row: number, col: number, playe
 
   const openThree = countOpenThreeAtMove(board, row, col, player)
   let level: ThreatLevel = 'none'
-  if (DIRECTIONS.some(([dr, dc]) => countConsecutive(board, row, col, player, dr, dc) >= 5)) level = 'five'
+  if (DIRECTIONS.some(([dr, dc]) => countConsecutive(board, row, col, player, dr, dc) >= 5))
+    level = 'five'
   else if (openFour > 0) level = 'open-four'
   else if (blockedFour > 0) level = 'blocked-four'
   else if (openThree > 0) level = 'open-three'
@@ -339,7 +413,12 @@ export function evaluateBoard(board: Board, perspective: Player): number {
   return selfScore - oppScore * OPPONENT_WEIGHT
 }
 
-function getAffectedScoreForPlayer(board: Board, _row: number, _col: number, player: Player): number {
+function getAffectedScoreForPlayer(
+  board: Board,
+  _row: number,
+  _col: number,
+  player: Player,
+): number {
   const phase = phaseByStones(countStones(board))
   return scoreFeaturesByPhase(collectRunFeatures(board, player), phase)
 }
@@ -390,7 +469,12 @@ export function evaluateMove(board: Board, row: number, col: number, player: Pla
   return meAttack + oppAttack * 1.15 + threatBonus
 }
 
-export function isFourCreatingMove(board: Board, row: number, col: number, player: Player): boolean {
+export function isFourCreatingMove(
+  board: Board,
+  row: number,
+  col: number,
+  player: Player,
+): boolean {
   const threat = evaluateMoveThreat(board, row, col, player)
   return threat.level === 'open-four' || threat.level === 'blocked-four' || threat.level === 'five'
 }

@@ -48,7 +48,9 @@ export function registerRapfiWebSocketServer(
   wss.on('connection', (ws, request) => {
     if (options.lanMode && !originAllowed(request)) return ws.close(1008, 'Origin not allowed')
     ;(ws as RapfiWebSocket).isAlive = true
-    ws.on('pong', () => { (ws as RapfiWebSocket).isAlive = true })
+    ws.on('pong', () => {
+      ;(ws as RapfiWebSocket).isAlive = true
+    })
 
     const engine = new RapfiEngine()
     options.liveEngines.add(engine)
@@ -65,7 +67,7 @@ export function registerRapfiWebSocketServer(
       return available
     }
 
-    ws.on('message', async data => {
+    ws.on('message', async (data) => {
       const parsed = parseRapfiClientMessage(data.toString())
       if (!parsed.ok) {
         send(ws, { type: 'error', requestId: parsed.requestId, message: parsed.error })
@@ -91,8 +93,12 @@ export function registerRapfiWebSocketServer(
       }
       const startedAt = Date.now()
       try {
-        if (!engine.available && !await initialize()) {
-          send(ws, { type: 'error', requestId: request.requestId, message: 'Rapfi engine is unavailable' })
+        if (!engine.available && !(await initialize())) {
+          send(ws, {
+            type: 'error',
+            requestId: request.requestId,
+            message: 'Rapfi engine is unavailable',
+          })
           return
         }
         const move = await engine.getBestMove(request)

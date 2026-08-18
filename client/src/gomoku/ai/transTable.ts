@@ -66,7 +66,12 @@ export class GomokuTransTable {
     return { hi, lo }
   }
 
-  applyMoveHash(hash: { hi: number; lo: number }, row: number, col: number, player: Player): { hi: number; lo: number } {
+  applyMoveHash(
+    hash: { hi: number; lo: number },
+    row: number,
+    col: number,
+    player: Player,
+  ): { hi: number; lo: number } {
     const idx = row * 15 + col
     const offset = (player - 1) * CELLS + idx
     return {
@@ -90,11 +95,24 @@ export class GomokuTransTable {
     return entry
   }
 
-  set(key: { hi: number; lo: number }, depth: number, score: number, flag: TTFlag, bestMove: Position | null): void {
+  set(
+    key: { hi: number; lo: number },
+    depth: number,
+    score: number,
+    flag: TTFlag,
+    bestMove: Position | null,
+  ): void {
     const idx = key.lo & TABLE_MASK
     const prev = this.table[idx]
     if (!prev || depth >= prev.depth) {
-      this.table[idx] = { keyHi: key.hi, keyLo: key.lo, depth, score, flag, bestMove }
+      this.table[idx] = {
+        keyHi: key.hi,
+        keyLo: key.lo,
+        depth,
+        score,
+        flag,
+        bestMove,
+      }
     }
   }
 }

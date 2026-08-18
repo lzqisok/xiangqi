@@ -11,8 +11,18 @@ type PublicBoard = (PublicPiece | null)[][]
 const ROWS = 10
 const COLS = 9
 const IDENTITY_TYPES: Record<string, PieceType> = {
-  R: 'r', A: 'a', C: 'c', P: 'p', N: 'n', B: 'b',
-  r: 'r', a: 'a', c: 'c', p: 'p', n: 'n', b: 'b',
+  R: 'r',
+  A: 'a',
+  C: 'c',
+  P: 'p',
+  N: 'n',
+  B: 'b',
+  r: 'r',
+  a: 'a',
+  c: 'c',
+  p: 'p',
+  n: 'n',
+  b: 'b',
 }
 
 function failure(message: string) {
@@ -95,37 +105,68 @@ function pseudoMoves(board: PublicBoard, from: Position): Position[] {
 
   switch (piece.type) {
     case 'k':
-      for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+      for (const [dr, dc] of [
+        [0, 1],
+        [0, -1],
+        [1, 0],
+        [-1, 0],
+      ]) {
         const row = from.row + dr
         const col = from.col + dc
         if (inPalace(row, col, piece.color)) add(row, col)
       }
       break
     case 'a':
-      for (const [dr, dc] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      for (const [dr, dc] of [
+        [1, 1],
+        [1, -1],
+        [-1, 1],
+        [-1, -1],
+      ]) {
         const row = from.row + dr
         const col = from.col + dc
         if (!piece.hidden || inPalace(row, col, piece.color)) add(row, col)
       }
       break
     case 'b':
-      for (const [dr, dc] of [[2, 2], [2, -2], [-2, 2], [-2, -2]]) {
+      for (const [dr, dc] of [
+        [2, 2],
+        [2, -2],
+        [-2, 2],
+        [-2, -2],
+      ]) {
         const row = from.row + dr
         const col = from.col + dc
         const staysHome = isRed ? row >= 5 : row <= 4
-        if ((!piece.hidden || staysHome) && inBounds(row, col) && !board[from.row + dr / 2][from.col + dc / 2]) add(row, col)
+        if (
+          (!piece.hidden || staysHome) &&
+          inBounds(row, col) &&
+          !board[from.row + dr / 2][from.col + dc / 2]
+        )
+          add(row, col)
       }
       break
     case 'n':
       for (const [dr, dc, blockDr, blockDc] of [
-        [-2, -1, -1, 0], [-2, 1, -1, 0], [2, -1, 1, 0], [2, 1, 1, 0],
-        [-1, -2, 0, -1], [-1, 2, 0, 1], [1, -2, 0, -1], [1, 2, 0, 1],
+        [-2, -1, -1, 0],
+        [-2, 1, -1, 0],
+        [2, -1, 1, 0],
+        [2, 1, 1, 0],
+        [-1, -2, 0, -1],
+        [-1, 2, 0, 1],
+        [1, -2, 0, -1],
+        [1, 2, 0, 1],
       ]) {
         if (!board[from.row + blockDr]?.[from.col + blockDc]) add(from.row + dr, from.col + dc)
       }
       break
     case 'r':
-      for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+      for (const [dr, dc] of [
+        [0, 1],
+        [0, -1],
+        [1, 0],
+        [-1, 0],
+      ]) {
         let row = from.row + dr
         let col = from.col + dc
         while (inBounds(row, col)) {
@@ -140,7 +181,12 @@ function pseudoMoves(board: PublicBoard, from: Position): Position[] {
       }
       break
     case 'c':
-      for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+      for (const [dr, dc] of [
+        [0, 1],
+        [0, -1],
+        [1, 0],
+        [-1, 0],
+      ]) {
         let row = from.row + dr
         let col = from.col + dc
         let screen = false
@@ -193,12 +239,21 @@ function isInCheck(board: PublicBoard, color: PieceColor): boolean {
       // Covered pieces move by their square role but do not give check until
       // their identity is revealed by moving.
       if (piece?.color !== opponent || piece.hidden) continue
-      if (pseudoMoves(board, { row, col }).some(move => move.row === king.row && move.col === king.col)) return true
+      if (
+        pseudoMoves(board, { row, col }).some(
+          (move) => move.row === king.row && move.col === king.col,
+        )
+      )
+        return true
     }
   }
   const opponentKing = findKing(board, opponent)
   if (!opponentKing || opponentKing.col !== king.col) return false
-  for (let row = Math.min(king.row, opponentKing.row) + 1; row < Math.max(king.row, opponentKing.row); row++) {
+  for (
+    let row = Math.min(king.row, opponentKing.row) + 1;
+    row < Math.max(king.row, opponentKing.row);
+    row++
+  ) {
     if (board[row][king.col]) return false
   }
   return true
@@ -217,14 +272,16 @@ function consumeIdentity(reserves: Record<string, number>, identity: string): bo
   return true
 }
 
-export function validateJieqiMoveSequence(fen: string, moves: string[]): { ok: boolean; errors: string[] } {
+export function validateJieqiMoveSequence(
+  fen: string,
+  moves: string[],
+): { ok: boolean; errors: string[] } {
   const parsed = parseJieqiPublicPosition(fen)
   if (!parsed) return failure('Invalid Jieqi FEN')
   const { board, reserves } = parsed
   let turn = parsed.turn
-  const viewer: PieceColor = moves.length % 2 === 0
-    ? parsed.turn
-    : parsed.turn === 'red' ? 'black' : 'red'
+  const viewer: PieceColor =
+    moves.length % 2 === 0 ? parsed.turn : parsed.turn === 'red' ? 'black' : 'red'
 
   for (let index = 0; index < moves.length; index++) {
     const text = moves[index]
@@ -235,8 +292,10 @@ export function validateJieqiMoveSequence(fen: string, moves: string[]): { ok: b
     const suffix = text.slice(4)
     const moving = board[from.row]?.[from.col]
     const captured = board[to.row]?.[to.col]
-    if (!moving || moving.color !== turn || captured?.color === turn || captured?.type === 'k') return invalid()
-    if (!pseudoMoves(board, from).some(move => move.row === to.row && move.col === to.col)) return invalid()
+    if (!moving || moving.color !== turn || captured?.color === turn || captured?.type === 'k')
+      return invalid()
+    if (!pseudoMoves(board, from).some((move) => move.row === to.row && move.col === to.col))
+      return invalid()
 
     let revealedType: PieceType | null = null
     let capturedIdentity = ''
@@ -251,13 +310,19 @@ export function validateJieqiMoveSequence(fen: string, moves: string[]): { ok: b
     }
 
     if (capturedIdentity) {
-      if (!captured?.hidden || identityColor(capturedIdentity) !== captured.color || !consumeIdentity(reserves, capturedIdentity)) return invalid()
+      if (
+        !captured?.hidden ||
+        identityColor(capturedIdentity) !== captured.color ||
+        !consumeIdentity(reserves, capturedIdentity)
+      )
+        return invalid()
     } else if (suffix.length > 0 && !moving.hidden) {
       return invalid()
     }
     if (!captured?.hidden && capturedIdentity) return invalid()
     if (!captured?.hidden && moving.hidden && suffix.length === 2) return invalid()
-    if (captured?.hidden && Boolean(capturedIdentity) !== (moving.color === viewer)) return invalid()
+    if (captured?.hidden && Boolean(capturedIdentity) !== (moving.color === viewer))
+      return invalid()
 
     board[from.row][from.col] = null
     board[to.row][to.col] = moving.hidden
@@ -275,10 +340,18 @@ export function validateJieqiBoardPlacement(fen: string): { ok: boolean; errors:
   if (!parsed) return failure('Invalid Jieqi FEN board')
   const redKing = findKing(parsed.board, 'red')
   const blackKing = findKing(parsed.board, 'black')
-  if (!redKing || !blackKing || !inPalace(redKing.row, redKing.col, 'red') || !inPalace(blackKing.row, blackKing.col, 'black')) {
+  if (
+    !redKing ||
+    !blackKing ||
+    !inPalace(redKing.row, redKing.col, 'red') ||
+    !inPalace(blackKing.row, blackKing.col, 'black')
+  ) {
     return failure('Jieqi kings must stay in their palaces')
   }
-  if (isInCheck(parsed.board, parsed.turn) && isInCheck(parsed.board, parsed.turn === 'red' ? 'black' : 'red')) {
+  if (
+    isInCheck(parsed.board, parsed.turn) &&
+    isInCheck(parsed.board, parsed.turn === 'red' ? 'black' : 'red')
+  ) {
     return failure('Invalid Jieqi king position')
   }
   return { ok: true, errors: [] }

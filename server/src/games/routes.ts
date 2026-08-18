@@ -57,7 +57,10 @@ export function createGameRouter(repository: JsonGameRepository, leases: GameLea
 
   router.get('/export', (req, res) => {
     try {
-      const ids = typeof req.query.ids === 'string' && req.query.ids.trim() ? req.query.ids.split(',') : undefined
+      const ids =
+        typeof req.query.ids === 'string' && req.query.ids.trim()
+          ? req.query.ids.split(',')
+          : undefined
       const payload = repository.export(ids)
       res.setHeader('Content-Disposition', 'attachment; filename="xiangqi-games.json"')
       res.json(payload)
@@ -89,8 +92,13 @@ export function createGameRouter(repository: JsonGameRepository, leases: GameLea
         res.status(423).json({ error: '当前标签页没有对局编辑权' })
         return
       }
-      if (!Number.isInteger(req.body?.expectedRevision)) throw new InvalidGameDataError('Invalid expectedRevision')
-      const game = await repository.updateState(req.params.id, req.body.expectedRevision, req.body.state)
+      if (!Number.isInteger(req.body?.expectedRevision))
+        throw new InvalidGameDataError('Invalid expectedRevision')
+      const game = await repository.updateState(
+        req.params.id,
+        req.body.expectedRevision,
+        req.body.state,
+      )
       res.json({ game })
     } catch (error) {
       handleError(error, res)
@@ -103,7 +111,8 @@ export function createGameRouter(repository: JsonGameRepository, leases: GameLea
         res.status(423).json({ error: '对局正在其他标签页编辑' })
         return
       }
-      if (!Number.isInteger(req.body?.expectedRevision) || typeof req.body?.name !== 'string') throw new InvalidGameDataError('Invalid metadata update')
+      if (!Number.isInteger(req.body?.expectedRevision) || typeof req.body?.name !== 'string')
+        throw new InvalidGameDataError('Invalid metadata update')
       const game = await repository.rename(req.params.id, req.body.expectedRevision, req.body.name)
       res.json({ game })
     } catch (error) {

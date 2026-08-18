@@ -1,10 +1,7 @@
 import { useSyncExternalStore } from 'react'
 
 type StateUpdater<T> = Partial<T> | ((state: T) => Partial<T>)
-type StateCreator<T> = (
-  set: (update: StateUpdater<T>) => void,
-  get: () => T,
-) => T
+type StateCreator<T> = (set: (update: StateUpdater<T>) => void, get: () => T) => T
 
 /**
  * Tiny selector store for the self-contained Gomoku module.
@@ -18,7 +15,7 @@ export function create<T>(initializer: StateCreator<T>) {
   const set = (update: StateUpdater<T>) => {
     const partial = typeof update === 'function' ? update(state) : update
     state = { ...state, ...partial }
-    listeners.forEach(listener => listener())
+    listeners.forEach((listener) => listener())
   }
   const subscribe = (listener: () => void) => {
     listeners.add(listener)

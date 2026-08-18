@@ -17,7 +17,11 @@ export function getOpeningMove(board: Board): Position | null {
   return getOpeningMoveForMode(board, BLACK, false)
 }
 
-function getOpeningMoveForMode(board: Board, currentPlayer: Player, forbiddenEnabled: boolean): Position | null {
+function getOpeningMoveForMode(
+  board: Board,
+  currentPlayer: Player,
+  forbiddenEnabled: boolean,
+): Position | null {
   const stones = countStones(board)
   if (stones === 0) return { row: 7, col: 7 }
 
@@ -42,7 +46,8 @@ function getOpeningMoveForMode(board: Board, currentPlayer: Player, forbiddenEna
       { row: 6, col: 6 },
       { row: 8, col: 8 },
     ]
-    const preferred = forbiddenEnabled && currentPlayer === WHITE ? whiteReplyRenju : whiteReplyFreestyle
+    const preferred =
+      forbiddenEnabled && currentPlayer === WHITE ? whiteReplyRenju : whiteReplyFreestyle
     for (const p of preferred) {
       if (!occupied(board, p.row, p.col)) return p
     }
@@ -69,7 +74,8 @@ function getOpeningMoveForMode(board: Board, currentPlayer: Player, forbiddenEna
       { row: 9, col: 7 },
       { row: 7, col: 9 },
     ]
-    const preferred = forbiddenEnabled && currentPlayer === BLACK ? blackThirdRenju : blackThirdFreestyle
+    const preferred =
+      forbiddenEnabled && currentPlayer === BLACK ? blackThirdRenju : blackThirdFreestyle
     for (const p of preferred) {
       if (!occupied(board, p.row, p.col)) return p
     }
@@ -78,6 +84,10 @@ function getOpeningMoveForMode(board: Board, currentPlayer: Player, forbiddenEna
   return null
 }
 
-export function getOpeningMoveWithConfig(board: Board, currentPlayer: Player, forbiddenEnabled: boolean): Position | null {
+export function getOpeningMoveWithConfig(
+  board: Board,
+  currentPlayer: Player,
+  forbiddenEnabled: boolean,
+): Position | null {
   return getOpeningMoveForMode(board, currentPlayer, forbiddenEnabled)
 }

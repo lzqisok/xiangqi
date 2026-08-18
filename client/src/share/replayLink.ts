@@ -14,18 +14,17 @@ interface ReplayPayload {
 }
 
 export type ReplayLinkParseResult =
-  | { ok: true; study: StudyPosition }
-  | { ok: false; error: string }
+  { ok: true; study: StudyPosition } | { ok: false; error: string }
 
 function encodeBase64Url(value: string): string {
-  return btoa(value)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '')
+  return btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 
 function decodeBase64Url(value: string): string {
-  const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=')
+  const padded = value
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .padEnd(Math.ceil(value.length / 4) * 4, '=')
   return atob(padded)
 }
 
@@ -35,7 +34,7 @@ function isReplayPayload(value: unknown): value is ReplayPayload {
   return (
     typeof item.fen === 'string' &&
     Array.isArray(item.moves) &&
-    item.moves.every(move => typeof move === 'string') &&
+    item.moves.every((move) => typeof move === 'string') &&
     typeof item.currentMoveIndex === 'number' &&
     Number.isInteger(item.currentMoveIndex)
   )
@@ -54,7 +53,7 @@ export function buildMoveRecordsFromUci(initialFen: string, uciMoves: string[]):
     if (!piece) throw new Error(`No piece at ${uci.slice(0, 2)}`)
     if (piece.color !== turn) throw new Error(`Wrong side to move for ${uci}`)
     const legalTargets = getLegalMoves(board, from)
-    if (!legalTargets.some(target => target.row === to.row && target.col === to.col)) {
+    if (!legalTargets.some((target) => target.row === to.row && target.col === to.col)) {
       throw new Error(`Illegal move ${uci}`)
     }
 
@@ -75,18 +74,26 @@ export function buildMoveRecordsFromUci(initialFen: string, uciMoves: string[]):
   })
 }
 
-export function createReplayUrl(baseUrl: string, initialFen: string, records: MoveRecord[], currentMoveIndex: number): string {
+export function createReplayUrl(
+  baseUrl: string,
+  initialFen: string,
+  records: MoveRecord[],
+  currentMoveIndex: number,
+): string {
   const url = new URL(baseUrl)
   const payload: ReplayPayload = {
     fen: initialFen,
-    moves: records.map(record => moveToUci(record.move.from, record.move.to)),
+    moves: records.map((record) => moveToUci(record.move.from, record.move.to)),
     currentMoveIndex: Math.max(-1, Math.min(currentMoveIndex, records.length - 1)),
   }
   url.searchParams.set(PARAM_NAME, encodeBase64Url(JSON.stringify(payload)))
   return url.toString()
 }
 
-export function parseReplayStudyFromSearch(search: string, now = Date.now()): ReplayLinkParseResult | null {
+export function parseReplayStudyFromSearch(
+  search: string,
+  now = Date.now(),
+): ReplayLinkParseResult | null {
   const raw = new URLSearchParams(search).get(PARAM_NAME)
   if (!raw) return null
 

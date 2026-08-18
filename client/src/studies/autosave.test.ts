@@ -27,7 +27,10 @@ test('createStudyContentSignature changes with editable study content', () => {
 })
 
 test('createStudySaveInput preserves study metadata and replaces content', () => {
-  const input = createStudySaveInput(STUDY, { ...CONTENT, currentMoveIndex: 0 })
+  const input = createStudySaveInput(STUDY, {
+    ...CONTENT,
+    currentMoveIndex: 0,
+  })
 
   assert.equal(input.id, 'study-1')
   assert.equal(input.name, '测试研究')

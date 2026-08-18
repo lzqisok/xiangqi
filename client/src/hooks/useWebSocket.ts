@@ -11,8 +11,10 @@ export function useWebSocket(onMessage: (msg: WSMessage) => void) {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>()
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN ||
-        wsRef.current?.readyState === WebSocket.CONNECTING) {
+    if (
+      wsRef.current?.readyState === WebSocket.OPEN ||
+      wsRef.current?.readyState === WebSocket.CONNECTING
+    ) {
       return
     }
 

@@ -10,9 +10,10 @@ function stateWithNodes(count: number): StoredGameState {
   for (let index = 0; index < count; index++) {
     const id = `node-${index}`
     const child = index + 1 < count ? `node-${index + 1}` : undefined
-    nodes[id] = index === 0
-      ? { p: null, c: child ? [child] : [], x: child }
-      : { p: `node-${index - 1}`, c: child ? [child] : [], x: child, v: { u: 'a0a1' } }
+    nodes[id] =
+      index === 0
+        ? { p: null, c: child ? [child] : [], x: child }
+        : { p: `node-${index - 1}`, c: child ? [child] : [], x: child, v: { u: 'a0a1' } }
   }
   return { f: INITIAL_FEN, t: { r: 'node-0', c: `node-${count - 1}`, n: nodes }, s: 'playing' }
 }
@@ -30,7 +31,12 @@ test('game document requires a canonical UUID-shaped id', () => {
     revision: 0,
     name: '测试对局',
     mode: 'human-vs-human',
-    config: { difficulty: 'medium', playerSide: 'red', aiRedDifficulty: 'medium', aiBlackDifficulty: 'medium' },
+    config: {
+      difficulty: 'medium',
+      playerSide: 'red',
+      aiRedDifficulty: 'medium',
+      aiBlackDifficulty: 'medium',
+    },
     state: stateWithNodes(1),
     createdAt: 1,
     updatedAt: 1,

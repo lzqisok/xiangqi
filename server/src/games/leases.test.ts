@@ -4,7 +4,10 @@ import { WebSocket } from 'ws'
 import { GameLeaseManager } from './leases.js'
 
 function socket(messages: string[]): WebSocket {
-  return { readyState: WebSocket.OPEN, send: (message: string) => messages.push(message) } as unknown as WebSocket
+  return {
+    readyState: WebSocket.OPEN,
+    send: (message: string) => messages.push(message),
+  } as unknown as WebSocket
 }
 
 test('game leases allow one writer and notify it when another tab takes over', () => {

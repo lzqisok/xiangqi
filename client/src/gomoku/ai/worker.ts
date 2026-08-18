@@ -36,7 +36,12 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       id,
       type: 'review-result',
       review: analyzeGameReview(message.payload, (completed, total) => {
-        self.postMessage({ id, type: 'review-progress', completed, total } satisfies WorkerResponse)
+        self.postMessage({
+          id,
+          type: 'review-progress',
+          completed,
+          total,
+        } satisfies WorkerResponse)
       }),
     }
     self.postMessage(response)

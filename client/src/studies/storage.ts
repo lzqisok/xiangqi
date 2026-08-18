@@ -32,7 +32,12 @@ function isValidStudy(value: unknown): value is StudyPosition {
 function isValidVariationTree(value: unknown): value is VariationTree {
   if (!value || typeof value !== 'object') return false
   const tree = value as Record<string, unknown>
-  if (typeof tree.rootId !== 'string' || typeof tree.currentNodeId !== 'string' || !tree.nodes || typeof tree.nodes !== 'object') {
+  if (
+    typeof tree.rootId !== 'string' ||
+    typeof tree.currentNodeId !== 'string' ||
+    !tree.nodes ||
+    typeof tree.nodes !== 'object'
+  ) {
     return false
   }
   const nodes = tree.nodes as Record<string, unknown>
@@ -47,16 +52,18 @@ function isValidVariationTree(value: unknown): value is VariationTree {
       node.id === id &&
       (isRoot
         ? node.parentId === null && node.move === undefined
-        : typeof node.parentId === 'string' && Boolean(nodes[node.parentId]) && isValidMoveRecord(node.move)) &&
+        : typeof node.parentId === 'string' &&
+          Boolean(nodes[node.parentId]) &&
+          isValidMoveRecord(node.move)) &&
       typeof node.fen === 'string' &&
       Array.isArray(node.children) &&
-      node.children.every(childId => typeof childId === 'string' && Boolean(nodes[childId])) &&
-      (node.mainChildId === undefined || (typeof node.mainChildId === 'string' && node.children.includes(node.mainChildId))) &&
-      (node.annotations === undefined || (
-        Array.isArray(node.annotations) &&
-        node.annotations.length <= MAX_NODE_ANNOTATIONS &&
-        node.annotations.every(isValidBoardAnnotation)
-      )) &&
+      node.children.every((childId) => typeof childId === 'string' && Boolean(nodes[childId])) &&
+      (node.mainChildId === undefined ||
+        (typeof node.mainChildId === 'string' && node.children.includes(node.mainChildId))) &&
+      (node.annotations === undefined ||
+        (Array.isArray(node.annotations) &&
+          node.annotations.length <= MAX_NODE_ANNOTATIONS &&
+          node.annotations.every(isValidBoardAnnotation))) &&
       typeof node.createdAt === 'number' &&
       typeof node.updatedAt === 'number'
     )
@@ -84,14 +91,19 @@ function isValidBoardAnnotation(value: unknown): value is BoardAnnotation {
   const annotation = value as Record<string, unknown>
   const from = annotation.from
   const to = annotation.to
-  const validFrom = isPosition(from) && from.row >= 0 && from.row < 10 && from.col >= 0 && from.col < 9
+  const validFrom =
+    isPosition(from) && from.row >= 0 && from.row < 10 && from.col >= 0 && from.col < 9
   const validTo = isPosition(to) && to.row >= 0 && to.row < 10 && to.col >= 0 && to.col < 9
   return (
-    typeof annotation.id === 'string' && annotation.id.length > 0 && annotation.id.length <= 100 &&
+    typeof annotation.id === 'string' &&
+    annotation.id.length > 0 &&
+    annotation.id.length <= 100 &&
     (annotation.color === 'red' || annotation.color === 'green' || annotation.color === 'blue') &&
-    (annotation.type === 'circle' && validFrom && annotation.to === undefined ||
-      annotation.type === 'arrow' && validFrom && validTo &&
-      (from.row !== to.row || from.col !== to.col))
+    ((annotation.type === 'circle' && validFrom && annotation.to === undefined) ||
+      (annotation.type === 'arrow' &&
+        validFrom &&
+        validTo &&
+        (from.row !== to.row || from.col !== to.col)))
   )
 }
 
@@ -134,17 +146,21 @@ export function saveStudyPositions(studies: StudyPosition[]) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(studies.filter(isValidStudy)))
 }
 
-export function saveStudyPosition(study: Omit<StudyPosition, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): StudyPosition[] {
+export function saveStudyPosition(
+  study: Omit<StudyPosition, 'id' | 'createdAt' | 'updatedAt'> & {
+    id?: string
+  },
+): StudyPosition[] {
   const current = loadStudyPositions()
   const now = Date.now()
-  const existing = study.id ? current.find(item => item.id === study.id) : null
+  const existing = study.id ? current.find((item) => item.id === study.id) : null
   const saved: StudyPosition = {
     ...study,
     id: study.id || `study-${now}`,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
   }
-  const next = [saved, ...current.filter(item => item.id !== saved.id)]
+  const next = [saved, ...current.filter((item) => item.id !== saved.id)]
   if (canUseStorage()) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
   }
@@ -157,7 +173,7 @@ export function deleteStudyPosition(id: string): StudyPosition[] {
 
 export function deleteStudyPositions(ids: string[]): StudyPosition[] {
   const selected = new Set(ids)
-  const next = loadStudyPositions().filter(item => !selected.has(item.id))
+  const next = loadStudyPositions().filter((item) => !selected.has(item.id))
   saveStudyPositions(next)
   return next
 }
@@ -167,14 +183,16 @@ export function renameStudyPosition(id: string, name: string): StudyPosition[] {
   const current = loadStudyPositions()
   if (!trimmed) return current
 
-  const next = current.map(study => study.id === id ? { ...study, name: trimmed, updatedAt: Date.now() } : study)
+  const next = current.map((study) =>
+    study.id === id ? { ...study, name: trimmed, updatedAt: Date.now() } : study,
+  )
   saveStudyPositions(next)
   return next
 }
 
 export function duplicateStudyPosition(id: string): StudyPosition[] {
   const current = loadStudyPositions()
-  const source = current.find(study => study.id === id)
+  const source = current.find((study) => study.id === id)
   if (!source) return current
 
   const now = Date.now()
@@ -182,7 +200,7 @@ export function duplicateStudyPosition(id: string): StudyPosition[] {
     ...source,
     id: `study-${now}-${Math.random().toString(36).slice(2)}`,
     name: `${source.name} 副本`,
-    moves: source.moves.map(move => ({
+    moves: source.moves.map((move) => ({
       ...move,
       move: {
         ...move.move,
@@ -192,7 +210,7 @@ export function duplicateStudyPosition(id: string): StudyPosition[] {
         captured: move.move.captured ? { ...move.move.captured } : undefined,
       },
     })),
-    analysisPoints: source.analysisPoints.map(point => ({ ...point })),
+    analysisPoints: source.analysisPoints.map((point) => ({ ...point })),
     variationTree: source.variationTree ? structuredClone(source.variationTree) : undefined,
     createdAt: now,
     updatedAt: now,
@@ -203,18 +221,24 @@ export function duplicateStudyPosition(id: string): StudyPosition[] {
 }
 
 export function exportStudyPositionsJson(): string {
-  return JSON.stringify({
-    version: 3,
-    exportedAt: new Date().toISOString(),
-    studies: loadStudyPositions(),
-  }, null, 2)
+  return JSON.stringify(
+    {
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      studies: loadStudyPositions(),
+    },
+    null,
+    2,
+  )
 }
 
 export function importStudyPositionsJson(raw: string): StudyPosition[] {
   const parsed = JSON.parse(raw) as unknown
   const candidates = Array.isArray(parsed)
     ? parsed
-    : parsed && typeof parsed === 'object' && Array.isArray((parsed as { studies?: unknown }).studies)
+    : parsed &&
+        typeof parsed === 'object' &&
+        Array.isArray((parsed as { studies?: unknown }).studies)
       ? (parsed as { studies: unknown[] }).studies
       : []
 
@@ -226,7 +250,7 @@ export function importStudyPositionsJson(raw: string): StudyPosition[] {
   const current = loadStudyPositions()
   const merged = [
     ...imported,
-    ...current.filter(item => !imported.some(importedItem => importedItem.id === item.id)),
+    ...current.filter((item) => !imported.some((importedItem) => importedItem.id === item.id)),
   ].sort((a, b) => b.updatedAt - a.updatedAt)
   saveStudyPositions(merged)
   return merged

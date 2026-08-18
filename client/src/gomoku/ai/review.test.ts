@@ -18,7 +18,12 @@ test('Gomoku review reports progress for every replayed move', () => {
   )
 
   assert.equal(report.steps.length, moveHistory.length)
-  assert.deepEqual(progress, [[1, 4], [2, 4], [3, 4], [4, 4]])
-  assert.ok(report.steps.every(step => step.suggestions.length <= 3))
+  assert.deepEqual(progress, [
+    [1, 4],
+    [2, 4],
+    [3, 4],
+    [4, 4],
+  ])
+  assert.ok(report.steps.every((step) => step.suggestions.length <= 3))
   assert.deepEqual(moveHistory[0], { row: 7, col: 7, player: BLACK })
 })

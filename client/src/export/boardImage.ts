@@ -36,10 +36,7 @@ export function buildBoardExportMetadata({
 
   return {
     title,
-    lines: [
-      `${MODE_NAMES[gameMode]} · ${turnText}`,
-      `FEN: ${fen}`,
-    ],
+    lines: [`${MODE_NAMES[gameMode]} · ${turnText}`, `FEN: ${fen}`],
     filename,
   }
 }
@@ -89,7 +86,12 @@ export async function createAnnotatedBoardPng(
 }
 
 function sanitizeFilename(value: string): string {
-  return value.trim().replace(/[\\/:*?"<>|]/g, '-').slice(0, 40) || 'board'
+  return (
+    value
+      .trim()
+      .replace(/[\\/:*?"<>|]/g, '-')
+      .slice(0, 40) || 'board'
+  )
 }
 
 function loadImage(dataUrl: string): Promise<HTMLImageElement> {

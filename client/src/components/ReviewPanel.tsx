@@ -23,12 +23,12 @@ export default function ReviewPanel({
   onCancel,
   onJumpToPosition,
 }: ReviewPanelProps) {
-  const issues = reviews.filter(review => DISPLAY_CATEGORIES.has(review.category))
+  const issues = reviews.filter((review) => DISPLAY_CATEGORIES.has(review.category))
   const counts = reviews.reduce<Partial<Record<MoveReviewCategory, number>>>((result, review) => {
     result[review.category] = (result[review.category] || 0) + 1
     return result
   }, {})
-  const percent = progress.total > 0 ? Math.round(progress.completed / progress.total * 100) : 0
+  const percent = progress.total > 0 ? Math.round((progress.completed / progress.total) * 100) : 0
 
   return (
     <section className="review-panel">
@@ -45,7 +45,9 @@ export default function ReviewPanel({
       {thinking && (
         <div className="review-progress" aria-live="polite">
           <span style={{ width: `${percent}%` }} />
-          <small>{progress.completed} / {progress.total} 个局面</small>
+          <small>
+            {progress.completed} / {progress.total} 个局面
+          </small>
         </div>
       )}
 
@@ -61,13 +63,15 @@ export default function ReviewPanel({
             <div className="review-empty">本局未发现明显失误。</div>
           ) : (
             <div className="review-issues">
-              {issues.map(review => (
+              {issues.map((review) => (
                 <button
                   key={review.moveIndex}
                   className={`review-item ${review.category}`}
                   onClick={() => onJumpToPosition(review.moveIndex - 1)}
                 >
-                  <span className="review-move-number">{Math.floor(review.moveIndex / 2) + 1}.{review.mover === 'red' ? '红' : '黑'}</span>
+                  <span className="review-move-number">
+                    {Math.floor(review.moveIndex / 2) + 1}.{review.mover === 'red' ? '红' : '黑'}
+                  </span>
                   <strong>{review.playedNotation}</strong>
                   <span className="review-category">{MOVE_REVIEW_LABELS[review.category]}</span>
                   <small>损失 {review.loss / 100} 子</small>
@@ -82,9 +86,7 @@ export default function ReviewPanel({
       {!thinking && reviews.length === 0 && moveCount > 120 && (
         <div className="review-empty">当前棋谱超过 120 步，请缩短后再复盘。</div>
       )}
-      {moveCount === 0 && (
-        <div className="review-empty">完成走棋后，可在这里生成逐步复盘。</div>
-      )}
+      {moveCount === 0 && <div className="review-empty">完成走棋后，可在这里生成逐步复盘。</div>}
     </section>
   )
 }

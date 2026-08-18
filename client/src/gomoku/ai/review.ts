@@ -2,7 +2,13 @@ import { applyMove, createEmptyBoard, getCell, hasNeighbor } from '../core/board
 import { isForbiddenMove } from '../core/rules'
 import { BLACK, BOARD_SIZE, EMPTY, type Move, type Player } from '../core/types'
 import { evaluateBoard, evaluateMove } from './evaluate'
-import type { ReviewGrade, ReviewPayload, ReviewReport, ReviewStep, ReviewSuggestion } from './types'
+import type {
+  ReviewGrade,
+  ReviewPayload,
+  ReviewReport,
+  ReviewStep,
+  ReviewSuggestion,
+} from './types'
 
 const MAX_REVIEW_CANDIDATES = 12
 const MIN_REVIEW_CANDIDATES = 4
@@ -34,7 +40,13 @@ function candidatePriority(board: Int8Array, row: number, col: number, player: P
   return priority
 }
 
-function isLegalReviewMove(board: Int8Array, row: number, col: number, player: Player, forbiddenEnabled: boolean): boolean {
+function isLegalReviewMove(
+  board: Int8Array,
+  row: number,
+  col: number,
+  player: Player,
+  forbiddenEnabled: boolean,
+): boolean {
   if (getCell(board, row, col) !== EMPTY) return false
   if (!forbiddenEnabled || player !== BLACK) return true
   const next = applyMove(board, { row, col, player })
@@ -48,20 +60,26 @@ function findReviewSuggestions(
   candidateLimit: number,
 ): ReviewSuggestion[] {
   const candidates: Array<{ row: number; col: number; priority: number }> = []
-  const hasStone = board.some(cell => cell !== EMPTY)
+  const hasStone = board.some((cell) => cell !== EMPTY)
   for (let row = 0; row < BOARD_SIZE; row += 1) {
     for (let col = 0; col < BOARD_SIZE; col += 1) {
       if (getCell(board, row, col) !== EMPTY) continue
       if (hasStone && !hasNeighbor(board, row, col, 2)) continue
-      candidates.push({ row, col, priority: candidatePriority(board, row, col, player) })
+      candidates.push({
+        row,
+        col,
+        priority: candidatePriority(board, row, col, player),
+      })
     }
   }
 
   return candidates
     .sort((a, b) => b.priority - a.priority)
     .slice(0, candidateLimit)
-    .filter(candidate => isLegalReviewMove(board, candidate.row, candidate.col, player, forbiddenEnabled))
-    .map(candidate => ({
+    .filter((candidate) =>
+      isLegalReviewMove(board, candidate.row, candidate.col, player, forbiddenEnabled),
+    )
+    .map((candidate) => ({
       row: candidate.row,
       col: candidate.col,
       score: evaluateMove(board, candidate.row, candidate.col, player),
@@ -70,7 +88,10 @@ function findReviewSuggestions(
     .slice(0, 3)
 }
 
-function buildSummary(steps: ReviewStep[]): { keyTurns: number[]; text: string } {
+function buildSummary(steps: ReviewStep[]): {
+  keyTurns: number[]
+  text: string
+} {
   if (steps.length === 0) {
     return { keyTurns: [], text: '暂无可复盘数据。' }
   }
@@ -90,7 +111,10 @@ export function analyzeGameReview(
   const steps: ReviewStep[] = []
   const candidateLimit = Math.max(
     MIN_REVIEW_CANDIDATES,
-    Math.min(MAX_REVIEW_CANDIDATES, Math.floor(REVIEW_CANDIDATE_WORK / Math.max(1, moveHistory.length))),
+    Math.min(
+      MAX_REVIEW_CANDIDATES,
+      Math.floor(REVIEW_CANDIDATE_WORK / Math.max(1, moveHistory.length)),
+    ),
   )
 
   let board = createEmptyBoard()

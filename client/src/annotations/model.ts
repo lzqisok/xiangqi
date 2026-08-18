@@ -14,8 +14,14 @@ export const ANNOTATION_TYPE_LABELS: Record<BoardAnnotationType, string> = {
 }
 
 export function isBoardPosition(position: Position): boolean {
-  return Number.isInteger(position.row) && Number.isInteger(position.col) &&
-    position.row >= 0 && position.row < 10 && position.col >= 0 && position.col < 9
+  return (
+    Number.isInteger(position.row) &&
+    Number.isInteger(position.col) &&
+    position.row >= 0 &&
+    position.row < 10 &&
+    position.col >= 0 &&
+    position.col < 9
+  )
 }
 
 export function createBoardAnnotation(
@@ -27,7 +33,7 @@ export function createBoardAnnotation(
 ): BoardAnnotation | null {
   if (!isBoardPosition(from)) return null
   if (type === 'arrow') {
-    if (!to || !isBoardPosition(to) || from.row === to.row && from.col === to.col) return null
+    if (!to || !isBoardPosition(to) || (from.row === to.row && from.col === to.col)) return null
     return { id, type, color, from: { ...from }, to: { ...to } }
   }
   return { id, type, color, from: { ...from } }

@@ -1,8 +1,24 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
-  Board, Position, Move, MoveRecord, PieceColor,
-  GameMode, Difficulty, PlayerSide, GameStatus, GameStatusReason, WSMessage, PlayerConfig, AnalysisPoint, MoveCandidate, EngineSearchLimit,
-  BoardAnnotation, EngineRuntimeOptions, ReviewPosition, VariationTree,
+  Board,
+  Position,
+  Move,
+  MoveRecord,
+  PieceColor,
+  GameMode,
+  Difficulty,
+  PlayerSide,
+  GameStatus,
+  GameStatusReason,
+  WSMessage,
+  PlayerConfig,
+  AnalysisPoint,
+  MoveCandidate,
+  EngineSearchLimit,
+  BoardAnnotation,
+  EngineRuntimeOptions,
+  ReviewPosition,
+  VariationTree,
 } from '../types'
 import { parseFen, boardToFen, applyMove, INITIAL_FEN, findKing } from '../engine/board'
 import { getLegalMoves, isInCheck, getGameStatusDetail } from '../engine/rules'
@@ -19,7 +35,15 @@ import {
   formatJieqiNotation,
 } from '../engine/jieqi'
 import { useWebSocket } from './useWebSocket'
-import { canNavigateHistory, getManualDrawStatus, getRedoTargetIndex, getResignationStatus, getUndoTargetIndex, sendStopForActiveEngineRequests, shouldAutoRequestAiMove } from './gameFlow'
+import {
+  canNavigateHistory,
+  getManualDrawStatus,
+  getRedoTargetIndex,
+  getResignationStatus,
+  getUndoTargetIndex,
+  sendStopForActiveEngineRequests,
+  shouldAutoRequestAiMove,
+} from './gameFlow'
 import { playMoveSound, playCaptureSound, playCheckSound, playGameOverSound } from '../audio'
 import {
   addVariationMove,
@@ -90,12 +114,17 @@ function getDefaultPlayers(
 }
 
 function uciListFromRecords(records: MoveRecord[], viewer?: PieceColor): string[] {
-  if (viewer && records.some(record => record.move.piece.hidden || record.move.captured?.hidden)) {
+  if (
+    viewer &&
+    records.some((record) => record.move.piece.hidden || record.move.captured?.hidden)
+  ) {
     return encodeJieqiHistory(records, viewer)
   }
-  return records.map(record => record.move.piece.hidden || record.move.captured?.hidden
-    ? encodeJieqiMove(record.move, false)
-    : moveToUci(record.move.from, record.move.to))
+  return records.map((record) =>
+    record.move.piece.hidden || record.move.captured?.hidden
+      ? encodeJieqiMove(record.move, false)
+      : moveToUci(record.move.from, record.move.to),
+  )
 }
 
 type PendingEngineRequest = {
@@ -124,7 +153,8 @@ function getResolvedGameStatus(
 ) {
   const terminal = getGameStatusDetail(board, turn, variant)
   if (terminal.status !== 'playing') return terminal
-  const appliesAutomaticDraw = gameMode === 'human-vs-ai' || gameMode === 'human-vs-human' || gameMode === 'ai-vs-ai'
+  const appliesAutomaticDraw =
+    gameMode === 'human-vs-ai' || gameMode === 'human-vs-human' || gameMode === 'ai-vs-ai'
   if (!appliesAutomaticDraw || variant === 'jieqi') return terminal
   const reason = getAutomaticDrawReason(initialFen, records)
   return reason ? { status: 'draw' as const, reason } : terminal
@@ -154,11 +184,13 @@ export function useGame({
   blackPlayerConfig,
 }: UseGameOptions) {
   const isJieqi = gameMode === 'jieqi'
-  const engineVariant = isJieqi ? 'jieqi' as const : 'xiangqi' as const
+  const engineVariant = isJieqi ? ('jieqi' as const) : ('xiangqi' as const)
   const resolvedInitialFen = isJieqi ? JIEQI_INITIAL_FEN : initialFen || INITIAL_FEN
   const [engineBaseFen, setEngineBaseFen] = useState(resolvedInitialFen)
   const [board, setBoard] = useState<Board>(() => parseInitialGameState(resolvedInitialFen).board)
-  const [currentTurn, setCurrentTurn] = useState<PieceColor>(() => parseInitialGameState(resolvedInitialFen).turn)
+  const [currentTurn, setCurrentTurn] = useState<PieceColor>(
+    () => parseInitialGameState(resolvedInitialFen).turn,
+  )
   const [selectedPos, setSelectedPos] = useState<Position | null>(null)
   const [legalMoves, setLegalMoves] = useState<Position[]>([])
   const [moveHistory, setMoveHistory] = useState<MoveRecord[]>([])
@@ -177,16 +209,23 @@ export function useGame({
   const [hintThinking, setHintThinking] = useState(false)
   const [candidateThinking, setCandidateThinking] = useState(false)
   const [reviewThinking, setReviewThinking] = useState(false)
-  const [reviewProgress, setReviewProgress] = useState({ completed: 0, total: 0 })
+  const [reviewProgress, setReviewProgress] = useState({
+    completed: 0,
+    total: 0,
+  })
   const [reviewPositions, setReviewPositions] = useState<ReviewPosition[]>([])
   const [reviewedMovesKey, setReviewedMovesKey] = useState('')
-  const [variationTree, setVariationTree] = useState<VariationTree>(() => createVariationTree(resolvedInitialFen, [], -1))
+  const [variationTree, setVariationTree] = useState<VariationTree>(() =>
+    createVariationTree(resolvedInitialFen, [], -1),
+  )
   const [activeVariationNodeIds, setActiveVariationNodeIds] = useState<string[]>([])
   const [hintMove, setHintMove] = useState<Move | null>(null)
   const [engineAvailable, setEngineAvailable] = useState<boolean | null>(null)
   const [engineStatusMessage, setEngineStatusMessage] = useState('')
   const [initializedMode, setInitializedMode] = useState<GameMode | null>(null)
-  const [leaseStatus, setLeaseStatus] = useState<'none' | 'requesting' | 'granted' | 'readonly'>(gameId ? 'requesting' : 'none')
+  const [leaseStatus, setLeaseStatus] = useState<'none' | 'requesting' | 'granted' | 'readonly'>(
+    gameId ? 'requesting' : 'none',
+  )
   const [leaseToken, setLeaseToken] = useState<string | null>(null)
   const jieqiInitialBoardRef = useRef<Board | null>(null)
   const leaseRequestRef = useRef<string | null>(null)
@@ -233,224 +272,259 @@ export function useGame({
     }
   }, [])
 
-  const translatePv = useCallback((pv: string[], currentBoard: Board): string[] => {
-    let replayBoard = currentBoard
-    const translated: string[] = []
+  const translatePv = useCallback(
+    (pv: string[], currentBoard: Board): string[] => {
+      let replayBoard = currentBoard
+      const translated: string[] = []
 
-    for (const uci of pv) {
-      try {
-        const move = buildMoveFromUci(uci, replayBoard)
-        if (!move) {
+      for (const uci of pv) {
+        try {
+          const move = buildMoveFromUci(uci, replayBoard)
+          if (!move) {
+            translated.push(uci)
+            break
+          }
+          translated.push(moveToNotation(replayBoard, move))
+          replayBoard = applyMove(replayBoard, move.from, move.to).newBoard
+        } catch {
           translated.push(uci)
           break
         }
-        translated.push(moveToNotation(replayBoard, move))
-        replayBoard = applyMove(replayBoard, move.from, move.to).newBoard
-      } catch {
-        translated.push(uci)
-        break
       }
-    }
 
-    return translated
-  }, [buildMoveFromUci])
+      return translated
+    },
+    [buildMoveFromUci],
+  )
 
   const commitVariationMove = useCallback((record: MoveRecord, parentMoveIndex: number) => {
     const currentTree = variationTreeRef.current
-    const parentId = parentMoveIndex >= 0
-      ? activeVariationNodeIdsRef.current[parentMoveIndex]
-      : currentTree.rootId
+    const parentId =
+      parentMoveIndex >= 0 ? activeVariationNodeIdsRef.current[parentMoveIndex] : currentTree.rootId
     const added = addVariationMove(currentTree, parentId || currentTree.rootId, record)
     const line = getVariationLine(added.tree, added.nodeId)
     variationTreeRef.current = added.tree
     activeVariationNodeIdsRef.current = line.nodeIds
     setVariationTree(added.tree)
     setActiveVariationNodeIds(line.nodeIds)
-    setAnalysisPoints(prev => prev.filter(point => point.moveIndex <= parentMoveIndex))
+    setAnalysisPoints((prev) => prev.filter((point) => point.moveIndex <= parentMoveIndex))
     return line
   }, [])
 
-  const handleWsMessage = useCallback((msg: WSMessage) => {
-    if (msg.type === 'game-lease') {
-      if (msg.gameId !== gameId || (msg.requestId && msg.requestId !== leaseRequestRef.current)) return
-      leaseRequestRef.current = null
-      setLeaseStatus(msg.status)
-      setLeaseToken(msg.leaseToken || null)
-    } else if (msg.type === 'game-lease-lost') {
-      if (msg.gameId !== gameId) return
-      setLeaseStatus('readonly')
-      setLeaseToken(null)
-      pendingRequestRef.current = null
-      setAiThinking(false)
-    } else if (msg.type === 'bestmove') {
-      if (!canEditRef.current && pendingRequestRef.current?.kind === 'move') return
-      const pending = pendingRequestRef.current
-      const requestKind = msg.requestKind || pending?.kind
-      if (
-        !pending ||
-        (msg.requestId && msg.requestId !== pending.id) ||
-        (requestKind && requestKind !== pending.kind) ||
-        pending.movesKey !== uciMovesRef.current.join(' ')
-      ) {
-        return
-      }
-
-      setEngineAvailable(true)
-
-      const currentBoard = boardRef.current
-      const move = buildMoveFromUci(msg.move, currentBoard)
-      if (!move) {
+  const handleWsMessage = useCallback(
+    (msg: WSMessage) => {
+      if (msg.type === 'game-lease') {
+        if (msg.gameId !== gameId || (msg.requestId && msg.requestId !== leaseRequestRef.current))
+          return
+        leaseRequestRef.current = null
+        setLeaseStatus(msg.status)
+        setLeaseToken(msg.leaseToken || null)
+      } else if (msg.type === 'game-lease-lost') {
+        if (msg.gameId !== gameId) return
+        setLeaseStatus('readonly')
+        setLeaseToken(null)
         pendingRequestRef.current = null
         setAiThinking(false)
-        setHintThinking(false)
-        return
-      }
+      } else if (msg.type === 'bestmove') {
+        if (!canEditRef.current && pendingRequestRef.current?.kind === 'move') return
+        const pending = pendingRequestRef.current
+        const requestKind = msg.requestKind || pending?.kind
+        if (
+          !pending ||
+          (msg.requestId && msg.requestId !== pending.id) ||
+          (requestKind && requestKind !== pending.kind) ||
+          pending.movesKey !== uciMovesRef.current.join(' ')
+        ) {
+          return
+        }
 
-      const legalTargets = getLegalMoves(currentBoard, move.from, engineVariant)
-      const isLegal = move.piece.color === turnRef.current &&
-        legalTargets.some(to => to.row === move.to.row && to.col === move.to.col)
-      if (!isLegal) {
+        setEngineAvailable(true)
+
+        const currentBoard = boardRef.current
+        const move = buildMoveFromUci(msg.move, currentBoard)
+        if (!move) {
+          pendingRequestRef.current = null
+          setAiThinking(false)
+          setHintThinking(false)
+          return
+        }
+
+        const legalTargets = getLegalMoves(currentBoard, move.from, engineVariant)
+        const isLegal =
+          move.piece.color === turnRef.current &&
+          legalTargets.some((to) => to.row === move.to.row && to.col === move.to.col)
+        if (!isLegal) {
+          pendingRequestRef.current = null
+          setAiThinking(false)
+          setHintThinking(false)
+          return
+        }
+
+        if (pending.kind === 'hint') {
+          setHintMove(move)
+          setEngineStatusMessage(
+            msg.searchCapped ? '提示达到 60 秒上限，已采用当前最佳结果' : 'Engine ready',
+          )
+          pendingRequestRef.current = null
+          setHintThinking(false)
+          return
+        }
+
+        const { newBoard, captured } = isJieqi
+          ? applyJieqiMove(currentBoard, move.from, move.to)
+          : applyMove(currentBoard, move.from, move.to)
+        const notation = isJieqi
+          ? formatJieqiNotation(currentBoard, move)
+          : moveToNotation(currentBoard, move)
+        const nextTurn: PieceColor = turnRef.current === 'red' ? 'black' : 'red'
+        const fen = isJieqi ? engineBaseFen : boardToFen(newBoard, nextTurn)
+        const source: MoveRecord['source'] = move.piece.color === 'red' ? 'ai-red' : 'ai-black'
+
+        const historyIdx = currentMoveIndexRef.current
+
+        setBoard(newBoard)
+        setLastMove(move)
+        setCurrentTurn(nextTurn)
+        setHintMove(null)
+        const variationLine = commitVariationMove(
+          {
+            move,
+            notation,
+            fen,
+            elapsedMs: msg.elapsedMs,
+            source,
+            snapshot: isJieqi ? cloneJieqiSnapshot(newBoard, nextTurn) : undefined,
+          },
+          historyIdx,
+        )
+        setUciMoves(
+          uciListFromRecords(
+            variationLine.records.slice(0, variationLine.currentMoveIndex + 1),
+            isJieqi ? nextTurn : undefined,
+          ),
+        )
+        setMoveHistory(variationLine.records)
+        setCurrentMoveIndex(variationLine.currentMoveIndex)
+        setSelectedPos(null)
+        setLegalMoves([])
+        setMoveCandidates([])
+        setCandidateThinking(false)
+        setAiThinking(false)
+        setEngineStatusMessage(
+          msg.searchCapped ? '思考达到 60 秒上限，已采用当前最佳着法' : 'Engine ready',
+        )
         pendingRequestRef.current = null
+        candidateRequestRef.current = null
+
+        const statusDetail = getResolvedGameStatus(
+          newBoard,
+          nextTurn,
+          engineVariant,
+          gameMode,
+          engineBaseFen,
+          variationLine.records.slice(0, variationLine.currentMoveIndex + 1),
+        )
+        setGameStatus(statusDetail.status)
+        setGameStatusReason(statusDetail.reason)
+
+        if (statusDetail.status !== 'playing') {
+          playGameOverSound()
+        } else if (isInCheck(newBoard, nextTurn, engineVariant)) {
+          playCheckSound()
+        } else if (captured) {
+          playCaptureSound()
+        } else {
+          playMoveSound()
+        }
+      } else if (msg.type === 'info') {
+        if (isJieqi) return
+        const currentAnalysis = analysisRequestRef.current
+        if (msg.requestId && (!currentAnalysis || msg.requestId !== currentAnalysis.id)) {
+          return
+        }
+        const redPerspectiveScore = turnRef.current === 'red' ? msg.data.score : -msg.data.score
+        setEvaluation(redPerspectiveScore)
+        setBestLine(msg.data.pv)
+        setAnalysisDepth(msg.data.depth)
+        setAnalysisPoints((prev) => {
+          const point = {
+            moveIndex: currentMoveIndexRef.current,
+            evaluation: redPerspectiveScore,
+            depth: msg.data.depth,
+          }
+          return [...prev.filter((item) => item.moveIndex !== point.moveIndex), point].sort(
+            (a, b) => a.moveIndex - b.moveIndex,
+          )
+        })
+      } else if (msg.type === 'engine-status') {
+        setEngineAvailable(msg.available)
+        setEngineStatusMessage(
+          msg.message || (msg.available ? 'Engine ready' : 'Engine not available'),
+        )
+      } else if (msg.type === 'candidates') {
+        if (isJieqi) return
+        const currentRequest = candidateRequestRef.current
+        if (
+          !currentRequest ||
+          (msg.requestId && msg.requestId !== currentRequest.id) ||
+          currentRequest.movesKey !== uciMovesRef.current.join(' ')
+        ) {
+          return
+        }
+        const currentBoard = boardRef.current
+        setMoveCandidates(
+          (msg.candidates || []).map((candidate) => {
+            const move = buildMoveFromUci(candidate.move, currentBoard)
+            return {
+              ...candidate,
+              score: turnRef.current === 'red' ? candidate.score : -candidate.score,
+              notation: move ? moveToNotation(currentBoard, move) : candidate.move,
+              pvNotation: translatePv(candidate.pv, currentBoard),
+            }
+          }),
+        )
+        setCandidateThinking(false)
+        candidateRequestRef.current = null
+      } else if (msg.type === 'review-progress') {
+        const request = reviewRequestRef.current
+        if (!request || msg.requestId !== request.id) return
+        setReviewProgress({ completed: msg.completed, total: msg.total })
+      } else if (msg.type === 'review-result') {
+        const request = reviewRequestRef.current
+        if (!request || msg.requestId !== request.id) return
+        setReviewPositions(msg.positions)
+        setReviewedMovesKey(request.movesKey)
+        setReviewProgress({
+          completed: msg.positions.length,
+          total: msg.positions.length,
+        })
+        setReviewThinking(false)
+        reviewRequestRef.current = null
+      } else if (msg.type === 'error') {
+        setEngineStatusMessage(msg.message)
+        if (msg.message.toLowerCase().includes('engine')) {
+          setEngineAvailable(false)
+        }
+        pendingRequestRef.current = null
+        candidateRequestRef.current = null
+        reviewRequestRef.current = null
         setAiThinking(false)
         setHintThinking(false)
-        return
+        setCandidateThinking(false)
+        setReviewThinking(false)
       }
-
-      if (pending.kind === 'hint') {
-        setHintMove(move)
-        setEngineStatusMessage(msg.searchCapped ? '提示达到 60 秒上限，已采用当前最佳结果' : 'Engine ready')
-        pendingRequestRef.current = null
-        setHintThinking(false)
-        return
-      }
-
-      const { newBoard, captured } = isJieqi
-        ? applyJieqiMove(currentBoard, move.from, move.to)
-        : applyMove(currentBoard, move.from, move.to)
-      const notation = isJieqi ? formatJieqiNotation(currentBoard, move) : moveToNotation(currentBoard, move)
-      const nextTurn: PieceColor = turnRef.current === 'red' ? 'black' : 'red'
-      const fen = isJieqi ? engineBaseFen : boardToFen(newBoard, nextTurn)
-      const source: MoveRecord['source'] = move.piece.color === 'red' ? 'ai-red' : 'ai-black'
-
-      const historyIdx = currentMoveIndexRef.current
-
-      setBoard(newBoard)
-      setLastMove(move)
-      setCurrentTurn(nextTurn)
-      setHintMove(null)
-      const variationLine = commitVariationMove({
-        move,
-        notation,
-        fen,
-        elapsedMs: msg.elapsedMs,
-        source,
-        snapshot: isJieqi ? cloneJieqiSnapshot(newBoard, nextTurn) : undefined,
-      }, historyIdx)
-      setUciMoves(uciListFromRecords(
-        variationLine.records.slice(0, variationLine.currentMoveIndex + 1),
-        isJieqi ? nextTurn : undefined,
-      ))
-      setMoveHistory(variationLine.records)
-      setCurrentMoveIndex(variationLine.currentMoveIndex)
-      setSelectedPos(null)
-      setLegalMoves([])
-      setMoveCandidates([])
-      setCandidateThinking(false)
-      setAiThinking(false)
-      setEngineStatusMessage(msg.searchCapped ? '思考达到 60 秒上限，已采用当前最佳着法' : 'Engine ready')
-      pendingRequestRef.current = null
-      candidateRequestRef.current = null
-
-      const statusDetail = getResolvedGameStatus(
-        newBoard,
-        nextTurn,
-        engineVariant,
-        gameMode,
-        engineBaseFen,
-        variationLine.records.slice(0, variationLine.currentMoveIndex + 1),
-      )
-      setGameStatus(statusDetail.status)
-      setGameStatusReason(statusDetail.reason)
-
-      if (statusDetail.status !== 'playing') {
-        playGameOverSound()
-      } else if (isInCheck(newBoard, nextTurn, engineVariant)) {
-        playCheckSound()
-      } else if (captured) {
-        playCaptureSound()
-      } else {
-        playMoveSound()
-      }
-    } else if (msg.type === 'info') {
-      if (isJieqi) return
-      const currentAnalysis = analysisRequestRef.current
-      if (msg.requestId && (!currentAnalysis || msg.requestId !== currentAnalysis.id)) {
-        return
-      }
-      const redPerspectiveScore = turnRef.current === 'red' ? msg.data.score : -msg.data.score
-      setEvaluation(redPerspectiveScore)
-      setBestLine(msg.data.pv)
-      setAnalysisDepth(msg.data.depth)
-      setAnalysisPoints(prev => {
-        const point = {
-          moveIndex: currentMoveIndexRef.current,
-          evaluation: redPerspectiveScore,
-          depth: msg.data.depth,
-        }
-        return [...prev.filter(item => item.moveIndex !== point.moveIndex), point]
-          .sort((a, b) => a.moveIndex - b.moveIndex)
-      })
-    } else if (msg.type === 'engine-status') {
-      setEngineAvailable(msg.available)
-      setEngineStatusMessage(msg.message || (msg.available ? 'Engine ready' : 'Engine not available'))
-    } else if (msg.type === 'candidates') {
-      if (isJieqi) return
-      const currentRequest = candidateRequestRef.current
-      if (
-        !currentRequest ||
-        (msg.requestId && msg.requestId !== currentRequest.id) ||
-        currentRequest.movesKey !== uciMovesRef.current.join(' ')
-      ) {
-        return
-      }
-      const currentBoard = boardRef.current
-      setMoveCandidates((msg.candidates || []).map(candidate => {
-        const move = buildMoveFromUci(candidate.move, currentBoard)
-        return {
-          ...candidate,
-          score: turnRef.current === 'red' ? candidate.score : -candidate.score,
-          notation: move ? moveToNotation(currentBoard, move) : candidate.move,
-          pvNotation: translatePv(candidate.pv, currentBoard),
-        }
-      }))
-      setCandidateThinking(false)
-      candidateRequestRef.current = null
-    } else if (msg.type === 'review-progress') {
-      const request = reviewRequestRef.current
-      if (!request || msg.requestId !== request.id) return
-      setReviewProgress({ completed: msg.completed, total: msg.total })
-    } else if (msg.type === 'review-result') {
-      const request = reviewRequestRef.current
-      if (!request || msg.requestId !== request.id) return
-      setReviewPositions(msg.positions)
-      setReviewedMovesKey(request.movesKey)
-      setReviewProgress({ completed: msg.positions.length, total: msg.positions.length })
-      setReviewThinking(false)
-      reviewRequestRef.current = null
-    } else if (msg.type === 'error') {
-      setEngineStatusMessage(msg.message)
-      if (msg.message.toLowerCase().includes('engine')) {
-        setEngineAvailable(false)
-      }
-      pendingRequestRef.current = null
-      candidateRequestRef.current = null
-      reviewRequestRef.current = null
-      setAiThinking(false)
-      setHintThinking(false)
-      setCandidateThinking(false)
-      setReviewThinking(false)
-    }
-  }, [buildMoveFromUci, commitVariationMove, engineBaseFen, engineVariant, gameId, gameMode, isJieqi, translatePv])
+    },
+    [
+      buildMoveFromUci,
+      commitVariationMove,
+      engineBaseFen,
+      engineVariant,
+      gameId,
+      gameMode,
+      isJieqi,
+      translatePv,
+    ],
+  )
 
   const { send, connected, connectionState } = useWebSocket(handleWsMessage)
 
@@ -519,7 +593,9 @@ export function useGame({
     const analysisPointsChanged = prevInitialAnalysisPoints.current !== initialAnalysisPoints
     const variationTreeChanged = prevInitialVariationTree.current !== initialVariationTree
     const jieqiBoardChanged = prevInitialJieqiBoard.current !== initialJieqiBoard
-    const initialStatusChanged = prevInitialGameStatus.current !== initialGameStatus || prevInitialGameStatusReason.current !== initialGameStatusReason
+    const initialStatusChanged =
+      prevInitialGameStatus.current !== initialGameStatus ||
+      prevInitialGameStatusReason.current !== initialGameStatusReason
     const redConfigChanged = prevRedPlayerConfig.current !== redPlayerConfig
     const blackConfigChanged = prevBlackPlayerConfig.current !== blackPlayerConfig
 
@@ -537,26 +613,45 @@ export function useGame({
     prevRedPlayerConfig.current = redPlayerConfig
     prevBlackPlayerConfig.current = blackPlayerConfig
 
-    if (!modeChanged && !diffChanged && !sideChanged && !fenChanged && !recordsChanged && !indexChanged && !analysisPointsChanged && !variationTreeChanged && !jieqiBoardChanged && !initialStatusChanged && !redConfigChanged && !blackConfigChanged) return
+    if (
+      !modeChanged &&
+      !diffChanged &&
+      !sideChanged &&
+      !fenChanged &&
+      !recordsChanged &&
+      !indexChanged &&
+      !analysisPointsChanged &&
+      !variationTreeChanged &&
+      !jieqiBoardChanged &&
+      !initialStatusChanged &&
+      !redConfigChanged &&
+      !blackConfigChanged
+    )
+      return
 
     const legacyRecords = initialMoveRecords || []
-    const restoredTree = initialVariationTree || createVariationTree(
-      resolvedInitialFen,
-      legacyRecords,
-      initialCurrentMoveIndex ?? legacyRecords.length - 1,
-    )
+    const restoredTree =
+      initialVariationTree ||
+      createVariationTree(
+        resolvedInitialFen,
+        legacyRecords,
+        initialCurrentMoveIndex ?? legacyRecords.length - 1,
+      )
     const restoredLine = getVariationLine(restoredTree)
     const restoredRecords = restoredLine.records
     const restoredIndex = restoredLine.currentMoveIndex
     const restoredFen = restoredIndex >= 0 ? restoredRecords[restoredIndex].fen : resolvedInitialFen
     const jieqiBoard = isJieqi
-      ? initialJieqiBoard ? cloneJieqiSnapshot(initialJieqiBoard, 'red').board : createJieqiInitialBoard()
+      ? initialJieqiBoard
+        ? cloneJieqiSnapshot(initialJieqiBoard, 'red').board
+        : createJieqiInitialBoard()
       : null
     if (jieqiBoard) jieqiInitialBoardRef.current = jieqiBoard
-    const restoredSnapshot = isJieqi && restoredIndex >= 0 ? restoredRecords[restoredIndex].snapshot : undefined
-    const { board: initBoard, turn } = restoredSnapshot || (isJieqi
-      ? { board: jieqiBoard!, turn: 'red' as const }
-      : parseFen(restoredFen))
+    const restoredSnapshot =
+      isJieqi && restoredIndex >= 0 ? restoredRecords[restoredIndex].snapshot : undefined
+    const { board: initBoard, turn } =
+      restoredSnapshot ||
+      (isJieqi ? { board: jieqiBoard!, turn: 'red' as const } : parseFen(restoredFen))
     setEngineBaseFen(resolvedInitialFen)
     setBoard(initBoard)
     setCurrentTurn(turn)
@@ -564,7 +659,9 @@ export function useGame({
     setLegalMoves([])
     setMoveHistory(restoredRecords)
     setCurrentMoveIndex(restoredIndex)
-    setUciMoves(uciListFromRecords(restoredRecords.slice(0, restoredIndex + 1), isJieqi ? turn : undefined))
+    setUciMoves(
+      uciListFromRecords(restoredRecords.slice(0, restoredIndex + 1), isJieqi ? turn : undefined),
+    )
     setVariationTree(restoredTree)
     variationTreeRef.current = restoredTree
     setActiveVariationNodeIds(restoredLine.nodeIds)
@@ -586,11 +683,7 @@ export function useGame({
     setAnalysisDepth(0)
     setAnalysisPoints(initialAnalysisPoints || [])
     setMoveCandidates([])
-    setFlipped(
-      gameMode === 'human-vs-ai' || gameMode === 'jieqi'
-        ? playerSide === 'black'
-        : false,
-    )
+    setFlipped(gameMode === 'human-vs-ai' || gameMode === 'jieqi' ? playerSide === 'black' : false)
     setAiThinking(false)
     setHintThinking(false)
     setCandidateThinking(false)
@@ -606,7 +699,25 @@ export function useGame({
     analysisRequestRef.current = null
     candidateRequestRef.current = null
     reviewRequestRef.current = null
-  }, [gameMode, difficulty, playerSide, aiRedDifficulty, aiBlackDifficulty, resolvedInitialFen, initialMoveRecords, initialCurrentMoveIndex, initialAnalysisPoints, initialVariationTree, initialJieqiBoard, initialGameStatus, initialGameStatusReason, redPlayerConfig, blackPlayerConfig, engineVariant, isJieqi])
+  }, [
+    gameMode,
+    difficulty,
+    playerSide,
+    aiRedDifficulty,
+    aiBlackDifficulty,
+    resolvedInitialFen,
+    initialMoveRecords,
+    initialCurrentMoveIndex,
+    initialAnalysisPoints,
+    initialVariationTree,
+    initialJieqiBoard,
+    initialGameStatus,
+    initialGameStatusReason,
+    redPlayerConfig,
+    blackPlayerConfig,
+    engineVariant,
+    isJieqi,
+  ])
 
   useEffect(() => {
     if (!connected) {
@@ -635,17 +746,26 @@ export function useGame({
   // Send init to server whenever connected, difficulty, or runtime engine settings change.
   useEffect(() => {
     if (!gameMode || !connected) return
-    send({ type: 'init', difficulty, variant: engineVariant, ...engineRuntimeOptions })
+    send({
+      type: 'init',
+      difficulty,
+      variant: engineVariant,
+      ...engineRuntimeOptions,
+    })
   }, [connected, difficulty, engineRuntimeOptions, engineVariant, gameMode, send])
 
   useEffect(() => {
-    if (!gameMode || isJieqi || initializedMode !== gameMode || !connected || !analysisEnabled) return
+    if (!gameMode || isJieqi || initializedMode !== gameMode || !connected || !analysisEnabled)
+      return
 
     setEvaluation(null)
     setBestLine([])
     setAnalysisDepth(0)
     const requestId = makeRequestId('analyze')
-    analysisRequestRef.current = { id: requestId, movesKey: uciMoves.join(' ') }
+    analysisRequestRef.current = {
+      id: requestId,
+      movesKey: uciMoves.join(' '),
+    }
     send({
       type: 'analyze',
       requestId,
@@ -661,14 +781,25 @@ export function useGame({
         analysisRequestRef.current = null
       }
     }
-  }, [analysisEnabled, connected, engineBaseFen, engineRuntimeOptions, engineVariant, gameMode, initializedMode, isJieqi, send, uciMoves, searchLimit])
+  }, [
+    analysisEnabled,
+    connected,
+    engineBaseFen,
+    engineRuntimeOptions,
+    engineVariant,
+    gameMode,
+    initializedMode,
+    isJieqi,
+    send,
+    uciMoves,
+    searchLimit,
+  ])
 
   useEffect(() => {
     if (!aiThinking) return
 
-    const requestId = pendingRequestRef.current?.kind === 'move'
-      ? pendingRequestRef.current.id
-      : undefined
+    const requestId =
+      pendingRequestRef.current?.kind === 'move' ? pendingRequestRef.current.id : undefined
     if (!requestId) return
 
     const timer = window.setTimeout(() => {
@@ -686,13 +817,20 @@ export function useGame({
 
   // Trigger AI move
   useEffect(() => {
-    if (!canEditGame || initializedMode !== gameMode || reviewThinking || engineAvailable === false || !shouldAutoRequestAiMove({
-      gameStatus,
-      aiThinking,
-      gameMode,
-      currentPlayer: currentPlayerConfig,
-      connected,
-    })) return
+    if (
+      !canEditGame ||
+      initializedMode !== gameMode ||
+      reviewThinking ||
+      engineAvailable === false ||
+      !shouldAutoRequestAiMove({
+        gameStatus,
+        aiThinking,
+        gameMode,
+        currentPlayer: currentPlayerConfig,
+        connected,
+      })
+    )
+      return
 
     setAiThinking(true)
     const requestId = makeRequestId('move')
@@ -715,93 +853,137 @@ export function useGame({
       candidateRequestRef.current = null
       setAiThinking(false)
     }
-  }, [canEditGame, gameStatus, aiThinking, reviewThinking, gameMode, initializedMode, currentPlayerConfig, connected, send, engineBaseFen, uciMoves, difficulty, engineAvailable, engineVariant])
+  }, [
+    canEditGame,
+    gameStatus,
+    aiThinking,
+    reviewThinking,
+    gameMode,
+    initializedMode,
+    currentPlayerConfig,
+    connected,
+    send,
+    engineBaseFen,
+    uciMoves,
+    difficulty,
+    engineAvailable,
+    engineVariant,
+  ])
 
-  const handleCellClick = useCallback((pos: Position) => {
-    if (!canEditGame) return
-    if (gameStatus !== 'playing') return
-    if (gameMode === 'ai-vs-ai') return
-    if (currentPlayerConfig.type === 'ai') return
-    if (aiThinking) return
-    if (reviewThinking) return
+  const handleCellClick = useCallback(
+    (pos: Position) => {
+      if (!canEditGame) return
+      if (gameStatus !== 'playing') return
+      if (gameMode === 'ai-vs-ai') return
+      if (currentPlayerConfig.type === 'ai') return
+      if (aiThinking) return
+      if (reviewThinking) return
 
-    const piece = board[pos.row][pos.col]
+      const piece = board[pos.row][pos.col]
 
-    if (selectedPos) {
-      const isLegal = legalMoves.some(m => m.row === pos.row && m.col === pos.col)
-      if (isLegal) {
-        const selectedPiece = board[selectedPos.row][selectedPos.col]!
-        const { newBoard, captured } = isJieqi
-          ? applyJieqiMove(board, selectedPos, pos)
-          : applyMove(board, selectedPos, pos)
-        const move: Move = { from: selectedPos, to: pos, captured: captured || undefined, piece: selectedPiece }
-        const notation = isJieqi ? formatJieqiNotation(board, move, true) : moveToNotation(board, move)
-        const nextTurn: PieceColor = currentTurn === 'red' ? 'black' : 'red'
-        const fen = isJieqi ? engineBaseFen : boardToFen(newBoard, nextTurn)
+      if (selectedPos) {
+        const isLegal = legalMoves.some((m) => m.row === pos.row && m.col === pos.col)
+        if (isLegal) {
+          const selectedPiece = board[selectedPos.row][selectedPos.col]!
+          const { newBoard, captured } = isJieqi
+            ? applyJieqiMove(board, selectedPos, pos)
+            : applyMove(board, selectedPos, pos)
+          const move: Move = {
+            from: selectedPos,
+            to: pos,
+            captured: captured || undefined,
+            piece: selectedPiece,
+          }
+          const notation = isJieqi
+            ? formatJieqiNotation(board, move, true)
+            : moveToNotation(board, move)
+          const nextTurn: PieceColor = currentTurn === 'red' ? 'black' : 'red'
+          const fen = isJieqi ? engineBaseFen : boardToFen(newBoard, nextTurn)
 
-        const variationLine = commitVariationMove({
-          move,
-          notation,
-          fen,
-          source: 'human',
-          snapshot: isJieqi ? cloneJieqiSnapshot(newBoard, nextTurn) : undefined,
-        }, currentMoveIndex)
-        const newUciMoves = uciListFromRecords(
-          variationLine.records.slice(0, variationLine.currentMoveIndex + 1),
-          isJieqi ? nextTurn : undefined,
-        )
+          const variationLine = commitVariationMove(
+            {
+              move,
+              notation,
+              fen,
+              source: 'human',
+              snapshot: isJieqi ? cloneJieqiSnapshot(newBoard, nextTurn) : undefined,
+            },
+            currentMoveIndex,
+          )
+          const newUciMoves = uciListFromRecords(
+            variationLine.records.slice(0, variationLine.currentMoveIndex + 1),
+            isJieqi ? nextTurn : undefined,
+          )
 
-        setBoard(newBoard)
-        setLastMove(move)
-        setCurrentTurn(nextTurn)
-        setHintMove(null)
-        setUciMoves(newUciMoves)
-        setMoveHistory(variationLine.records)
-        setCurrentMoveIndex(variationLine.currentMoveIndex)
+          setBoard(newBoard)
+          setLastMove(move)
+          setCurrentTurn(nextTurn)
+          setHintMove(null)
+          setUciMoves(newUciMoves)
+          setMoveHistory(variationLine.records)
+          setCurrentMoveIndex(variationLine.currentMoveIndex)
+          setSelectedPos(null)
+          setLegalMoves([])
+          setMoveCandidates([])
+          setCandidateThinking(false)
+
+          const statusDetail = getResolvedGameStatus(
+            newBoard,
+            nextTurn,
+            engineVariant,
+            gameMode,
+            engineBaseFen,
+            variationLine.records.slice(0, variationLine.currentMoveIndex + 1),
+          )
+          setGameStatus(statusDetail.status)
+          setGameStatusReason(statusDetail.reason)
+
+          if (statusDetail.status !== 'playing') {
+            playGameOverSound()
+          } else if (isInCheck(newBoard, nextTurn, engineVariant)) {
+            playCheckSound()
+          } else if (captured) {
+            playCaptureSound()
+          } else {
+            playMoveSound()
+          }
+          return
+        }
+
+        if (piece && piece.color === currentTurn) {
+          setSelectedPos(pos)
+          setLegalMoves(getLegalMoves(board, pos, engineVariant))
+          return
+        }
+
         setSelectedPos(null)
         setLegalMoves([])
-        setMoveCandidates([])
-        setCandidateThinking(false)
-
-        const statusDetail = getResolvedGameStatus(
-          newBoard,
-          nextTurn,
-          engineVariant,
-          gameMode,
-          engineBaseFen,
-          variationLine.records.slice(0, variationLine.currentMoveIndex + 1),
-        )
-        setGameStatus(statusDetail.status)
-        setGameStatusReason(statusDetail.reason)
-
-        if (statusDetail.status !== 'playing') {
-          playGameOverSound()
-        } else if (isInCheck(newBoard, nextTurn, engineVariant)) {
-          playCheckSound()
-        } else if (captured) {
-          playCaptureSound()
-        } else {
-          playMoveSound()
-        }
         return
       }
 
       if (piece && piece.color === currentTurn) {
         setSelectedPos(pos)
         setLegalMoves(getLegalMoves(board, pos, engineVariant))
-        return
       }
-
-      setSelectedPos(null)
-      setLegalMoves([])
-      return
-    }
-
-    if (piece && piece.color === currentTurn) {
-      setSelectedPos(pos)
-      setLegalMoves(getLegalMoves(board, pos, engineVariant))
-    }
-  }, [board, selectedPos, legalMoves, currentTurn, gameMode, currentPlayerConfig, gameStatus, aiThinking, reviewThinking, currentMoveIndex, commitVariationMove, engineBaseFen, engineVariant, isJieqi, canEditGame])
+    },
+    [
+      board,
+      selectedPos,
+      legalMoves,
+      currentTurn,
+      gameMode,
+      currentPlayerConfig,
+      gameStatus,
+      aiThinking,
+      reviewThinking,
+      currentMoveIndex,
+      commitVariationMove,
+      engineBaseFen,
+      engineVariant,
+      isJieqi,
+      canEditGame,
+    ],
+  )
 
   const inCheck = (() => {
     if (isInCheck(board, currentTurn, engineVariant)) {
@@ -840,12 +1022,22 @@ export function useGame({
 
     if (targetIndex < 0) {
       const { board: initBoard, turn } = isJieqi
-        ? { board: cloneJieqiSnapshot(jieqiInitialBoardRef.current!, 'red').board, turn: 'red' as const }
+        ? {
+            board: cloneJieqiSnapshot(jieqiInitialBoardRef.current!, 'red').board,
+            turn: 'red' as const,
+          }
         : parseFen(engineBaseFen)
       setBoard(initBoard)
       setCurrentTurn(turn)
       setLastMove(null)
-      const statusDetail = getResolvedGameStatus(initBoard, turn, engineVariant, gameMode, engineBaseFen, [])
+      const statusDetail = getResolvedGameStatus(
+        initBoard,
+        turn,
+        engineVariant,
+        gameMode,
+        engineBaseFen,
+        [],
+      )
       setGameStatus(statusDetail.status)
       setGameStatusReason(statusDetail.reason)
     } else {
@@ -854,7 +1046,14 @@ export function useGame({
       setBoard(prevBoard)
       setCurrentTurn(turn)
       setLastMove(record.move)
-      const statusDetail = getResolvedGameStatus(prevBoard, turn, engineVariant, gameMode, engineBaseFen, moveHistory.slice(0, targetIndex + 1))
+      const statusDetail = getResolvedGameStatus(
+        prevBoard,
+        turn,
+        engineVariant,
+        gameMode,
+        engineBaseFen,
+        moveHistory.slice(0, targetIndex + 1),
+      )
       setGameStatus(statusDetail.status)
       setGameStatusReason(statusDetail.reason)
     }
@@ -865,7 +1064,18 @@ export function useGame({
     setSelectedPos(null)
     setLegalMoves([])
     stopActiveRequests()
-  }, [canEditGame, currentMoveIndex, moveHistory, gameMode, players, engineBaseFen, engineVariant, isJieqi, setVariationCurrentIndex, stopActiveRequests])
+  }, [
+    canEditGame,
+    currentMoveIndex,
+    moveHistory,
+    gameMode,
+    players,
+    engineBaseFen,
+    engineVariant,
+    isJieqi,
+    setVariationCurrentIndex,
+    stopActiveRequests,
+  ])
 
   const redo = useCallback(() => {
     if (!canEditGame) return
@@ -885,13 +1095,30 @@ export function useGame({
     setLegalMoves([])
     stopActiveRequests()
 
-    const statusDetail = getResolvedGameStatus(nextBoard, turn, engineVariant, gameMode, engineBaseFen, moveHistory.slice(0, targetIndex + 1))
+    const statusDetail = getResolvedGameStatus(
+      nextBoard,
+      turn,
+      engineVariant,
+      gameMode,
+      engineBaseFen,
+      moveHistory.slice(0, targetIndex + 1),
+    )
     setGameStatus(statusDetail.status)
     setGameStatusReason(statusDetail.reason)
-  }, [canEditGame, currentMoveIndex, moveHistory, gameMode, players, engineBaseFen, engineVariant, setVariationCurrentIndex, stopActiveRequests])
+  }, [
+    canEditGame,
+    currentMoveIndex,
+    moveHistory,
+    gameMode,
+    players,
+    engineBaseFen,
+    engineVariant,
+    setVariationCurrentIndex,
+    stopActiveRequests,
+  ])
 
   const flip = useCallback(() => {
-    setFlipped(f => !f)
+    setFlipped((f) => !f)
   }, [])
 
   const cancelSelection = useCallback(() => {
@@ -899,175 +1126,248 @@ export function useGame({
     setLegalMoves([])
   }, [])
 
-  const toggleMoveMark = useCallback((index: number) => {
-    if (!canEditGame) return
-    setMoveHistory(prev => {
-      const next = prev.map((record, i) => i === index ? { ...record, marked: !record.marked } : record)
-      const nodeId = activeVariationNodeIdsRef.current[index]
-      if (nodeId && next[index]) {
-        const nextTree = updateVariationMove(variationTreeRef.current, nodeId, next[index])
-        variationTreeRef.current = nextTree
-        setVariationTree(nextTree)
-      }
-      return next
-    })
-  }, [canEditGame])
+  const toggleMoveMark = useCallback(
+    (index: number) => {
+      if (!canEditGame) return
+      setMoveHistory((prev) => {
+        const next = prev.map((record, i) =>
+          i === index ? { ...record, marked: !record.marked } : record,
+        )
+        const nodeId = activeVariationNodeIdsRef.current[index]
+        if (nodeId && next[index]) {
+          const nextTree = updateVariationMove(variationTreeRef.current, nodeId, next[index])
+          variationTreeRef.current = nextTree
+          setVariationTree(nextTree)
+        }
+        return next
+      })
+    },
+    [canEditGame],
+  )
 
-  const updateMoveNote = useCallback((index: number, note: string) => {
-    if (!canEditGame) return
-    setMoveHistory(prev => {
-      const next = prev.map((record, i) => i === index ? { ...record, note: note.trim() || undefined } : record)
-      const nodeId = activeVariationNodeIdsRef.current[index]
-      if (nodeId && next[index]) {
-        const nextTree = updateVariationMove(variationTreeRef.current, nodeId, next[index])
-        variationTreeRef.current = nextTree
-        setVariationTree(nextTree)
-      }
-      return next
-    })
-  }, [canEditGame])
+  const updateMoveNote = useCallback(
+    (index: number, note: string) => {
+      if (!canEditGame) return
+      setMoveHistory((prev) => {
+        const next = prev.map((record, i) =>
+          i === index ? { ...record, note: note.trim() || undefined } : record,
+        )
+        const nodeId = activeVariationNodeIdsRef.current[index]
+        if (nodeId && next[index]) {
+          const nextTree = updateVariationMove(variationTreeRef.current, nodeId, next[index])
+          variationTreeRef.current = nextTree
+          setVariationTree(nextTree)
+        }
+        return next
+      })
+    },
+    [canEditGame],
+  )
 
-  const jumpToMove = useCallback((index: number) => {
-    if (!canNavigateHistory(gameMode)) return
-    if (index < -1 || index >= moveHistory.length) return
-    if (index === -1) {
-      const { board: initialBoard, turn } = isJieqi
-        ? { board: cloneJieqiSnapshot(jieqiInitialBoardRef.current!, 'red').board, turn: 'red' as const }
-        : parseFen(engineBaseFen)
-      setBoard(initialBoard)
+  const jumpToMove = useCallback(
+    (index: number) => {
+      if (!canNavigateHistory(gameMode)) return
+      if (index < -1 || index >= moveHistory.length) return
+      if (index === -1) {
+        const { board: initialBoard, turn } = isJieqi
+          ? {
+              board: cloneJieqiSnapshot(jieqiInitialBoardRef.current!, 'red').board,
+              turn: 'red' as const,
+            }
+          : parseFen(engineBaseFen)
+        setBoard(initialBoard)
+        setCurrentTurn(turn)
+        setLastMove(null)
+        setCurrentMoveIndex(-1)
+        setVariationCurrentIndex(-1)
+        setUciMoves([])
+        setSelectedPos(null)
+        setLegalMoves([])
+        stopActiveRequests()
+        const statusDetail = getResolvedGameStatus(
+          initialBoard,
+          turn,
+          engineVariant,
+          gameMode,
+          engineBaseFen,
+          [],
+        )
+        setGameStatus(statusDetail.status)
+        setGameStatusReason(statusDetail.reason)
+        return
+      }
+      const record = moveHistory[index]
+      const { board: targetBoard, turn } = record.snapshot || parseFen(record.fen)
+      setBoard(targetBoard)
       setCurrentTurn(turn)
-      setLastMove(null)
-      setCurrentMoveIndex(-1)
-      setVariationCurrentIndex(-1)
-      setUciMoves([])
+      setLastMove(record.move)
+      setCurrentMoveIndex(index)
+      setVariationCurrentIndex(index)
+      setUciMoves(uciListFromRecords(moveHistory.slice(0, index + 1)))
       setSelectedPos(null)
       setLegalMoves([])
       stopActiveRequests()
-      const statusDetail = getResolvedGameStatus(initialBoard, turn, engineVariant, gameMode, engineBaseFen, [])
+      const statusDetail = getResolvedGameStatus(
+        targetBoard,
+        turn,
+        engineVariant,
+        gameMode,
+        engineBaseFen,
+        moveHistory.slice(0, index + 1),
+      )
       setGameStatus(statusDetail.status)
       setGameStatusReason(statusDetail.reason)
-      return
-    }
-    const record = moveHistory[index]
-    const { board: targetBoard, turn } = record.snapshot || parseFen(record.fen)
-    setBoard(targetBoard)
-    setCurrentTurn(turn)
-    setLastMove(record.move)
-    setCurrentMoveIndex(index)
-    setVariationCurrentIndex(index)
-    setUciMoves(uciListFromRecords(moveHistory.slice(0, index + 1)))
-    setSelectedPos(null)
-    setLegalMoves([])
-    stopActiveRequests()
-    const statusDetail = getResolvedGameStatus(targetBoard, turn, engineVariant, gameMode, engineBaseFen, moveHistory.slice(0, index + 1))
-    setGameStatus(statusDetail.status)
-    setGameStatusReason(statusDetail.reason)
-  }, [engineBaseFen, gameMode, moveHistory, engineVariant, isJieqi, setVariationCurrentIndex, stopActiveRequests])
+    },
+    [
+      engineBaseFen,
+      gameMode,
+      moveHistory,
+      engineVariant,
+      isJieqi,
+      setVariationCurrentIndex,
+      stopActiveRequests,
+    ],
+  )
 
   const getCurrentFen = useCallback(() => {
-    return isJieqi ? engineBaseFen : boardToFen(board, currentTurn, Math.floor((currentMoveIndex + 2) / 2))
+    return isJieqi
+      ? engineBaseFen
+      : boardToFen(board, currentTurn, Math.floor((currentMoveIndex + 2) / 2))
   }, [board, currentTurn, currentMoveIndex, engineBaseFen, isJieqi])
 
-  const loadFen = useCallback((fen: string) => {
-    if (!canEditGame) return false
-    if (isJieqi) return false
-    try {
-      const normalizedFen = fen.trim()
-      const validation = validateFenPosition(normalizedFen)
-      if (!validation.ok) return false
-      const { board: newBoard, turn } = parseFen(normalizedFen)
-      setEngineBaseFen(normalizedFen)
-      setBoard(newBoard)
+  const loadFen = useCallback(
+    (fen: string) => {
+      if (!canEditGame) return false
+      if (isJieqi) return false
+      try {
+        const normalizedFen = fen.trim()
+        const validation = validateFenPosition(normalizedFen)
+        if (!validation.ok) return false
+        const { board: newBoard, turn } = parseFen(normalizedFen)
+        setEngineBaseFen(normalizedFen)
+        setBoard(newBoard)
+        setCurrentTurn(turn)
+        setSelectedPos(null)
+        setLegalMoves([])
+        setMoveHistory([])
+        setCurrentMoveIndex(-1)
+        setUciMoves([])
+        const statusDetail = getResolvedGameStatus(
+          newBoard,
+          turn,
+          'xiangqi',
+          gameMode,
+          normalizedFen,
+          [],
+        )
+        setGameStatus(statusDetail.status)
+        setGameStatusReason(statusDetail.reason)
+        setLastMove(null)
+        setAiThinking(false)
+        setHintThinking(false)
+        setHintMove(null)
+        setEvaluation(null)
+        setBestLine([])
+        setAnalysisDepth(0)
+        setAnalysisPoints([])
+        const emptyTree = createVariationTree(normalizedFen, [], -1)
+        variationTreeRef.current = emptyTree
+        activeVariationNodeIdsRef.current = []
+        setVariationTree(emptyTree)
+        setActiveVariationNodeIds([])
+        stopActiveRequests()
+        return true
+      } catch {
+        return false
+      }
+    },
+    [canEditGame, gameMode, isJieqi, stopActiveRequests],
+  )
+
+  const selectVariation = useCallback(
+    (nodeId: string) => {
+      if (!canEditGame) return
+      if (!canNavigateHistory(gameMode)) return
+      const selectedTree = selectVariationNode(variationTreeRef.current, nodeId)
+      if (selectedTree === variationTreeRef.current) return
+      const line = getVariationLine(selectedTree, nodeId)
+      const node = selectedTree.nodes[nodeId]
+      if (!node?.move) return
+      const { board: selectedBoard, turn } = node.move.snapshot || parseFen(node.fen)
+      variationTreeRef.current = selectedTree
+      activeVariationNodeIdsRef.current = line.nodeIds
+      setVariationTree(selectedTree)
+      setActiveVariationNodeIds(line.nodeIds)
+      setMoveHistory(line.records)
+      setCurrentMoveIndex(line.currentMoveIndex)
+      setUciMoves(uciListFromRecords(line.records.slice(0, line.currentMoveIndex + 1)))
+      setBoard(selectedBoard)
       setCurrentTurn(turn)
+      setLastMove(node.move.move)
       setSelectedPos(null)
       setLegalMoves([])
-      setMoveHistory([])
-      setCurrentMoveIndex(-1)
-      setUciMoves([])
-      const statusDetail = getResolvedGameStatus(newBoard, turn, 'xiangqi', gameMode, normalizedFen, [])
+      setAnalysisPoints([])
+      stopActiveRequests()
+      const statusDetail = getResolvedGameStatus(
+        selectedBoard,
+        turn,
+        engineVariant,
+        gameMode,
+        engineBaseFen,
+        line.records.slice(0, line.currentMoveIndex + 1),
+      )
       setGameStatus(statusDetail.status)
       setGameStatusReason(statusDetail.reason)
-      setLastMove(null)
-      setAiThinking(false)
-      setHintThinking(false)
-      setHintMove(null)
-      setEvaluation(null)
-      setBestLine([])
-      setAnalysisDepth(0)
-      setAnalysisPoints([])
-      const emptyTree = createVariationTree(normalizedFen, [], -1)
-      variationTreeRef.current = emptyTree
-      activeVariationNodeIdsRef.current = []
-      setVariationTree(emptyTree)
-      setActiveVariationNodeIds([])
-      stopActiveRequests()
-      return true
-    } catch {
-      return false
-    }
-  }, [canEditGame, gameMode, isJieqi, stopActiveRequests])
+    },
+    [canEditGame, engineBaseFen, engineVariant, gameMode, stopActiveRequests],
+  )
 
-  const selectVariation = useCallback((nodeId: string) => {
-    if (!canEditGame) return
-    if (!canNavigateHistory(gameMode)) return
-    const selectedTree = selectVariationNode(variationTreeRef.current, nodeId)
-    if (selectedTree === variationTreeRef.current) return
-    const line = getVariationLine(selectedTree, nodeId)
-    const node = selectedTree.nodes[nodeId]
-    if (!node?.move) return
-    const { board: selectedBoard, turn } = node.move.snapshot || parseFen(node.fen)
-    variationTreeRef.current = selectedTree
-    activeVariationNodeIdsRef.current = line.nodeIds
-    setVariationTree(selectedTree)
-    setActiveVariationNodeIds(line.nodeIds)
-    setMoveHistory(line.records)
-    setCurrentMoveIndex(line.currentMoveIndex)
-    setUciMoves(uciListFromRecords(line.records.slice(0, line.currentMoveIndex + 1)))
-    setBoard(selectedBoard)
-    setCurrentTurn(turn)
-    setLastMove(node.move.move)
-    setSelectedPos(null)
-    setLegalMoves([])
-    setAnalysisPoints([])
-    stopActiveRequests()
-    const statusDetail = getResolvedGameStatus(selectedBoard, turn, engineVariant, gameMode, engineBaseFen, line.records.slice(0, line.currentMoveIndex + 1))
-    setGameStatus(statusDetail.status)
-    setGameStatusReason(statusDetail.reason)
-  }, [canEditGame, engineBaseFen, engineVariant, gameMode, stopActiveRequests])
+  const setMainVariationChild = useCallback(
+    (childId: string) => {
+      if (!canEditGame) return
+      const currentTree = variationTreeRef.current
+      const nextTree = setMainVariation(currentTree, currentTree.currentNodeId, childId)
+      if (nextTree === currentTree) return
+      const line = getVariationLine(nextTree, nextTree.currentNodeId)
+      variationTreeRef.current = nextTree
+      activeVariationNodeIdsRef.current = line.nodeIds
+      setVariationTree(nextTree)
+      setActiveVariationNodeIds(line.nodeIds)
+      setMoveHistory(line.records)
+    },
+    [canEditGame],
+  )
 
-  const setMainVariationChild = useCallback((childId: string) => {
-    if (!canEditGame) return
-    const currentTree = variationTreeRef.current
-    const nextTree = setMainVariation(currentTree, currentTree.currentNodeId, childId)
-    if (nextTree === currentTree) return
-    const line = getVariationLine(nextTree, nextTree.currentNodeId)
-    variationTreeRef.current = nextTree
-    activeVariationNodeIdsRef.current = line.nodeIds
-    setVariationTree(nextTree)
-    setActiveVariationNodeIds(line.nodeIds)
-    setMoveHistory(line.records)
-  }, [canEditGame])
+  const addCurrentNodeAnnotation = useCallback(
+    (annotation: BoardAnnotation) => {
+      if (!canEditGame || gameMode !== 'study') return
+      const currentTree = variationTreeRef.current
+      const node = currentTree.nodes[currentTree.currentNodeId]
+      if (!node) return
+      const annotations = [...(node.annotations || []), annotation].slice(-MAX_NODE_ANNOTATIONS)
+      const nextTree = updateVariationAnnotations(currentTree, node.id, annotations)
+      variationTreeRef.current = nextTree
+      setVariationTree(nextTree)
+    },
+    [canEditGame, gameMode],
+  )
 
-  const addCurrentNodeAnnotation = useCallback((annotation: BoardAnnotation) => {
-    if (!canEditGame || gameMode !== 'study') return
-    const currentTree = variationTreeRef.current
-    const node = currentTree.nodes[currentTree.currentNodeId]
-    if (!node) return
-    const annotations = [...(node.annotations || []), annotation].slice(-MAX_NODE_ANNOTATIONS)
-    const nextTree = updateVariationAnnotations(currentTree, node.id, annotations)
-    variationTreeRef.current = nextTree
-    setVariationTree(nextTree)
-  }, [canEditGame, gameMode])
-
-  const removeCurrentNodeAnnotation = useCallback((annotationId: string) => {
-    if (!canEditGame || gameMode !== 'study') return
-    const currentTree = variationTreeRef.current
-    const node = currentTree.nodes[currentTree.currentNodeId]
-    if (!node?.annotations?.some(annotation => annotation.id === annotationId)) return
-    const nextTree = updateVariationAnnotations(currentTree, node.id, node.annotations.filter(annotation => annotation.id !== annotationId))
-    variationTreeRef.current = nextTree
-    setVariationTree(nextTree)
-  }, [canEditGame, gameMode])
+  const removeCurrentNodeAnnotation = useCallback(
+    (annotationId: string) => {
+      if (!canEditGame || gameMode !== 'study') return
+      const currentTree = variationTreeRef.current
+      const node = currentTree.nodes[currentTree.currentNodeId]
+      if (!node?.annotations?.some((annotation) => annotation.id === annotationId)) return
+      const nextTree = updateVariationAnnotations(
+        currentTree,
+        node.id,
+        node.annotations.filter((annotation) => annotation.id !== annotationId),
+      )
+      variationTreeRef.current = nextTree
+      setVariationTree(nextTree)
+    },
+    [canEditGame, gameMode],
+  )
 
   const undoCurrentNodeAnnotation = useCallback(() => {
     if (!canEditGame || gameMode !== 'study') return
@@ -1090,7 +1390,15 @@ export function useGame({
   }, [canEditGame, gameMode])
 
   const requestHint = useCallback(() => {
-    if (!connected || gameStatus !== 'playing' || aiThinking || hintThinking || candidateThinking || reviewThinking) return
+    if (
+      !connected ||
+      gameStatus !== 'playing' ||
+      aiThinking ||
+      hintThinking ||
+      candidateThinking ||
+      reviewThinking
+    )
+      return
     if (currentPlayerConfig.type !== 'human') return
 
     const requestMoves = isJieqi
@@ -1105,20 +1413,58 @@ export function useGame({
       fen: engineBaseFen,
       movesKey: requestMoves.join(' '),
     }
-    const sent = send({ type: 'hint', requestId, fen: engineBaseFen, moves: requestMoves, difficulty: hintDifficulty, variant: engineVariant, ...searchLimit })
+    const sent = send({
+      type: 'hint',
+      requestId,
+      fen: engineBaseFen,
+      moves: requestMoves,
+      difficulty: hintDifficulty,
+      variant: engineVariant,
+      ...searchLimit,
+    })
     if (!sent) {
       pendingRequestRef.current = null
       setHintThinking(false)
     }
-  }, [connected, gameStatus, aiThinking, hintThinking, candidateThinking, reviewThinking, currentPlayerConfig, currentMoveIndex, currentTurn, engineBaseFen, engineVariant, hintDifficulty, isJieqi, moveHistory, searchLimit, send, uciMoves])
+  }, [
+    connected,
+    gameStatus,
+    aiThinking,
+    hintThinking,
+    candidateThinking,
+    reviewThinking,
+    currentPlayerConfig,
+    currentMoveIndex,
+    currentTurn,
+    engineBaseFen,
+    engineVariant,
+    hintDifficulty,
+    isJieqi,
+    moveHistory,
+    searchLimit,
+    send,
+    uciMoves,
+  ])
 
   const requestCandidates = useCallback(() => {
-    if (isJieqi || !connected || gameStatus !== 'playing' || aiThinking || hintThinking || candidateThinking || reviewThinking) return
+    if (
+      isJieqi ||
+      !connected ||
+      gameStatus !== 'playing' ||
+      aiThinking ||
+      hintThinking ||
+      candidateThinking ||
+      reviewThinking
+    )
+      return
 
     setCandidateThinking(true)
     setMoveCandidates([])
     const requestId = makeRequestId('candidates')
-    candidateRequestRef.current = { id: requestId, movesKey: uciMoves.join(' ') }
+    candidateRequestRef.current = {
+      id: requestId,
+      movesKey: uciMoves.join(' '),
+    }
     const sent = send({
       type: 'candidates',
       requestId,
@@ -1133,10 +1479,33 @@ export function useGame({
       candidateRequestRef.current = null
       setCandidateThinking(false)
     }
-  }, [connected, gameStatus, aiThinking, hintThinking, candidateThinking, reviewThinking, isJieqi, send, engineBaseFen, uciMoves, currentPlayerConfig, difficulty, candidateCount, searchLimit, engineVariant])
+  }, [
+    connected,
+    gameStatus,
+    aiThinking,
+    hintThinking,
+    candidateThinking,
+    reviewThinking,
+    isJieqi,
+    send,
+    engineBaseFen,
+    uciMoves,
+    currentPlayerConfig,
+    difficulty,
+    candidateCount,
+    searchLimit,
+    engineVariant,
+  ])
 
   const requestReview = useCallback(() => {
-    if (isJieqi || !connected || engineAvailable === false || moveHistory.length === 0 || moveHistory.length > 120) return
+    if (
+      isJieqi ||
+      !connected ||
+      engineAvailable === false ||
+      moveHistory.length === 0 ||
+      moveHistory.length > 120
+    )
+      return
     if (aiThinking || hintThinking || candidateThinking || reviewThinking) return
 
     const moves = uciListFromRecords(moveHistory)
@@ -1145,12 +1514,29 @@ export function useGame({
     setReviewThinking(true)
     setReviewProgress({ completed: 0, total: moves.length + 1 })
     setReviewPositions([])
-    const sent = send({ type: 'review', requestId, fen: engineBaseFen, moves, searchDepth: 12 })
+    const sent = send({
+      type: 'review',
+      requestId,
+      fen: engineBaseFen,
+      moves,
+      searchDepth: 12,
+    })
     if (!sent) {
       reviewRequestRef.current = null
       setReviewThinking(false)
     }
-  }, [aiThinking, candidateThinking, connected, engineAvailable, engineBaseFen, hintThinking, isJieqi, moveHistory, reviewThinking, send])
+  }, [
+    aiThinking,
+    candidateThinking,
+    connected,
+    engineAvailable,
+    engineBaseFen,
+    hintThinking,
+    isJieqi,
+    moveHistory,
+    reviewThinking,
+    send,
+  ])
 
   const cancelReview = useCallback(() => {
     const request = reviewRequestRef.current
@@ -1175,13 +1561,34 @@ export function useGame({
       fen: engineBaseFen,
       movesKey: uciMoves.join(' '),
     }
-    const sent = send({ type: 'move', requestId, fen: engineBaseFen, moves: uciMoves, difficulty: difficultyForTurn, variant: engineVariant })
+    const sent = send({
+      type: 'move',
+      requestId,
+      fen: engineBaseFen,
+      moves: uciMoves,
+      difficulty: difficultyForTurn,
+      variant: engineVariant,
+    })
     if (!sent) {
       pendingRequestRef.current = null
       candidateRequestRef.current = null
       setAiThinking(false)
     }
-  }, [canEditGame, gameMode, connected, gameStatus, aiThinking, reviewThinking, currentTurn, aiRedDifficulty, aiBlackDifficulty, send, uciMoves, engineBaseFen, engineVariant])
+  }, [
+    canEditGame,
+    gameMode,
+    connected,
+    gameStatus,
+    aiThinking,
+    reviewThinking,
+    currentTurn,
+    aiRedDifficulty,
+    aiBlackDifficulty,
+    send,
+    uciMoves,
+    engineBaseFen,
+    engineVariant,
+  ])
 
   const declareDraw = useCallback(() => {
     if (!canEditGame) return
@@ -1241,7 +1648,9 @@ export function useGame({
   const variationChildren = useMemo(() => {
     const currentNode = variationTree.nodes[variationTree.currentNodeId]
     if (!currentNode) return []
-    return currentNode.children.flatMap(id => variationTree.nodes[id] ? [variationTree.nodes[id]] : [])
+    return currentNode.children.flatMap((id) =>
+      variationTree.nodes[id] ? [variationTree.nodes[id]] : [],
+    )
   }, [variationTree])
   const currentNodeAnnotations = variationTree.nodes[variationTree.currentNodeId]?.annotations || []
 
@@ -1281,11 +1690,40 @@ export function useGame({
     connected,
     engineAvailable,
     engineStatusMessage,
-    canUndo: canEditGame && canNavigateHistory(gameMode) && currentMoveIndex >= 0 && !aiThinking && !hintThinking && !reviewThinking,
-    canRedo: canEditGame && canNavigateHistory(gameMode) && currentMoveIndex < moveHistory.length - 1 && !aiThinking && !hintThinking && !reviewThinking,
+    canUndo:
+      canEditGame &&
+      canNavigateHistory(gameMode) &&
+      currentMoveIndex >= 0 &&
+      !aiThinking &&
+      !hintThinking &&
+      !reviewThinking,
+    canRedo:
+      canEditGame &&
+      canNavigateHistory(gameMode) &&
+      currentMoveIndex < moveHistory.length - 1 &&
+      !aiThinking &&
+      !hintThinking &&
+      !reviewThinking,
     canRequestHint,
-    canRequestCandidates: !isJieqi && connected && engineAvailable !== false && gameStatus === 'playing' && !aiThinking && !hintThinking && !candidateThinking && !reviewThinking,
-    canRequestReview: !isJieqi && connected && engineAvailable !== false && moveHistory.length > 0 && moveHistory.length <= 120 && !aiThinking && !hintThinking && !candidateThinking && !reviewThinking,
+    canRequestCandidates:
+      !isJieqi &&
+      connected &&
+      engineAvailable !== false &&
+      gameStatus === 'playing' &&
+      !aiThinking &&
+      !hintThinking &&
+      !candidateThinking &&
+      !reviewThinking,
+    canRequestReview:
+      !isJieqi &&
+      connected &&
+      engineAvailable !== false &&
+      moveHistory.length > 0 &&
+      moveHistory.length <= 120 &&
+      !aiThinking &&
+      !hintThinking &&
+      !candidateThinking &&
+      !reviewThinking,
     canStepAi,
     handleCellClick,
     undo,

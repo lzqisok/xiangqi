@@ -117,13 +117,17 @@ function getEngineThreads(): number {
   return Math.max(1, Math.min(8, os.cpus().length))
 }
 
-export function normalizeEngineRuntimeOptions(options?: EngineRuntimeOptions): Required<EngineRuntimeOptions> {
-  const engineThreads = options?.engineThreads === 'auto' || options?.engineThreads === undefined
-    ? 'auto'
-    : Math.max(1, Math.min(8, Math.round(options.engineThreads)))
-  const engineHashMb = typeof options?.engineHashMb === 'number' && Number.isFinite(options.engineHashMb)
-    ? Math.max(16, Math.min(512, Math.round(options.engineHashMb)))
-    : 128
+export function normalizeEngineRuntimeOptions(
+  options?: EngineRuntimeOptions,
+): Required<EngineRuntimeOptions> {
+  const engineThreads =
+    options?.engineThreads === 'auto' || options?.engineThreads === undefined
+      ? 'auto'
+      : Math.max(1, Math.min(8, Math.round(options.engineThreads)))
+  const engineHashMb =
+    typeof options?.engineHashMb === 'number' && Number.isFinite(options.engineHashMb)
+      ? Math.max(16, Math.min(512, Math.round(options.engineHashMb)))
+      : 128
 
   return { engineThreads, engineHashMb }
 }
@@ -161,7 +165,9 @@ export class PikafishEngine extends EventEmitter {
     }
 
     if (!enginePath) {
-      console.error(`${this.variant === 'jieqi' ? 'Pikafish Jieqi' : 'Pikafish'} engine binary not found in engine/ directory`)
+      console.error(
+        `${this.variant === 'jieqi' ? 'Pikafish Jieqi' : 'Pikafish'} engine binary not found in engine/ directory`,
+      )
       console.error('Looked in:', engineDir)
       console.error('Please download from https://github.com/official-pikafish/Pikafish/releases')
       return false
@@ -223,7 +229,12 @@ export class PikafishEngine extends EventEmitter {
     }
   }
 
-  async getBestMove(fen: string, moves: string[], difficulty: Difficulty, limit?: EngineSearchLimit): Promise<EngineMoveResult> {
+  async getBestMove(
+    fen: string,
+    moves: string[],
+    difficulty: Difficulty,
+    limit?: EngineSearchLimit,
+  ): Promise<EngineMoveResult> {
     return this.enqueue(() => this.getBestMoveLocked(fen, moves, difficulty, limit))
   }
 
@@ -231,7 +242,13 @@ export class PikafishEngine extends EventEmitter {
     return this.enqueue(() => this.applyRuntimeOptionsLocked(options))
   }
 
-  async getCandidates(fen: string, moves: string[], difficulty: Difficulty, count: number, limit?: EngineSearchLimit): Promise<EngineCandidate[]> {
+  async getCandidates(
+    fen: string,
+    moves: string[],
+    difficulty: Difficulty,
+    count: number,
+    limit?: EngineSearchLimit,
+  ): Promise<EngineCandidate[]> {
     return this.enqueue(() => this.getCandidatesLocked(fen, moves, difficulty, count, limit))
   }
 
@@ -255,7 +272,12 @@ export class PikafishEngine extends EventEmitter {
     await this.waitFor('readyok', 10000)
   }
 
-  private async getBestMoveLocked(fen: string, moves: string[], difficulty: Difficulty, limit?: EngineSearchLimit): Promise<EngineMoveResult> {
+  private async getBestMoveLocked(
+    fen: string,
+    moves: string[],
+    difficulty: Difficulty,
+    limit?: EngineSearchLimit,
+  ): Promise<EngineMoveResult> {
     if (!this.ready || !this.process) {
       console.error('Engine not ready, attempting reinit...')
       const ok = await this.init(this.runtimeOptions)
@@ -298,7 +320,13 @@ export class PikafishEngine extends EventEmitter {
     return this.enqueue(() => this.analyzeLocked(fen, moves, limit))
   }
 
-  private async getCandidatesLocked(fen: string, moves: string[], difficulty: Difficulty, count: number, limit?: EngineSearchLimit): Promise<EngineCandidate[]> {
+  private async getCandidatesLocked(
+    fen: string,
+    moves: string[],
+    difficulty: Difficulty,
+    count: number,
+    limit?: EngineSearchLimit,
+  ): Promise<EngineCandidate[]> {
     if (!this.ready || !this.process) {
       const ok = await this.init(this.runtimeOptions)
       if (!ok) return []
@@ -351,7 +379,11 @@ export class PikafishEngine extends EventEmitter {
     }
   }
 
-  private async analyzeLocked(fen: string, moves: string[], limit?: EngineSearchLimit): Promise<void> {
+  private async analyzeLocked(
+    fen: string,
+    moves: string[],
+    limit?: EngineSearchLimit,
+  ): Promise<void> {
     if (!this.ready || !this.process) return
 
     await this.stopSearchIfNeeded()
@@ -403,13 +435,19 @@ export class PikafishEngine extends EventEmitter {
 
   private parseInfo(line: string): EngineInfo | null {
     const parts = line.split(' ')
-    let depth = 0, score = 0, nodes = 0, nps = 0, multipv = 1
+    let depth = 0,
+      score = 0,
+      nodes = 0,
+      nps = 0,
+      multipv = 1
     const pv: string[] = []
     let isMate = false
 
     for (let i = 0; i < parts.length; i++) {
       switch (parts[i]) {
-        case 'depth': depth = parseInt(parts[++i]) || 0; break
+        case 'depth':
+          depth = parseInt(parts[++i]) || 0
+          break
         case 'score':
           if (parts[i + 1] === 'cp') {
             score = parseInt(parts[i + 2]) || 0
@@ -421,9 +459,15 @@ export class PikafishEngine extends EventEmitter {
             i += 2
           }
           break
-        case 'nodes': nodes = parseInt(parts[++i]) || 0; break
-        case 'nps': nps = parseInt(parts[++i]) || 0; break
-        case 'multipv': multipv = parseInt(parts[++i]) || 1; break
+        case 'nodes':
+          nodes = parseInt(parts[++i]) || 0
+          break
+        case 'nps':
+          nps = parseInt(parts[++i]) || 0
+          break
+        case 'multipv':
+          multipv = parseInt(parts[++i]) || 1
+          break
         case 'pv':
           for (let j = i + 1; j < parts.length; j++) {
             if (parts[j].match(/^[a-i][0-9][a-i][0-9]$/)) {
@@ -461,7 +505,10 @@ export class PikafishEngine extends EventEmitter {
 
   private enqueue<T>(task: () => Promise<T>): Promise<T> {
     const run = this.commandQueue.then(task, task)
-    this.commandQueue = run.then(() => undefined, () => undefined)
+    this.commandQueue = run.then(
+      () => undefined,
+      () => undefined,
+    )
     return run
   }
 

@@ -70,7 +70,10 @@ export function getPathNodeIds(tree: VariationTree, nodeId: string): string[] {
   return path[0] === tree.rootId ? path : [tree.rootId]
 }
 
-export function getVariationLine(tree: VariationTree, currentNodeId = tree.currentNodeId): VariationLine {
+export function getVariationLine(
+  tree: VariationTree,
+  currentNodeId = tree.currentNodeId,
+): VariationLine {
   const path = getPathNodeIds(tree, currentNodeId)
   const nodeIds = path.slice(1)
   const visited = new Set(path)
@@ -84,7 +87,7 @@ export function getVariationLine(tree: VariationTree, currentNodeId = tree.curre
 
   return {
     nodeIds,
-    records: nodeIds.flatMap(id => tree.nodes[id]?.move ? [tree.nodes[id].move] : []),
+    records: nodeIds.flatMap((id) => (tree.nodes[id]?.move ? [tree.nodes[id].move] : [])),
     currentMoveIndex: path.length - 2,
   }
 }
@@ -98,7 +101,7 @@ export function addVariationMove(
   const parent = tree.nodes[parentId]
   if (!parent) return { tree, nodeId: tree.currentNodeId, created: false }
 
-  const existingId = parent.children.find(id => {
+  const existingId = parent.children.find((id) => {
     const move = tree.nodes[id]?.move
     return move ? moveKey(move) === moveKey(record) : false
   })
@@ -141,7 +144,12 @@ export function selectVariationNode(tree: VariationTree, nodeId: string): Variat
   return tree.nodes[nodeId] ? { ...tree, currentNodeId: nodeId } : tree
 }
 
-export function setMainVariation(tree: VariationTree, parentId: string, childId: string, now = Date.now()): VariationTree {
+export function setMainVariation(
+  tree: VariationTree,
+  parentId: string,
+  childId: string,
+  now = Date.now(),
+): VariationTree {
   const parent = tree.nodes[parentId]
   if (!parent || !parent.children.includes(childId)) return tree
   return {
@@ -153,7 +161,12 @@ export function setMainVariation(tree: VariationTree, parentId: string, childId:
   }
 }
 
-export function updateVariationMove(tree: VariationTree, nodeId: string, record: MoveRecord, now = Date.now()): VariationTree {
+export function updateVariationMove(
+  tree: VariationTree,
+  nodeId: string,
+  record: MoveRecord,
+  now = Date.now(),
+): VariationTree {
   const node = tree.nodes[nodeId]
   if (!node?.move) return tree
   return {
@@ -165,7 +178,12 @@ export function updateVariationMove(tree: VariationTree, nodeId: string, record:
   }
 }
 
-export function updateVariationAnnotations(tree: VariationTree, nodeId: string, annotations: BoardAnnotation[], now = Date.now()): VariationTree {
+export function updateVariationAnnotations(
+  tree: VariationTree,
+  nodeId: string,
+  annotations: BoardAnnotation[],
+  now = Date.now(),
+): VariationTree {
   const node = tree.nodes[nodeId]
   if (!node) return tree
   return {
@@ -182,5 +200,8 @@ export function updateVariationAnnotations(tree: VariationTree, nodeId: string, 
 }
 
 export function countVariationBranches(tree: VariationTree): number {
-  return Object.values(tree.nodes).reduce((count, node) => count + Math.max(0, node.children.length - 1), 0)
+  return Object.values(tree.nodes).reduce(
+    (count, node) => count + Math.max(0, node.children.length - 1),
+    0,
+  )
 }

@@ -10,9 +10,8 @@ export interface CandidatePreviewFrame {
 }
 
 export function buildCandidatePreview(initialFen: string, candidate: MoveCandidate): MoveRecord[] {
-  const moves = candidate.pv[0] === candidate.move
-    ? candidate.pv
-    : [candidate.move, ...candidate.pv]
+  const moves =
+    candidate.pv[0] === candidate.move ? candidate.pv : [candidate.move, ...candidate.pv]
   return buildMoveRecordsFromUci(initialFen, moves)
 }
 

@@ -29,13 +29,16 @@ server.on('upgrade', (request, socket, head) => {
     socket.destroy()
     return
   }
-  target.handleUpgrade(request, socket, head, ws => target.emit('connection', ws, request))
+  target.handleUpgrade(request, socket, head, (ws) => target.emit('connection', ws, request))
 })
 type LiveWebSocket = WebSocket & { isAlive?: boolean }
 const heartbeatTimer = setInterval(() => {
   for (const socketServer of [wss, gomokuWss]) {
     for (const client of socketServer.clients as Set<LiveWebSocket | RapfiWebSocket>) {
-      if (client.isAlive === false) { client.terminate(); continue }
+      if (client.isAlive === false) {
+        client.terminate()
+        continue
+      }
       client.isAlive = false
       client.ping()
     }
@@ -43,21 +46,34 @@ const heartbeatTimer = setInterval(() => {
 }, 15_000)
 heartbeatTimer.unref()
 const serverDirectory = fileURLToPath(new URL('../', import.meta.url))
-const gameRepository = new JsonGameRepository(process.env.XIANGQI_DATA_DIR || path.resolve(serverDirectory, '../data/games'))
-const roomRepository = new RoomRepository(process.env.XIANGQI_ROOM_DIR || path.resolve(serverDirectory, '../data/rooms'))
+const gameRepository = new JsonGameRepository(
+  process.env.XIANGQI_DATA_DIR || path.resolve(serverDirectory, '../data/games'),
+)
+const roomRepository = new RoomRepository(
+  process.env.XIANGQI_ROOM_DIR || path.resolve(serverDirectory, '../data/rooms'),
+)
 const gameLeases = new GameLeaseManager()
-await gameRepository.init().catch(error => console.error('Game store initialization failed:', error))
-await roomRepository.init().catch(error => console.error('Room store initialization failed:', error))
+await gameRepository
+  .init()
+  .catch((error) => console.error('Game store initialization failed:', error))
+await roomRepository
+  .init()
+  .catch((error) => console.error('Room store initialization failed:', error))
 app.use(express.json({ limit: '10mb' }))
 app.get('/api/network-info', (_req, res) => {
   res.json({ addresses: listLanIPv4(os.networkInterfaces()) })
 })
-app.use('/api/games', (req, res, next) => {
-  if (!LAN_MODE) return next()
-  const address = req.socket.remoteAddress || ''
-  if (address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1') return next()
-  res.status(403).json({ error: '局域网访客不能访问本机对局库' })
-}, createGameRouter(gameRepository, gameLeases))
+app.use(
+  '/api/games',
+  (req, res, next) => {
+    if (!LAN_MODE) return next()
+    const address = req.socket.remoteAddress || ''
+    if (address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1')
+      return next()
+    res.status(403).json({ error: '局域网访客不能访问本机对局库' })
+  },
+  createGameRouter(gameRepository, gameLeases),
+)
 
 const INITIAL_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
 
@@ -118,7 +134,10 @@ function createEngineSlots(): Record<EngineVariant, EngineSlot> {
   }
 }
 
-async function getEngine(slots: Record<EngineVariant, EngineSlot>, variant: EngineVariant = 'xiangqi'): Promise<PikafishEngine | null> {
+async function getEngine(
+  slots: Record<EngineVariant, EngineSlot>,
+  variant: EngineVariant = 'xiangqi',
+): Promise<PikafishEngine | null> {
   const slot = slots[variant]
   if (slot.disposed) return null
   if (slot.engine && slot.ready) return slot.engine
@@ -174,24 +193,35 @@ function destroyEngineSlots(slots: Record<EngineVariant, EngineSlot>) {
 }
 
 const roomEngineSlots = createEngineSlots()
-const JIEQI_INITIAL_FEN = 'xxxxkxxxx/9/1x5x1/x1x1x1x1x/9/9/X1X1X1X1X/1X5X1/9/XXXXKXXXX w R2A2C2P5N2B2r2a2c2p5n2b2 0 1'
-function roomIdentity(type: string, color: RoomColor) { return color === 'red' ? type.toUpperCase() : type }
+const JIEQI_INITIAL_FEN =
+  'xxxxkxxxx/9/1x5x1/x1x1x1x1x/9/9/X1X1X1X1X/1X5X1/9/XXXXKXXXX w R2A2C2P5N2B2r2a2c2p5n2b2 0 1'
+function roomIdentity(type: string, color: RoomColor) {
+  return color === 'red' ? type.toUpperCase() : type
+}
 async function getRoomHint(room: StoredRoom, viewer: RoomColor): Promise<string | null> {
   if (room.variant === 'gomoku') return null
   const engine = await getEngine(roomEngineSlots, room.variant)
   if (!engine) return null
-  const moves = room.moves.map(move => {
+  const moves = room.moves.map((move) => {
     let text = move.uci
     if (move.revealed) text += roomIdentity(move.revealed, move.color)
-    if (move.capturedHidden && move.captured && move.capturedColor && move.color === viewer) text += roomIdentity(move.captured, move.capturedColor)
+    if (move.capturedHidden && move.captured && move.capturedColor && move.color === viewer)
+      text += roomIdentity(move.captured, move.capturedColor)
     return text
   })
-  const result = await engine.getBestMove(room.variant === 'jieqi' ? JIEQI_INITIAL_FEN : INITIAL_FEN, moves, 'master')
+  const result = await engine.getBestMove(
+    room.variant === 'jieqi' ? JIEQI_INITIAL_FEN : INITIAL_FEN,
+    moves,
+    'master',
+  )
   return result.move?.slice(0, 4) || null
 }
 const roomManager = new RoomManager(roomRepository, getRoomHint)
-void roomManager.cleanup().catch(error => console.error('Room cleanup failed:', error))
-const roomCleanupTimer = setInterval(() => void roomManager.cleanup().catch(error => console.error('Room cleanup failed:', error)), 60 * 60 * 1000)
+void roomManager.cleanup().catch((error) => console.error('Room cleanup failed:', error))
+const roomCleanupTimer = setInterval(
+  () => void roomManager.cleanup().catch((error) => console.error('Room cleanup failed:', error)),
+  60 * 60 * 1000,
+)
 roomCleanupTimer.unref()
 app.use('/api/rooms', createRoomRouter(roomManager))
 
@@ -201,11 +231,16 @@ registerRapfiWebSocketServer(gomokuWss, { lanMode: LAN_MODE, liveEngines: liveRa
 wss.on('connection', async (ws, request) => {
   if (LAN_MODE && request.headers.origin) {
     try {
-      if (new URL(request.headers.origin).host !== request.headers.host) return ws.close(1008, 'Origin not allowed')
-    } catch { return ws.close(1008, 'Origin not allowed') }
+      if (new URL(request.headers.origin).host !== request.headers.host)
+        return ws.close(1008, 'Origin not allowed')
+    } catch {
+      return ws.close(1008, 'Origin not allowed')
+    }
   }
   ;(ws as LiveWebSocket).isAlive = true
-  ws.on('pong', () => { (ws as LiveWebSocket).isAlive = true })
+  ws.on('pong', () => {
+    ;(ws as LiveWebSocket).isAlive = true
+  })
   console.log('Client connected')
 
   const sessionId = makeSessionId()
@@ -249,20 +284,26 @@ wss.on('connection', async (ws, request) => {
     }
   }
 
-  const shouldResumeLocalAnalysis = (variant: EngineVariant) => (
+  const shouldResumeLocalAnalysis = (variant: EngineVariant) =>
     Boolean(localAnalysisRequestId) &&
     localAnalysisVariant === variant &&
     activeAnalysis.get(variant)?.sessionId === sessionId &&
     activeAnalysis.get(variant)?.requestId === localAnalysisRequestId &&
     ws.readyState === WebSocket.OPEN
-  )
 
   ws.on('message', async (data) => {
     try {
       const roomMessage = JSON.parse(data.toString()) as Record<string, unknown>
       if (typeof roomMessage.type === 'string' && roomMessage.type.startsWith('room-')) {
-        try { await roomManager.handle(ws, roomMessage) }
-        catch (error) { sendError(ws, error instanceof Error ? error.message : '房间操作失败', typeof roomMessage.commandId === 'string' ? roomMessage.commandId : undefined) }
+        try {
+          await roomManager.handle(ws, roomMessage)
+        } catch (error) {
+          sendError(
+            ws,
+            error instanceof Error ? error.message : '房间操作失败',
+            typeof roomMessage.commandId === 'string' ? roomMessage.commandId : undefined,
+          )
+        }
         return
       }
       const parsed = parseClientMessage(data.toString())
@@ -276,7 +317,14 @@ wss.on('connection', async (ws, request) => {
         case 'takeover-game': {
           const result = gameLeases.claim(msg.gameId!, ws, msg.type === 'takeover-game')
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'game-lease', requestId: msg.requestId, gameId: msg.gameId, ...result }))
+            ws.send(
+              JSON.stringify({
+                type: 'game-lease',
+                requestId: msg.requestId,
+                gameId: msg.gameId,
+                ...result,
+              }),
+            )
           }
           break
         }
@@ -321,18 +369,25 @@ wss.on('connection', async (ws, request) => {
             const generation = requestGeneration
             const startedAt = Date.now()
             if (requestId) activeFiniteRequests.set(requestId, engine)
-            const result = await engine.getBestMove(fen, moves, requestDifficulty, getSearchLimit(msg))
+            const result = await engine.getBestMove(
+              fen,
+              moves,
+              requestDifficulty,
+              getSearchLimit(msg),
+            )
             if (!result.move) {
               sendError(ws, 'Engine returned no move', requestId)
             } else if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({
-                type: 'bestmove',
-                requestId,
-                move: result.move,
-                elapsedMs: Date.now() - startedAt,
-                requestKind: 'move',
-                searchCapped: result.searchCapped,
-              }))
+              ws.send(
+                JSON.stringify({
+                  type: 'bestmove',
+                  requestId,
+                  move: result.move,
+                  elapsedMs: Date.now() - startedAt,
+                  requestKind: 'move',
+                  searchCapped: result.searchCapped,
+                }),
+              )
             }
           } catch (err) {
             console.error('Engine error:', err)
@@ -358,18 +413,25 @@ wss.on('connection', async (ws, request) => {
             const generation = requestGeneration
             const startedAt = Date.now()
             if (requestId) activeFiniteRequests.set(requestId, engine)
-            const result = await engine.getBestMove(fen, moves, msg.difficulty || 'master', getSearchLimit(msg))
+            const result = await engine.getBestMove(
+              fen,
+              moves,
+              msg.difficulty || 'master',
+              getSearchLimit(msg),
+            )
             if (!result.move) {
               sendError(ws, 'Engine returned no hint', requestId)
             } else if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({
-                type: 'bestmove',
-                requestId,
-                move: result.move,
-                elapsedMs: Date.now() - startedAt,
-                requestKind: 'hint',
-                searchCapped: result.searchCapped,
-              }))
+              ws.send(
+                JSON.stringify({
+                  type: 'bestmove',
+                  requestId,
+                  move: result.move,
+                  elapsedMs: Date.now() - startedAt,
+                  requestKind: 'hint',
+                  searchCapped: result.searchCapped,
+                }),
+              )
             }
           } catch (err) {
             console.error('Hint engine error:', err)
@@ -398,7 +460,13 @@ wss.on('connection', async (ws, request) => {
           try {
             const generation = requestGeneration
             if (requestId) activeFiniteRequests.set(requestId, engine)
-            const candidates = await engine.getCandidates(fen, moves, msg.difficulty || currentDifficulty, msg.count || 3, getSearchLimit(msg))
+            const candidates = await engine.getCandidates(
+              fen,
+              moves,
+              msg.difficulty || currentDifficulty,
+              msg.count || 3,
+              getSearchLimit(msg),
+            )
             if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'candidates', requestId, candidates }))
             }
@@ -451,9 +519,8 @@ wss.on('connection', async (ws, request) => {
               if (generation !== requestGeneration || ws.readyState !== WebSocket.OPEN) break
               const candidate = candidates[0]
               if (!candidate) throw new Error('Engine returned no review candidate')
-              const redToMove = prefixLength % 2 === 0
-                ? initialTurn === 'red'
-                : initialTurn === 'black'
+              const redToMove =
+                prefixLength % 2 === 0 ? initialTurn === 'red' : initialTurn === 'black'
               positions.push({
                 moveIndex: prefixLength - 1,
                 evaluation: redToMove ? candidate.score : -candidate.score,
@@ -461,12 +528,14 @@ wss.on('connection', async (ws, request) => {
                 bestMove: candidate.move,
                 pv: candidate.pv,
               })
-              ws.send(JSON.stringify({
-                type: 'review-progress',
-                requestId,
-                completed: prefixLength + 1,
-                total: moves.length + 1,
-              }))
+              ws.send(
+                JSON.stringify({
+                  type: 'review-progress',
+                  requestId,
+                  completed: prefixLength + 1,
+                  total: moves.length + 1,
+                }),
+              )
             }
 
             if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
@@ -514,7 +583,9 @@ wss.on('connection', async (ws, request) => {
         }
 
         case 'stop': {
-          const analysis = localAnalysisVariant ? activeAnalysis.get(localAnalysisVariant) : undefined
+          const analysis = localAnalysisVariant
+            ? activeAnalysis.get(localAnalysisVariant)
+            : undefined
           const stopsOwnAnalysis =
             analysis?.sessionId === sessionId &&
             (!msg.requestId || analysis.requestId === msg.requestId)
@@ -537,7 +608,8 @@ wss.on('connection', async (ws, request) => {
             const finiteEngine = activeFiniteRequests.get(msg.requestId)
             if (finiteEngine) enginesToInterrupt.add(finiteEngine)
           } else {
-            for (const finiteEngine of activeFiniteRequests.values()) enginesToInterrupt.add(finiteEngine)
+            for (const finiteEngine of activeFiniteRequests.values())
+              enginesToInterrupt.add(finiteEngine)
           }
           if (stopsOwnAnalysis && localAnalysisEngine) enginesToInterrupt.add(localAnalysisEngine)
           for (const engine of enginesToInterrupt) engine.interruptSearch()
@@ -566,7 +638,9 @@ wss.on('connection', async (ws, request) => {
 if (LAN_MODE) {
   const clientDist = path.resolve(serverDirectory, '../client/dist')
   app.use(express.static(clientDist))
-  app.get('*', (req, res, next) => req.path.startsWith('/api/') ? next() : res.sendFile(path.join(clientDist, 'index.html')))
+  app.get('*', (req, res, next) =>
+    req.path.startsWith('/api/') ? next() : res.sendFile(path.join(clientDist, 'index.html')),
+  )
 }
 
 const PORT = process.env.PORT || 3001
@@ -577,7 +651,9 @@ server.listen(Number(PORT), HOST, () => {
   console.log(`WebSocket available at ws://${HOST}:${PORT}/ws`)
   console.log(`Rapfi WebSocket available at ws://${HOST}:${PORT}/gomoku-ws`)
   if (LAN_MODE) {
-    const addresses = listLanIPv4(os.networkInterfaces()).map(address => `http://${address}:${PORT}/?lan=1`)
+    const addresses = listLanIPv4(os.networkInterfaces()).map(
+      (address) => `http://${address}:${PORT}/?lan=1`,
+    )
     for (const address of addresses) console.log(`LAN lobby: ${address}`)
   }
 })
@@ -598,12 +674,14 @@ function shutdown() {
   wss.close()
   gomokuWss.close()
   roomManager.dispose()
-  const serverClosed = new Promise<void>(resolve => server.close(() => resolve()))
-  Promise.allSettled([gameRepository.flush(), roomManager.flush(), serverClosed]).then(results => {
-    const failed = results.some(result => result.status === 'rejected')
-    if (failed) console.error('Shutdown completed with errors:', results)
-    process.exit(failed ? 1 : 0)
-  })
+  const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()))
+  Promise.allSettled([gameRepository.flush(), roomManager.flush(), serverClosed]).then(
+    (results) => {
+      const failed = results.some((result) => result.status === 'rejected')
+      if (failed) console.error('Shutdown completed with errors:', results)
+      process.exit(failed ? 1 : 0)
+    },
+  )
   const forcedExit = setTimeout(() => {
     console.error('Shutdown timed out')
     process.exit(1)

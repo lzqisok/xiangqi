@@ -3056,6 +3056,7 @@ body {
 @media (max-width: 1000px) {
   .lan-ready-layout { grid-template-columns: 1fr; max-width: 680px; }
   .lan-ready-layout > .lan-chat-panel { min-height: 430px; }
+  .lan-ready-layout > .mobile-chat-dock > .lan-chat-panel { min-height: 430px; }
 }
 @media (max-width: 640px) {
   .lan-lobby-switch, .lan-ready-seats { grid-template-columns: 1fr; }
@@ -3378,4 +3379,108 @@ body {
     overflow: visible;
   }
   .gomoku-lan-shell.lan-ready-shell .lan-chat-panel { min-height: 560px; }
+}
+
+/* Shared mobile stage navigation and product states */
+.mobile-stage-bar,
+.mobile-tool-close,
+.mobile-chat-close { display: none; }
+.mobile-chat-dock { display: contents; }
+.lan-ready-layout > .mobile-chat-dock > .lan-chat-panel { min-height: 560px; contain: none; }
+.product-state {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 26px 16px;
+  color: #756a5e;
+  text-align: center;
+}
+.product-state > span { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: #eee6da; color: #8f392f; font: 900 15px 'Noto Serif SC', serif; }
+.product-state > strong { color: #493f35; font-size: 14px; }
+.product-state > small { max-width: 320px; font-size: 11px; line-height: 1.55; }
+.product-state.error > span { background: #fff0ed; color: #a44337; }
+.product-state.loading > span { animation: product-state-pulse 1.2s ease-in-out infinite alternate; }
+.product-state > button { padding: 8px 13px; border: 0; border-radius: 8px; background: #a44337; color: #fff; cursor: pointer; }
+@keyframes product-state-pulse { to { opacity: .45; transform: scale(.92); } }
+
+@media (max-width: 640px) {
+  .app { padding-bottom: 76px; }
+  .mobile-stage-bar {
+    position: fixed;
+    z-index: 950;
+    right: 10px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    left: 10px;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(58px, 1fr);
+    gap: 4px;
+    padding: 6px;
+    border: 1px solid rgba(74,61,45,.14);
+    border-radius: 14px;
+    background: rgba(251,248,241,.96);
+    box-shadow: 0 12px 34px rgba(53,41,29,.23);
+    backdrop-filter: blur(12px);
+  }
+  .mobile-stage-bar button { position: relative; display: grid; place-items: center; min-height: 43px; padding: 5px 7px; border: 0; border-radius: 9px; background: transparent; color: #756a5e; font-size: 11px; font-weight: 800; }
+  .mobile-stage-bar button.active { background: #a44337; color: #fffaf1; }
+  .mobile-stage-bar b { position: absolute; top: 3px; right: 5px; min-width: 16px; padding: 1px 4px; border-radius: 999px; background: #496f5a; color: #fff; font-size: 8px; }
+  .workspace-tabs { display: none; }
+  .side-panel { height: 0; min-height: 0; overflow: visible; border: 0; background: transparent; box-shadow: none; }
+  .workspace-tool-content {
+    position: fixed;
+    z-index: 900;
+    right: 8px;
+    bottom: calc(68px + env(safe-area-inset-bottom));
+    left: 8px;
+    max-height: min(58dvh, 520px);
+    overflow-y: auto;
+    border: 1px solid rgba(74,61,45,.14);
+    border-radius: 16px 16px 10px 10px;
+    background: #fbf8f1;
+    box-shadow: 0 -14px 40px rgba(48,37,26,.24);
+    transform: translateY(calc(100% + 90px));
+    transition: transform .22s ease;
+    pointer-events: none;
+  }
+  .side-panel.mobile-tools-open .workspace-tool-content { transform: translateY(0); pointer-events: auto; }
+  .mobile-tool-close,
+  .mobile-chat-close {
+    position: sticky;
+    z-index: 4;
+    top: 0;
+    display: block;
+    width: 100%;
+    min-height: 34px;
+    border: 0;
+    border-bottom: 1px solid rgba(74,61,45,.1);
+    background: #f2ede4;
+    color: #756a5e;
+    font-size: 11px;
+    font-weight: 800;
+  }
+  .mobile-chat-dock {
+    position: fixed;
+    z-index: 900;
+    right: 8px;
+    bottom: calc(68px + env(safe-area-inset-bottom));
+    left: 8px;
+    display: block;
+    max-height: min(58dvh, 520px);
+    overflow: hidden;
+    border-radius: 16px 16px 10px 10px;
+    background: #fbf8f1;
+    box-shadow: 0 -14px 40px rgba(48,37,26,.24);
+    transform: translateY(calc(100% + 90px));
+    transition: transform .22s ease;
+    pointer-events: none;
+  }
+  .mobile-chat-dock.open { transform: translateY(0); pointer-events: auto; }
+  .mobile-chat-dock > .lan-chat-panel { width: 100%; min-height: min(52dvh, 460px); max-height: min(52dvh, 460px); border-radius: 0; box-shadow: none; }
+  .mobile-chat-dock + .mobile-stage-bar { grid-auto-columns: 1fr; }
+  .lan-ready-layout > .mobile-chat-dock { min-height: 0; }
+  .lan-ready-layout > .mobile-chat-dock > .lan-chat-panel { min-height: min(52dvh, 460px); }
+  .lan-ready-shell,
+  .lan-room-shell { padding-bottom: 78px; }
 }

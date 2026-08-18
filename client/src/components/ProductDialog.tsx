@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 
 export type ProductDialogField = {
   name: string
@@ -39,6 +39,15 @@ export default function ProductDialog({
   const initialValues = useMemo(() => Object.fromEntries(fields.map(field => [field.name, field.initialValue || ''])), [fields])
   const [values, setValues] = useState<Record<string, string>>(initialValues)
   const canConfirm = fields.every(field => !field.required || values[field.name]?.trim())
+
+  useEffect(() => {
+    if (cancelLabel === null) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onCancel()
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [cancelLabel, onCancel])
 
   const submit = (event: FormEvent) => {
     event.preventDefault()

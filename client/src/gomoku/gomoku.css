@@ -191,6 +191,8 @@
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
 }
+.gomoku-panel-slot { display: contents; }
+.gomoku-mobile-panel-close { display: none; }
 .gomoku-panel { padding: 17px; border-radius: 14px; }
 .gomoku-panel h3 { margin: 0 0 14px; color: var(--gomoku-ink); font: 900 17px 'Noto Serif SC', serif; letter-spacing: 1px; }
 .gomoku-status-main { margin: 0; color: var(--gomoku-accent); font: 900 22px 'Noto Serif SC', serif; }
@@ -263,7 +265,7 @@
   font-size: 12px;
   font-weight: 700;
 }
-.gomoku-switch { position: relative; width: 40px; height: 22px; flex-shrink: 0; border-radius: 999px; background: #cfc4b6; cursor: pointer; transition: background .2s; }
+.gomoku-switch { position: relative; width: 40px; height: 22px; flex-shrink: 0; padding: 0; border: 0; border-radius: 999px; background: #cfc4b6; cursor: pointer; transition: background .2s; }
 .gomoku-switch--on { background: var(--gomoku-green); }
 .gomoku-switch--disabled { opacity: .45; cursor: not-allowed; }
 .gomoku-switch-knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fffdf8; box-shadow: 0 2px 5px rgba(0,0,0,.16); transition: transform .2s; }
@@ -466,15 +468,38 @@
   .gomoku-side-panels .gomoku-panel:last-child { grid-column: 1 / -1; }
 }
 
-@media (max-width: 620px) {
-  .gomoku-page { padding: 12px; }
+@media (max-width: 640px) {
+  .gomoku-page { padding: 12px 12px 78px; }
   .gomoku-header { margin-bottom: 10px; }
   .gomoku-brand strong { font-size: 18px; }
   .gomoku-home-link { padding: 8px 10px; }
   .gomoku-panel { padding: 11px; }
   .gomoku-panel h3 { margin-bottom: 9px; font-size: 16px; }
   .gomoku-board-container { border-width: 5px; }
-  .gomoku-side-panels { display: flex; flex-direction: column; }
+  .gomoku-side-panels {
+    position: fixed;
+    z-index: 900;
+    right: 8px;
+    bottom: calc(68px + env(safe-area-inset-bottom));
+    left: 8px;
+    display: block;
+    max-height: min(58dvh, 520px);
+    overflow-y: auto;
+    border: 1px solid rgba(74,61,45,.14);
+    border-radius: 16px 16px 10px 10px;
+    background: #fbf8f1;
+    box-shadow: 0 -14px 40px rgba(48,37,26,.24);
+    transform: translateY(calc(100% + 90px));
+    transition: transform .22s ease;
+    pointer-events: none;
+  }
+  .gomoku-side-panels.mobile-panel-open { transform: translateY(0); pointer-events: auto; }
+  .gomoku-side-panels .gomoku-panel-slot { display: none; }
+  .gomoku-side-panels.mobile-stage-status .gomoku-panel-slot.status,
+  .gomoku-side-panels.mobile-stage-settings .gomoku-panel-slot.settings,
+  .gomoku-side-panels.mobile-stage-review .gomoku-panel-slot.review { display: block; }
+  .gomoku-side-panels .gomoku-panel { border: 0; border-radius: 0; box-shadow: none; }
+  .gomoku-mobile-panel-close { position: sticky; z-index: 4; bottom: 0; display: block; width: 100%; min-height: 34px; border: 0; border-top: 1px solid rgba(74,61,45,.1); background: #f2ede4; color: #756a5e; font-size: 11px; font-weight: 800; }
   .gomoku-settings-panel { display: grid; row-gap: 7px; }
   .gomoku-mode-config { row-gap: 7px; }
   .gomoku-settings-panel > h3 { margin-bottom: 0; }

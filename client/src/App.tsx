@@ -13,6 +13,8 @@ import ReviewPanel from './components/ReviewPanel'
 import VariationPanel from './components/VariationPanel'
 import StudyLibrary from './components/StudyLibrary'
 import ProductDialog, { ProductDialogRequest } from './components/ProductDialog'
+import MobileStageBar from './components/MobileStageBar'
+import ProductState from './components/ProductState'
 import { useGame } from './hooks/useGame'
 import { BUILTIN_ENDGAMES } from './endgames/builtin'
 import {
@@ -166,6 +168,7 @@ function LocalApp() {
   const [candidateAutoRefresh, setCandidateAutoRefresh] = useState(false)
   const [candidatePreview, setCandidatePreview] = useState<CandidatePreviewState | null>(null)
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('play')
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false)
   const [studySaveStatus, setStudySaveStatus] = useState<'saved' | 'unsaved' | 'shared' | null>(null)
   const [engineSettings, setEngineSettings] = useState<EngineSettings>(() => loadEngineSettings())
   const [trainingHintLevel, setTrainingHintLevel] = useState(0)
@@ -429,6 +432,10 @@ function LocalApp() {
   const selectedStudyIsPersisted = Boolean(selectedStudy && studies.some(study => study.id === selectedStudy.id))
   const lastSavedStudySignatureRef = useRef<string | null>(null)
   const canRequestTrainingHint = Boolean(selectedEndgame?.solution?.length) && game.gameStatus === 'playing'
+  const selectWorkspaceTab = (tab: WorkspaceTab) => {
+    setWorkspaceTab(tab)
+    setMobileToolsOpen(true)
+  }
 
   useEffect(() => {
     if (gameMode !== 'jieqi') return
@@ -883,19 +890,20 @@ function LocalApp() {
             />
           )}
         </div>
-        <div className="side-panel">
+        <div className={`side-panel ${mobileToolsOpen ? 'mobile-tools-open' : ''}`}>
           <nav className="workspace-tabs" aria-label="棋局工具">
-            <button className={workspaceTab === 'play' ? 'active' : ''} onClick={() => setWorkspaceTab('play')}>{gameFinished ? '结果' : '对局'}</button>
-            <button className={workspaceTab === 'history' ? 'active' : ''} onClick={() => setWorkspaceTab('history')}>棋谱{game.historyRecords.length > 0 ? <span>{game.historyRecords.length}</span> : null}</button>
-            {gameMode !== 'jieqi' && <button className={workspaceTab === 'engine' ? 'active' : ''} onClick={() => setWorkspaceTab('engine')}>分析</button>}
-            {showReviewTab && <button className={workspaceTab === 'review' ? 'active' : ''} onClick={() => setWorkspaceTab('review')}>
+            <button className={workspaceTab === 'play' ? 'active' : ''} onClick={() => selectWorkspaceTab('play')}>{gameFinished ? '结果' : '对局'}</button>
+            <button className={workspaceTab === 'history' ? 'active' : ''} onClick={() => selectWorkspaceTab('history')}>棋谱{game.historyRecords.length > 0 ? <span>{game.historyRecords.length}</span> : null}</button>
+            {gameMode !== 'jieqi' && <button className={workspaceTab === 'engine' ? 'active' : ''} onClick={() => selectWorkspaceTab('engine')}>分析</button>}
+            {showReviewTab && <button className={workspaceTab === 'review' ? 'active' : ''} onClick={() => selectWorkspaceTab('review')}>
               复盘{moveReviews.length > 0 ? <span>{moveReviews.length}</span> : null}
             </button>}
-            {showVariationsTab && <button className={workspaceTab === 'variations' ? 'active' : ''} onClick={() => setWorkspaceTab('variations')}>
+            {showVariationsTab && <button className={workspaceTab === 'variations' ? 'active' : ''} onClick={() => selectWorkspaceTab('variations')}>
               变招{game.variationBranchCount > 0 ? <span>{game.variationBranchCount}</span> : null}
             </button>}
           </nav>
           <div className="workspace-tool-content">
+          <button className="mobile-tool-close" onClick={() => setMobileToolsOpen(false)} aria-label="收起阶段工具">收起</button>
           {workspaceTab === 'history' && <MoveHistory
             moves={game.historyRecords}
             currentIndex={game.currentMoveIndex}
@@ -1128,6 +1136,19 @@ function LocalApp() {
           </div>
         </div>
       </div>
+      <MobileStageBar
+        items={[
+          { id: 'play', label: gameFinished ? '结果' : '对局' },
+          { id: 'history', label: '棋谱', badge: game.historyRecords.length },
+          { id: 'engine', label: '分析', available: gameMode !== 'jieqi' },
+          { id: 'review', label: '复盘', badge: moveReviews.length, available: showReviewTab },
+          { id: 'variations', label: '变招', badge: game.variationBranchCount, available: showVariationsTab },
+        ]}
+        active={workspaceTab}
+        open={mobileToolsOpen}
+        onSelect={selectWorkspaceTab}
+        onClose={() => setMobileToolsOpen(false)}
+      />
 
       {showFenDialog === 'export' && (
         <FenDialog
@@ -1480,8 +1501,8 @@ function StartScreen({ games, loading, storeError, starting, onRetry, onOpen, on
             </div>
           </div>
           {storeError && <div className="saved-games-error">{storeError} <button onClick={onRetry}>重试</button></div>}
-          {loading ? <div className="saved-games-empty">正在读取…</div> : games.length === 0 ? (
-            <div className="saved-games-empty">还没有保存的对局</div>
+          {loading ? <ProductState kind="loading" title="正在读取对局" /> : games.length === 0 ? (
+            <ProductState title="还没有保存的对局" description="完成或开始一盘本地对局后，会自动显示在这里。" />
           ) : (
             <div className="saved-games-list">
               {games.slice(0, 8).map(item => (

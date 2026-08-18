@@ -141,9 +141,15 @@ export function GameControls() {
 
       <label className="gomoku-switch-control">
         <span>启用禁手（仅黑方）</span>
-        <div className={`gomoku-switch ${forbiddenEnabled ? 'gomoku-switch--on' : ''} ${locked ? 'gomoku-switch--disabled' : ''}`} onClick={() => !locked && setForbiddenEnabled(!forbiddenEnabled)}>
-          <div className="gomoku-switch-knob"></div>
-        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={forbiddenEnabled}
+          aria-label="启用黑方禁手"
+          disabled={locked}
+          className={`gomoku-switch ${forbiddenEnabled ? 'gomoku-switch--on' : ''} ${locked ? 'gomoku-switch--disabled' : ''}`}
+          onClick={() => setForbiddenEnabled(!forbiddenEnabled)}
+        ><span className="gomoku-switch-knob" /></button>
       </label>
 
       {locked && <p className="gomoku-tip">已开局，模式/禁手设置将在下一局生效。</p>}

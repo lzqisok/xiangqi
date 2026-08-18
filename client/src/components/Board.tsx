@@ -324,6 +324,7 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
     <div className="board-wrapper">
       <canvas
         ref={canvasRef}
+        aria-label={`中国象棋棋盘，${interactionDisabled ? '当前不可操作' : '可落子'}`}
         className={`board-canvas ${interactionDisabled ? 'interaction-disabled' : ''}`}
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}

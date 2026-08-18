@@ -4087,9 +4087,25 @@ body {
   border-radius: 9px;
   background: #fffaf0;
 }
-.lan-room-card span:last-child {
-  grid-column: 1 / -1;
+.lan-room-card > strong,
+.lan-room-card > span {
+  grid-column: 1;
+}
+.lan-room-card .lan-room-details {
   color: #756451;
+}
+.lan-room-card .lan-room-action {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  align-self: center;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: rgba(123, 48, 40, 0.08);
+  color: #7b3028;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  white-space: nowrap;
 }
 .lan-error,
 .lan-warning {
@@ -4103,6 +4119,17 @@ body {
 .lan-warning {
   background: #fff0c7;
   color: #745200;
+}
+.lan-history-notice {
+  width: min(1180px, calc(100% - 32px));
+  margin: 10px auto;
+  padding: 11px 14px;
+  border: 1px solid rgba(63, 107, 88, 0.22);
+  border-radius: 9px;
+  background: rgba(233, 242, 237, 0.94);
+  color: #365d4d;
+  font-size: 12px;
+  text-align: center;
 }
 .lan-seats {
   display: grid;
@@ -4995,6 +5022,15 @@ body {
   color: #fff;
   font-size: 11px;
   font-weight: 700;
+}
+.lan-chat-readonly {
+  padding: 9px 10px;
+  border: 1px solid #d8c8ad;
+  border-radius: 7px;
+  background: #f4eee4;
+  color: #776654;
+  font-size: 11px;
+  text-align: center;
 }
 .lan-captured {
   width: min(592px, 100%);

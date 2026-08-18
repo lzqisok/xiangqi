@@ -154,5 +154,7 @@ export type RoomSnapshot = {
   pendingSwapBy?: RoomColor
   pendingSwapDeadline?: number
   applications?: Array<{ id: string; nickname: string; side: RoomColor }>
-  disconnect?: { color: RoomColor; deadline: number }
+  ownerDisconnectDeadline?: number
+  seatDisconnectDeadlines?: Partial<Record<RoomColor, number>>
+  disconnect?: { color: RoomColor | 'both'; deadline: number }
 }

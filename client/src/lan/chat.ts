@@ -15,9 +15,9 @@ export function getLanChatRole(
       : message.role === 'black'
         ? sideLabels.black
         : message.role === 'owner'
-          ? '房主'
+          ? '发起人'
           : '观众'
-  return message.isOwner && message.role !== 'owner' ? `房主·${role}` : role
+  return message.isOwner && message.role !== 'owner' ? `发起人·${role}` : role
 }
 
 export function getLanChatContentLength(content: string) {

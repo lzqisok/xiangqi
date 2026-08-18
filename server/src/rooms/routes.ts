@@ -38,7 +38,7 @@ export function createRoomRouter(manager: RoomManager): Router {
       if (!rate || now - rate.startedAt >= 60_000)
         createRates.set(key, { startedAt: now, count: 1 })
       else if (++rate.count > 10)
-        return res.status(429).json({ error: '创建房间过于频繁，请稍后再试' })
+        return res.status(429).json({ error: '创建对局过于频繁，请稍后再试' })
       if (
         req.body?.variant !== 'xiangqi' &&
         req.body?.variant !== 'jieqi' &&
@@ -62,12 +62,12 @@ export function createRoomRouter(manager: RoomManager): Router {
         inviteToken: created.inviteToken,
       })
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : '创建房间失败' })
+      res.status(400).json({ error: error instanceof Error ? error.message : '创建对局失败' })
     }
   })
   router.get('/:id', (req, res) => {
     const room = manager.publicRoom(req.params.id)
-    if (!room) return res.status(404).json({ error: '房间不存在' })
+    if (!room) return res.status(404).json({ error: '对局不存在' })
     res.json({ room })
   })
   return router

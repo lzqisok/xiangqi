@@ -38,6 +38,16 @@ export function saveLanToken(id: string, token: string) {
     return false
   }
 }
+export function forgetLanRoom(id: string) {
+  try {
+    localStorage.removeItem(key(id))
+    localStorage.removeItem(`xiangqi-lan-invite:${id}`)
+    const recent = getLanRecentRooms().filter((item) => item.id !== id)
+    localStorage.setItem('xiangqi-lan-recent', JSON.stringify(recent))
+  } catch {
+    /* Storage is optional. */
+  }
+}
 export type LanRecentRoom = {
   id: string
   name: string
@@ -219,7 +229,18 @@ export function useLanRoom<T extends AnyLanRoomSnapshot = LanRoomSnapshot>(
           )
         } else if (message.type === 'room-chat-ack') {
           finishChatCommand(String(message.commandId || ''))
+        } else if (message.type === 'room-seat-lost') {
+          if (!roomRef.current?.isOwner) {
+            tokenRef.current = ''
+            setRecoveryToken('')
+            try {
+              localStorage.removeItem(key(roomId))
+            } catch {
+              /* Storage is optional. */
+            }
+          }
         } else if (message.type === 'room-closed') {
+          forgetLanRoom(roomId)
           location.href = roomRef.current?.variant === 'gomoku' ? '?gomoku=1&lan=1' : '?lan=1'
         } else if (message.type === 'error') {
           const requestId = String(message.requestId || '')

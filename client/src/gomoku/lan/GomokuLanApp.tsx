@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { type MouseEvent, useEffect, useMemo, useState } from 'react'
 import { createGomokuLanRoom, listLanRoomHistory, listLanRooms } from '../../lan/api'
 import { copyLanText } from '../../lan/browser'
 import { resolveLanShareUrl } from '../../lan/network'
@@ -116,7 +116,7 @@ function Lobby({
       <header className="lan-header">
         <div>
           <h1>五子棋局域网对战</h1>
-          <p>同一局域网内创建房间、邀请棋友、聊天或观战</p>
+          <p>同一局域网内创建对局、邀请棋友、聊天或观战</p>
         </div>
         <a href="?type=gomoku">返回模式选择</a>
       </header>
@@ -126,13 +126,13 @@ function Lobby({
           onClick={() => setLobbyView('find')}
         >
           <strong>找对局</strong>
-          <span>浏览可加入、进行中和最近房间</span>
+          <span>浏览可加入、进行中和历史对局</span>
         </button>
         <button
           className={lobbyView === 'create' ? 'active' : ''}
           onClick={() => setLobbyView('create')}
         >
-          <strong>创建房间</strong>
+          <strong>创建对局</strong>
           <span>选择规则并邀请棋友</span>
         </button>
       </nav>
@@ -146,7 +146,7 @@ function Lobby({
         >
           <div className="lan-create-heading">
             <div>
-              <h2>创建五子棋房间</h2>
+              <h2>创建五子棋对局</h2>
               <p>创建后进入独立准备室，双方就座并准备后开局。</p>
             </div>
           </div>
@@ -160,7 +160,7 @@ function Lobby({
               />
             </label>
             <label>
-              房间名称
+              对局名称
               <input
                 value={name}
                 maxLength={60}
@@ -203,8 +203,8 @@ function Lobby({
         <section className="lan-lobby card">
           <div className="lan-lobby-heading">
             <div>
-              <h2>房间列表</h2>
-              <p>公开、最近进入和最近结束统一展示</p>
+              <h2>对局大厅</h2>
+              <p>可加入和进行中属于实时对局，已结束仅供查看记录</p>
             </div>
             <div className="lan-room-filters">
               {(['all', 'waiting', 'playing', 'finished', 'recent'] as const).map((filter) => (
@@ -218,7 +218,7 @@ function Lobby({
                       all: '全部',
                       waiting: '可加入',
                       playing: '进行中',
-                      finished: '已结束',
+                      finished: '历史记录',
                       recent: '最近进入',
                     }[filter]
                   }
@@ -228,11 +228,11 @@ function Lobby({
           </div>
           {roomItems.length === 0 && recentOnly.length === 0 ? (
             <ProductState
-              title="当前筛选下没有房间"
+              title="当前筛选下没有对局"
               description={
                 roomFilter === 'waiting'
-                  ? '可以创建一个房间并邀请棋友加入。'
-                  : '切换筛选条件看看其他房间。'
+                  ? '可以创建一个对局并邀请棋友加入。'
+                  : '切换筛选条件看看其他对局。'
               }
             />
           ) : (
@@ -243,6 +243,13 @@ function Lobby({
                   name={room.name}
                   meta={`${room.gomokuRule === 'renju' ? '黑方禁手' : '标准五子棋'} · ${room.phase === 'waiting' ? '可加入' : room.phase === 'playing' ? '进行中' : resultText(room.status, room.statusReason)}${isRecent ? ' · 最近进入' : ''}`}
                   details={`黑：${room.red || '空席'}　白：${room.black || '空席'}　${room.phase === 'finished' ? `共 ${room.moveCount} 手` : `观众 ${room.spectatorCount}`}`}
+                  actionLabel={
+                    room.phase === 'waiting'
+                      ? '加入对局'
+                      : room.phase === 'playing'
+                        ? '进入观战'
+                        : '查看结果'
+                  }
                   onOpen={() => enter(room.id)}
                 />
               ))}
@@ -257,9 +264,10 @@ function Lobby({
                       : item.role === 'black'
                         ? '白方席位'
                         : item.role === 'owner'
-                          ? '房主'
+                          ? '发起人'
                           : '观众'
                   }
+                  actionLabel="查看记录"
                   onOpen={() => enter(item.id)}
                 />
               ))}
@@ -288,22 +296,40 @@ function Room({
   const [creatingRematch, setCreatingRematch] = useState(false)
   const [localError, setLocalError] = useState('')
   const [dangerAction, setDangerAction] = useState<'dissolve' | 'resign' | null>(null)
+  const [returnAction, setReturnAction] = useState<'leave-seat' | 'disconnect' | null>(null)
+  const [returnAfterLeaving, setReturnAfterLeaving] = useState(false)
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 250)
     return () => clearInterval(timer)
   }, [])
+  useEffect(() => {
+    if (returnAfterLeaving && room?.phase === 'waiting' && room.role === 'spectator')
+      location.href = '?gomoku=1&lan=1'
+  }, [returnAfterLeaving, room?.phase, room?.role])
   if (!room)
     return (
       <div className="lan-shell lan-room-shell">
         <ProductState
           kind={error ? 'error' : 'loading'}
-          title={error ? '无法进入房间' : connected ? '正在同步房间' : '正在连接服务'}
-          description={error || '请稍候，正在恢复房间阶段与席位。'}
+          title={error ? '无法打开对局' : connected ? '正在同步对局' : '正在连接服务'}
+          description={error || '请稍候，正在恢复对局阶段与席位。'}
         />
       </div>
     )
   const color = room.role === 'red' || room.role === 'black' ? room.role : null,
     incomingInvite = new URLSearchParams(location.search).get('invite') || ''
+  const requestReturn = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (room.phase === 'waiting' && room.isOwner) {
+      event.preventDefault()
+      setDangerAction('dissolve')
+    } else if (room.phase === 'waiting' && color) {
+      event.preventDefault()
+      setReturnAction('leave-seat')
+    } else if (room.phase === 'playing' && color) {
+      event.preventDefault()
+      setReturnAction('disconnect')
+    }
+  }
   const sideName = (side: PieceColor) => (side === 'red' ? '黑方' : '白方')
   const act = (side: PieceColor) => {
     if (color === side) return send('room-ready', { ready: !room.seats[side]!.ready })
@@ -358,7 +384,7 @@ function Room({
       url.searchParams.set('room', created.room.id)
       location.href = url.toString()
     } catch (cause) {
-      setLocalError(cause instanceof Error ? cause.message : '创建新房间失败')
+      setLocalError(cause instanceof Error ? cause.message : '创建新对局失败')
       setCreatingRematch(false)
     }
   }
@@ -378,6 +404,15 @@ function Room({
   }
   const proposalCountdown = (deadline?: number) =>
     deadline ? Math.max(0, Math.ceil((deadline - now) / 1000)) : 0
+  const ownerOfflineCountdown = room.ownerDisconnectDeadline
+    ? proposalCountdown(room.ownerDisconnectDeadline)
+    : null
+  const seatStatus = (side: PieceColor) => {
+    const seat = room.seats[side]
+    if (!seat) return '席位空缺'
+    const deadline = room.seatDisconnectDeadlines?.[side]
+    return `${seat.nickname} · ${seat.online ? '在线' : '离线'} · ${seat.ready ? '已准备' : '未准备'}${deadline ? ` · ${proposalCountdown(deadline)} 秒后释放` : ''}`
+  }
   if (room.phase === 'waiting')
     return (
       <div className="lan-shell lan-room-shell gomoku-lan-shell lan-ready-shell">
@@ -389,9 +424,16 @@ function Room({
               {connected ? '已连接' : '重连中'}
             </p>
           </div>
-          <a href="?gomoku=1&lan=1">返回大厅</a>
+          <a href="?gomoku=1&lan=1" onClick={requestReturn}>
+            返回大厅
+          </a>
         </header>
         {(error || localError) && <div className="lan-error">{error || localError}</div>}
+        {ownerOfflineCountdown !== null && (
+          <div className="lan-warning">
+            发起人已离线，对局将在 {ownerOfflineCountdown} 秒后自动取消
+          </div>
+        )}
         <main className="lan-ready-layout">
           <section className="lan-ready-room card">
             <div className="lan-ready-heading">
@@ -419,18 +461,17 @@ function Room({
                 const seat = room.seats[side],
                   current = color === side
                 const disabled =
-                  pending || Boolean(!color && seat) || Boolean(color && seat && room.pendingSwapBy)
+                  pending ||
+                  ownerOfflineCountdown !== null ||
+                  Boolean(!color && seat) ||
+                  Boolean(color && seat && room.pendingSwapBy)
                 return (
                   <LanReadySeat
                     key={side}
                     side={side}
                     mark={side === 'red' ? '●' : '○'}
                     title={`${sideName(side)} · ${side === 'red' ? '先手' : '后手'}`}
-                    status={
-                      seat
-                        ? `${seat.nickname} · ${seat.online ? '在线' : '离线'} · ${seat.ready ? '已准备' : '未准备'}`
-                        : '席位空缺'
-                    }
+                    status={seatStatus(side)}
                     current={current}
                     disabled={disabled}
                     actionLabel={seatActionText(side)}
@@ -489,6 +530,7 @@ function Room({
                   disabled={
                     !room.inviteAvailable ||
                     !inviteToken ||
+                    ownerOfflineCountdown !== null ||
                     Boolean(room.seats.red && room.seats.black)
                   }
                   onClick={() => void copy(inviteUrl, '邀请链接已复制')}
@@ -514,7 +556,7 @@ function Room({
               </label>
             )}
             <details className="lan-room-management">
-              <summary>房间管理</summary>
+              <summary>对局管理</summary>
               <div>
                 {color && <button onClick={() => send('room-leave-seat')}>退出席位并观战</button>}
                 {color && (
@@ -533,7 +575,7 @@ function Room({
                     disabled={pending}
                     onClick={() => setDangerAction('dissolve')}
                   >
-                    解散房间
+                    取消对局
                   </button>
                 )}
               </div>
@@ -556,14 +598,26 @@ function Room({
         </main>
         {dangerAction && (
           <ProductDialog
-            title="解散房间"
-            description="房间将立即关闭，所有棋手和观众都会离开。"
-            confirmLabel="确认解散"
+            title="取消对局并返回？"
+            description="对局尚未开始，返回大厅后当前对局将立即取消，席位、聊天和邀请链接都会失效。"
+            confirmLabel="取消对局并返回"
             dangerous
             onCancel={() => setDangerAction(null)}
             onConfirm={() => {
-              send('room-dissolve')
-              setDangerAction(null)
+              if (send('room-dissolve')) setDangerAction(null)
+            }}
+          />
+        )}
+        {returnAction === 'leave-seat' && (
+          <ProductDialog
+            title="释放席位并返回？"
+            description="返回大厅后将立即释放当前席位，其他棋友可以重新加入。"
+            confirmLabel="释放席位并返回"
+            onCancel={() => setReturnAction(null)}
+            onConfirm={() => {
+              if (!send('room-leave-seat')) return
+              setReturnAfterLeaving(true)
+              setReturnAction(null)
             }}
           />
         )}
@@ -578,18 +632,29 @@ function Room({
             <small>GOMOKU LAN</small>
             <h1>{room.name}</h1>
             <p>
-              <b className={connected ? 'online' : ''}>{connected ? '已连接' : '重连中'}</b>
+              <b className={room.phase === 'playing' && connected ? 'online' : ''}>
+                {room.phase === 'playing' ? (connected ? '已连接' : '重连中') : '历史记录'}
+              </b>
               <em>{room.gomokuRule === 'renju' ? '黑方禁手' : '标准五子棋'}</em>
-              <em>{room.phase === 'playing' ? '进行中' : '已结束'}</em>
+              <em>{room.phase === 'playing' ? '进行中' : '只读查看'}</em>
             </p>
           </div>
         </div>
-        <a href="?gomoku=1&lan=1">返回大厅</a>
+        <a href="?gomoku=1&lan=1" onClick={requestReturn}>
+          返回大厅
+        </a>
       </header>
       {(error || localError) && <div className="gomoku-room-toast">{error || localError}</div>}
+      {room.phase === 'finished' && (
+        <div className="lan-history-notice">
+          本局已结束。当前页面仅供查看结果、棋谱和历史聊天，不再恢复实时席位。
+        </div>
+      )}
       {countdown !== null && (
         <div className="gomoku-room-toast warning">
-          {sideName(room.disconnect!.color)}已断线，{countdown} 秒后判负
+          {room.disconnect!.color === 'both'
+            ? `双方已断线，${countdown} 秒后按和棋结束`
+            : `${sideName(room.disconnect!.color)}已断线，${countdown} 秒后判负`}
         </div>
       )}
       <div className="gomoku-lan-game">
@@ -613,13 +678,23 @@ function Room({
           <aside className="gomoku-room-panel">
             <div className="gomoku-room-summary">
               <div>
-                <small>{color ? '我的身份' : room.isOwner ? '房主身份' : '当前身份'}</small>
+                <small>
+                  {room.phase === 'finished'
+                    ? '本局身份'
+                    : color
+                      ? '我的身份'
+                      : room.isOwner
+                        ? '发起人身份'
+                        : '当前身份'}
+                </small>
                 <h2>
-                  {color
-                    ? `你执${sideName(color).slice(0, 1)}`
-                    : room.isOwner
-                      ? '房主观战'
-                      : '观战中'}
+                  {room.phase === 'finished' && !color
+                    ? '对局记录'
+                    : color
+                      ? `${room.phase === 'finished' ? '本局' : '你'}执${sideName(color).slice(0, 1)}`
+                      : room.isOwner
+                        ? '发起人观战'
+                        : '观战中'}
                 </h2>
               </div>
               <span>{phaseText}</span>
@@ -637,7 +712,15 @@ function Room({
                         <em>{side === 'red' ? '先手' : '后手'}</em>
                       </strong>
                       <small>{seat ? seat.nickname : '等待棋手加入'}</small>
-                      <i>{seat ? `${seat.online ? '在线' : '离线'}` : '空席'}</i>
+                      <i>
+                        {seat
+                          ? room.phase === 'finished'
+                            ? '本局棋手'
+                            : seat.online
+                              ? '在线'
+                              : '离线'
+                          : '空席'}
+                      </i>
                     </div>
                   </div>
                 )
@@ -734,7 +817,7 @@ function Room({
                 disabled={creatingRematch}
                 onClick={() => void rematch()}
               >
-                {creatingRematch ? '正在创建新房间…' : '再来一局'}
+                {creatingRematch ? '正在创建新对局…' : '再来一局'}
               </button>
             )}
             {copyState && <small className="gomoku-copy-state">{copyState}</small>}
@@ -774,24 +857,37 @@ function Room({
               mute={state.muteChatMember}
               updateSettings={state.updateChatSettings}
               sideLabels={{ red: '黑方', black: '白方' }}
+              readOnly={room.phase === 'finished'}
             />
           </MobileChatDock>
         </div>
       </div>
       {dangerAction && (
         <ProductDialog
-          title={dangerAction === 'dissolve' ? '解散房间' : '确认认输'}
+          title={dangerAction === 'dissolve' ? '取消对局' : '确认认输'}
           description={
             dangerAction === 'dissolve'
-              ? '房间将立即关闭，所有棋手和观众都会离开。'
+              ? '对局将立即取消，所有棋手和观众都会离开。'
               : '当前对局将立即结束，并判对方获胜。'
           }
-          confirmLabel={dangerAction === 'dissolve' ? '确认解散' : '确认认输'}
+          confirmLabel={dangerAction === 'dissolve' ? '确认取消' : '确认认输'}
           dangerous
           onCancel={() => setDangerAction(null)}
           onConfirm={() => {
             send(dangerAction === 'dissolve' ? 'room-dissolve' : 'room-resign')
             setDangerAction(null)
+          }}
+        />
+      )}
+      {returnAction === 'disconnect' && (
+        <ProductDialog
+          title="离开进行中的对局？"
+          description="返回大厅后你将进入断线倒计时；如果未及时返回，系统会判你超时负。"
+          confirmLabel="确认离开"
+          dangerous
+          onCancel={() => setReturnAction(null)}
+          onConfirm={() => {
+            location.href = '?gomoku=1&lan=1'
           }}
         />
       )}
@@ -839,7 +935,12 @@ function Proposal({
   )
 }
 function resultText(status: string, reason?: string) {
-  if (status === 'draw') return reason === 'full-board' ? '和棋（棋盘已满）' : '和棋'
+  if (status === 'draw')
+    return reason === 'full-board'
+      ? '和棋（棋盘已满）'
+      : reason === 'abandoned'
+        ? '和棋（双方离线）'
+        : '和棋'
   const winner = status === 'red-wins' ? '黑方胜' : '白方胜'
   return reason === 'forbidden'
     ? `${winner}（黑方禁手）`

@@ -294,7 +294,7 @@ test('room chat supports every role without changing the gameplay revision', asy
         commandId: 'chat-delete-denied',
         messageId: targetId,
       }),
-    /只有房主/,
+    /只有对局发起人/,
   )
   await manager.handle(owner, {
     type: 'room-chat-delete',
@@ -380,7 +380,7 @@ test('room owner can mute members, mute everyone, and filter sensitive messages'
         authorId,
         muted: true,
       }),
-    /只有房主/,
+    /只有对局发起人/,
   )
   await manager.handle(owner, {
     type: 'room-chat-mute',
@@ -418,7 +418,7 @@ test('room owner can mute members, mute everyone, and filter sensitive messages'
         commandId: 'moderation-muted-send',
         content: '发不出去',
       }),
-    /已被房主禁言/,
+    /已被对局发起人禁言/,
   )
 
   const introMessageId = String(chatMessages(ownerMessages)[0].id)
@@ -723,10 +723,50 @@ test('room actions enforce hint quota, negotiated undo, draw, and disconnect los
     commandId: 'draw-accept',
   })
   assert.equal(snapshot(redMessages).status, 'draw')
+  assert.equal(snapshot(redMessages).inviteAvailable, false)
   assert.equal(
     manager.lobby().some((room) => room.id === created.room.id),
     false,
   )
+  assert.equal(
+    manager.history().some((room) => room.id === created.room.id),
+    true,
+  )
+
+  const historyMessages: unknown[] = []
+  const historyViewer = socket(historyMessages)
+  await manager.handle(historyViewer, {
+    type: 'room-subscribe',
+    roomId: created.room.id,
+    nickname: '历史记录访客',
+  })
+  assert.equal(snapshot(historyMessages).phase, 'finished')
+  await assert.rejects(
+    () =>
+      manager.handle(historyViewer, {
+        type: 'room-chat-send',
+        roomId: created.room.id,
+        commandId: 'history-chat-rejected',
+        content: '已结束后不能发言',
+      }),
+    /历史聊天仅供查看/,
+  )
+  for (const [type, payload] of [
+    ['room-chat-delete', { messageId: created.room.id }],
+    ['room-chat-mute', { authorId: '0'.repeat(64), muted: true }],
+    ['room-chat-settings-update', { everyoneMuted: true, roomSensitiveWords: [] }],
+  ] as const)
+    await assert.rejects(
+      () =>
+        manager.handle(red, {
+          type,
+          roomId: created.room.id,
+          commandId: `history-${type}`,
+          ...payload,
+        }),
+      /历史聊天仅供查看/,
+    )
+  manager.disconnect(historyViewer)
 
   const disconnected = await manager.createRoom('掉线测试', 'xiangqi')
   const oneMessages: unknown[] = [],
@@ -1009,7 +1049,7 @@ test('disconnect adjudication waits behind an active command and cannot be overw
   manager.disconnect(black)
 })
 
-test('starting with an already disconnected ready player begins the disconnect countdown', async (t) => {
+test('a waiting room closes when its owner disconnects before the game starts', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-start-disconnected-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const repository = new RoomRepository(directory)
@@ -1052,19 +1092,281 @@ test('starting with an already disconnected ready player begins the disconnect c
     commandId: 'start-ready-red',
   })
   manager.disconnect(red)
+  assert.ok(snapshot(blackMessages).ownerDisconnectDeadline)
+  await assert.rejects(
+    manager.handle(black, {
+      type: 'room-ready',
+      roomId: created.room.id,
+      ready: true,
+      expectedRevision: snapshot(blackMessages).revision,
+      commandId: 'start-ready-black',
+    }),
+    /发起人已离线/,
+  )
+  assert.equal(
+    manager.lobby().some((room) => room.id === created.room.id),
+    false,
+  )
+  await new Promise((resolve) => setTimeout(resolve, 35))
+  await manager.flush()
+  assert.equal(repository.get(created.room.id), null)
+  assert.equal(message(blackMessages, 'room-closed')?.reason, '发起人离线，对局已自动取消')
+  manager.disconnect(black)
+})
+
+test('an owner token restores a waiting room before its disconnect deadline', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-owner-reconnect-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory)
+  await repository.init()
+  const manager = new RoomManager(repository, async () => null, 30)
+  const created = await manager.createRoom('发起人恢复测试', 'xiangqi')
+  const firstMessages: unknown[] = [],
+    reconnectMessages: unknown[] = []
+  const first = socket(firstMessages),
+    reconnect = socket(reconnectMessages)
+  await manager.handle(first, {
+    type: 'room-subscribe',
+    roomId: created.room.id,
+    token: created.ownerToken,
+  })
+  manager.disconnect(first)
+  assert.equal(
+    manager.lobby().some((room) => room.id === created.room.id),
+    false,
+  )
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  await manager.handle(reconnect, {
+    type: 'room-subscribe',
+    roomId: created.room.id,
+    token: created.ownerToken,
+  })
+  assert.equal(snapshot(reconnectMessages).ownerDisconnectDeadline, undefined)
+  assert.equal(
+    manager.lobby().some((room) => room.id === created.room.id),
+    true,
+  )
+  await new Promise((resolve) => setTimeout(resolve, 35))
+  await manager.flush()
+  assert.ok(repository.get(created.room.id))
+  manager.disconnect(reconnect)
+  manager.dispose()
+})
+
+test('offline guest seats expire while an online owner keeps the waiting room alive', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-seat-expiry-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory)
+  await repository.init()
+  const manager = new RoomManager(repository, async () => null, 20)
+  const created = await manager.createRoom('席位释放测试', 'xiangqi')
+  const ownerMessages: unknown[] = [],
+    guestMessages: unknown[] = []
+  const owner = socket(ownerMessages),
+    guest = socket(guestMessages)
+  await manager.handle(owner, {
+    type: 'room-subscribe',
+    roomId: created.room.id,
+    token: created.ownerToken,
+  })
+  await manager.handle(owner, {
+    type: 'room-claim-seat',
+    roomId: created.room.id,
+    side: 'red',
+    expectedRevision: snapshot(ownerMessages).revision,
+    commandId: 'seat-expiry-owner',
+  })
+  await manager.handle(guest, { type: 'room-subscribe', roomId: created.room.id })
+  await manager.handle(guest, {
+    type: 'room-invite-seat',
+    roomId: created.room.id,
+    inviteToken: created.inviteToken,
+    side: 'black',
+    expectedRevision: snapshot(guestMessages).revision,
+    commandId: 'expiring-seat',
+  })
+  const guestToken = String(message(guestMessages, 'room-seat-token')?.token)
+  await manager.handle(guest, {
+    type: 'room-ready',
+    roomId: created.room.id,
+    ready: true,
+    expectedRevision: snapshot(guestMessages).revision,
+    commandId: 'seat-expiry-ready-guest',
+  })
+  manager.disconnect(guest)
+  assert.ok(snapshot(ownerMessages).seatDisconnectDeadlines?.black)
+  await assert.rejects(
+    manager.handle(owner, {
+      type: 'room-ready',
+      roomId: created.room.id,
+      ready: true,
+      expectedRevision: snapshot(ownerMessages).revision,
+      commandId: 'seat-expiry-ready-owner',
+    }),
+    /对方已离线/,
+  )
+  await new Promise((resolve) => setTimeout(resolve, 35))
+  await manager.flush()
+  assert.equal(repository.get(created.room.id)?.seats.black, undefined)
+  assert.equal(
+    manager.lobby().some((room) => room.id === created.room.id),
+    true,
+  )
+
+  const staleMessages: unknown[] = [],
+    stale = socket(staleMessages)
+  await manager.handle(stale, {
+    type: 'room-subscribe',
+    roomId: created.room.id,
+    token: guestToken,
+  })
+  assert.equal(snapshot(staleMessages).role, 'spectator')
+  manager.disconnect(stale)
+  manager.disconnect(owner)
+  manager.dispose()
+})
+
+test('a playing room becomes an abandoned draw when both players remain offline', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-both-offline-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory)
+  await repository.init()
+  const manager = new RoomManager(repository, async () => null, 20)
+  const created = await manager.createRoom('双方掉线测试', 'xiangqi')
+  const redMessages: unknown[] = [],
+    blackMessages: unknown[] = [],
+    spectatorMessages: unknown[] = []
+  const red = socket(redMessages),
+    black = socket(blackMessages),
+    spectator = socket(spectatorMessages)
+  await manager.handle(red, {
+    type: 'room-subscribe',
+    roomId: created.room.id,
+    token: created.ownerToken,
+  })
+  await manager.handle(red, {
+    type: 'room-claim-seat',
+    roomId: created.room.id,
+    side: 'red',
+    expectedRevision: snapshot(redMessages).revision,
+    commandId: 'both-seat-red',
+  })
+  await manager.handle(black, { type: 'room-subscribe', roomId: created.room.id })
+  await manager.handle(black, {
+    type: 'room-invite-seat',
+    roomId: created.room.id,
+    inviteToken: created.inviteToken,
+    side: 'black',
+    expectedRevision: snapshot(blackMessages).revision,
+    commandId: 'both-seat-black',
+  })
+  await manager.handle(red, {
+    type: 'room-ready',
+    roomId: created.room.id,
+    ready: true,
+    expectedRevision: snapshot(redMessages).revision,
+    commandId: 'both-ready-red',
+  })
   await manager.handle(black, {
     type: 'room-ready',
     roomId: created.room.id,
     ready: true,
     expectedRevision: snapshot(blackMessages).revision,
-    commandId: 'start-ready-black',
+    commandId: 'both-ready-black',
   })
-  assert.equal(snapshot(blackMessages).disconnect?.color, 'red')
+  await manager.handle(spectator, { type: 'room-subscribe', roomId: created.room.id })
+  manager.disconnect(red)
+  manager.disconnect(black)
+  assert.equal(snapshot(spectatorMessages).disconnect?.color, 'both')
   await new Promise((resolve) => setTimeout(resolve, 35))
   await manager.flush()
-  assert.equal(snapshot(blackMessages).status, 'black-wins')
-  assert.equal(snapshot(blackMessages).statusReason, 'disconnect')
-  manager.disconnect(black)
+  assert.equal(snapshot(spectatorMessages).phase, 'finished')
+  assert.equal(snapshot(spectatorMessages).status, 'draw')
+  assert.equal(snapshot(spectatorMessages).statusReason, 'abandoned')
+  manager.disconnect(spectator)
+})
+
+test('startup recovery removes ownerless waiting rooms after a bounded grace period', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-startup-recovery-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory)
+  await repository.init()
+  const previous = new RoomManager(repository, async () => null)
+  const created = await previous.createRoom('重启恢复测试', 'xiangqi')
+  previous.dispose()
+
+  const recovered = new RoomManager(repository, async () => null, 60_000, {
+    startupRecoveryTimeoutMs: 20,
+  })
+  recovered.startPresenceRecovery()
+  assert.equal(
+    recovered.lobby().some((room) => room.id === created.room.id),
+    false,
+  )
+  await new Promise((resolve) => setTimeout(resolve, 35))
+  await recovered.flush()
+  assert.equal(repository.get(created.room.id), null)
+  recovered.dispose()
+})
+
+test('startup recovery finishes a playing room when neither player returns', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-playing-startup-recovery-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory)
+  await repository.init()
+  const previous = new RoomManager(repository, async () => null)
+  const created = await previous.createRoom('进行中恢复测试', 'xiangqi')
+  const redMessages: unknown[] = [],
+    blackMessages: unknown[] = []
+  const red = socket(redMessages),
+    black = socket(blackMessages)
+  await previous.handle(red, {
+    type: 'room-subscribe',
+    roomId: created.room.id,
+    token: created.ownerToken,
+  })
+  await previous.handle(red, {
+    type: 'room-claim-seat',
+    roomId: created.room.id,
+    side: 'red',
+    expectedRevision: snapshot(redMessages).revision,
+    commandId: 'startup-seat-red',
+  })
+  await previous.handle(black, { type: 'room-subscribe', roomId: created.room.id })
+  await previous.handle(black, {
+    type: 'room-invite-seat',
+    roomId: created.room.id,
+    inviteToken: created.inviteToken,
+    side: 'black',
+    expectedRevision: snapshot(blackMessages).revision,
+    commandId: 'startup-seat-black',
+  })
+  await previous.handle(red, {
+    type: 'room-ready',
+    roomId: created.room.id,
+    ready: true,
+    expectedRevision: snapshot(redMessages).revision,
+    commandId: 'startup-ready-red',
+  })
+  await previous.handle(black, {
+    type: 'room-ready',
+    roomId: created.room.id,
+    ready: true,
+    expectedRevision: snapshot(blackMessages).revision,
+    commandId: 'startup-ready-black',
+  })
+  previous.dispose()
+
+  const recovered = new RoomManager(repository, async () => null, 60_000, {
+    startupRecoveryTimeoutMs: 20,
+  })
+  recovered.startPresenceRecovery()
+  await new Promise((resolve) => setTimeout(resolve, 35))
+  await recovered.flush()
+  assert.equal(repository.get(created.room.id)?.phase, 'finished')
+  assert.equal(repository.get(created.room.id)?.status, 'draw')
+  assert.equal(repository.get(created.room.id)?.statusReason, 'abandoned')
+  recovered.dispose()
 })
 
 test('seat credentials can move devices and owners can manage waiting rooms', async (t) => {

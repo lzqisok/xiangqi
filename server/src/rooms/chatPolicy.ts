@@ -17,7 +17,7 @@ export function normalizeSensitiveWord(value: unknown) {
 
 export function normalizeRoomSensitiveWords(value: unknown) {
   if (!Array.isArray(value) || value.length > MAX_ROOM_SENSITIVE_WORDS)
-    throw new Error(`房间敏感词最多设置 ${MAX_ROOM_SENSITIVE_WORDS} 个`)
+    throw new Error(`对局敏感词最多设置 ${MAX_ROOM_SENSITIVE_WORDS} 个`)
   const result: string[] = []
   const seen = new Set<string>()
   for (const item of value) {

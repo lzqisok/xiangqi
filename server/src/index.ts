@@ -217,6 +217,7 @@ async function getRoomHint(room: StoredRoom, viewer: RoomColor): Promise<string 
   return result.move?.slice(0, 4) || null
 }
 const roomManager = new RoomManager(roomRepository, getRoomHint)
+roomManager.startPresenceRecovery()
 void roomManager.cleanup().catch((error) => console.error('Room cleanup failed:', error))
 const roomCleanupTimer = setInterval(
   () => void roomManager.cleanup().catch((error) => console.error('Room cleanup failed:', error)),

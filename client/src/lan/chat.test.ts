@@ -33,8 +33,8 @@ test('LAN chat messages are ordered, deduplicated, and bounded', () => {
 })
 
 test('LAN chat role labels preserve owner and seat identity', () => {
-  assert.equal(getLanChatRole({ ...message(1), role: 'owner', isOwner: true }), '房主')
-  assert.equal(getLanChatRole({ ...message(1), role: 'red', isOwner: true }), '房主·红方')
+  assert.equal(getLanChatRole({ ...message(1), role: 'owner', isOwner: true }), '发起人')
+  assert.equal(getLanChatRole({ ...message(1), role: 'red', isOwner: true }), '发起人·红方')
   assert.equal(getLanChatRole({ ...message(1), role: 'black' }), '黑方')
 })
 

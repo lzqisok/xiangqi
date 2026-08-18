@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react'
 import Board from '../components/Board'
 import ProductDialog from '../components/ProductDialog'
 import MobileChatDock from '../components/MobileChatDock'
@@ -139,7 +139,7 @@ function LanLobby({
       <header className="lan-header">
         <div>
           <h1>象棋局域网对战</h1>
-          <p>同一局域网内创建房间、邀请棋友、聊天或观战</p>
+          <p>同一局域网内创建对局、邀请棋友、聊天或观战</p>
         </div>
         <a href="?type=xiangqi">返回模式选择</a>
       </header>
@@ -149,13 +149,13 @@ function LanLobby({
           onClick={() => setLobbyView('find')}
         >
           <strong>找对局</strong>
-          <span>浏览可加入、进行中和最近房间</span>
+          <span>浏览可加入、进行中和历史对局</span>
         </button>
         <button
           className={lobbyView === 'create' ? 'active' : ''}
           onClick={() => setLobbyView('create')}
         >
-          <strong>创建房间</strong>
+          <strong>创建对局</strong>
           <span>选择规则并邀请棋友</span>
         </button>
       </nav>
@@ -169,10 +169,10 @@ function LanLobby({
         >
           <div className="lan-create-heading">
             <div>
-              <h2>创建新房间</h2>
+              <h2>创建新对局</h2>
               <p>填写信息并选择玩法，创建后进入独立准备室。</p>
             </div>
-            <span>1 分钟内最多创建 10 个房间</span>
+            <span>1 分钟内最多创建 10 个对局</span>
           </div>
           <div className="lan-form-grid">
             <label>
@@ -186,7 +186,7 @@ function LanLobby({
               />
             </label>
             <label>
-              房间名称
+              对局名称
               <input
                 value={name}
                 maxLength={60}
@@ -221,7 +221,7 @@ function LanLobby({
             type="submit"
             disabled={!nickname.trim() || creating}
           >
-            {creating ? '正在创建并进入…' : `创建${variant === 'jieqi' ? '揭棋' : '普通象棋'}房间`}
+            {creating ? '正在创建并进入…' : `创建${variant === 'jieqi' ? '揭棋' : '普通象棋'}对局`}
           </button>
         </form>
       )}
@@ -234,8 +234,8 @@ function LanLobby({
         <section className="lan-lobby card">
           <div className="lan-lobby-heading">
             <div>
-              <h2>房间列表</h2>
-              <p>公开、最近进入和最近结束统一展示</p>
+              <h2>对局大厅</h2>
+              <p>可加入和进行中属于实时对局，已结束仅供查看记录</p>
             </div>
             <div className="lan-room-filters">
               {(['all', 'waiting', 'playing', 'finished', 'recent'] as const).map((filter) => (
@@ -249,7 +249,7 @@ function LanLobby({
                       all: '全部',
                       waiting: '可加入',
                       playing: '进行中',
-                      finished: '已结束',
+                      finished: '历史记录',
                       recent: '最近进入',
                     }[filter]
                   }
@@ -259,11 +259,11 @@ function LanLobby({
           </div>
           {roomItems.length === 0 && recentOnly.length === 0 ? (
             <ProductState
-              title="当前筛选下没有房间"
+              title="当前筛选下没有对局"
               description={
                 roomFilter === 'waiting'
-                  ? '可以创建一个房间并邀请棋友加入。'
-                  : '切换筛选条件看看其他房间。'
+                  ? '可以创建一个对局并邀请棋友加入。'
+                  : '切换筛选条件看看其他对局。'
               }
             />
           ) : (
@@ -274,6 +274,13 @@ function LanLobby({
                   name={room.name}
                   meta={`${room.variant === 'jieqi' ? '揭棋' : '普通象棋'} · ${room.phase === 'waiting' ? '可加入' : room.phase === 'playing' ? '进行中' : formatResult(room.status, room.statusReason)}${isRecent ? ' · 最近进入' : ''}`}
                   details={`红：${room.red || '空席'}　黑：${room.black || '空席'}　${room.phase === 'finished' ? `共 ${room.moveCount} 手` : `观众 ${room.spectatorCount}`}`}
+                  actionLabel={
+                    room.phase === 'waiting'
+                      ? '加入对局'
+                      : room.phase === 'playing'
+                        ? '进入观战'
+                        : '查看结果'
+                  }
                   onOpen={() => enter(room.id)}
                 />
               ))}
@@ -288,9 +295,10 @@ function LanLobby({
                       : item.role === 'black'
                         ? '黑方席位'
                         : item.role === 'owner'
-                          ? '房主'
+                          ? '发起人'
                           : '观众'
                   }
+                  actionLabel="查看记录"
                   onOpen={() => enter(item.id)}
                 />
               ))}
@@ -337,6 +345,8 @@ function LanRoom({
   const [creatingRematch, setCreatingRematch] = useState(false)
   const [rematchError, setRematchError] = useState('')
   const [dangerAction, setDangerAction] = useState<'dissolve' | 'resign' | null>(null)
+  const [returnAction, setReturnAction] = useState<'leave-seat' | 'disconnect' | null>(null)
+  const [returnAfterLeaving, setReturnAfterLeaving] = useState(false)
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 250)
@@ -348,6 +358,10 @@ function LanRoom({
   useEffect(() => {
     setPrivateHint(null)
   }, [room?.moves.length, setPrivateHint])
+  useEffect(() => {
+    if (returnAfterLeaving && room?.phase === 'waiting' && room.role === 'spectator')
+      location.href = '?lan=1'
+  }, [returnAfterLeaving, room?.phase, room?.role])
   const legal = useMemo(
     () => (selected && room ? getLegalMoves(room.board, selected, room.variant) : []),
     [room, selected],
@@ -357,12 +371,24 @@ function LanRoom({
       <div className="lan-shell lan-room-shell">
         <ProductState
           kind={error ? 'error' : 'loading'}
-          title={error ? '无法进入房间' : connected ? '正在同步房间' : '正在连接服务'}
-          description={error || '请稍候，正在恢复房间阶段与席位。'}
+          title={error ? '无法打开对局' : connected ? '正在同步对局' : '正在连接服务'}
+          description={error || '请稍候，正在恢复对局阶段与席位。'}
         />
       </div>
     )
   const color = room.role === 'red' || room.role === 'black' ? room.role : null
+  const requestReturn = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (room.phase === 'waiting' && room.isOwner) {
+      event.preventDefault()
+      setDangerAction('dissolve')
+    } else if (room.phase === 'waiting' && color) {
+      event.preventDefault()
+      setReturnAction('leave-seat')
+    } else if (room.phase === 'playing' && color) {
+      event.preventDefault()
+      setReturnAction('disconnect')
+    }
+  }
   const boardFlipped = color === 'black' || (!color && spectatorFlipped)
   const canMove = room.phase === 'playing' && room.status === 'playing' && color === room.turn
   const last = room.moves[room.moves.length - 1]
@@ -434,7 +460,7 @@ function LanRoom({
       url.searchParams.set('room', result.room.id)
       location.href = url.toString()
     } catch (cause) {
-      setRematchError(cause instanceof Error ? cause.message : '创建新房间失败')
+      setRematchError(cause instanceof Error ? cause.message : '创建新对局失败')
     } finally {
       setCreatingRematch(false)
     }
@@ -461,6 +487,13 @@ function LanRoom({
   }
   const proposalCountdown = (deadline?: number) =>
     deadline ? Math.max(0, Math.ceil((deadline - now) / 1000)) : null
+  const ownerOfflineCountdown = proposalCountdown(room.ownerDisconnectDeadline)
+  const seatStatus = (side: PieceColor) => {
+    const seat = room.seats[side]
+    if (!seat) return '席位空缺'
+    const deadline = room.seatDisconnectDeadlines?.[side]
+    return `${seat.nickname} · ${seat.online ? '在线' : '离线'} · ${seat.ready ? '已准备' : '未准备'}${deadline ? ` · ${proposalCountdown(deadline)} 秒后释放` : ''}`
+  }
   if (room.phase === 'waiting')
     return (
       <div className="lan-shell lan-room-shell lan-ready-shell">
@@ -472,9 +505,16 @@ function LanRoom({
               {connected ? '已连接' : '重连中'}
             </p>
           </div>
-          <a href="?lan=1">返回大厅</a>
+          <a href="?lan=1" onClick={requestReturn}>
+            返回大厅
+          </a>
         </header>
         {error && <div className="lan-error">{error}</div>}
+        {ownerOfflineCountdown !== null && (
+          <div className="lan-warning">
+            发起人已离线，对局将在 {ownerOfflineCountdown} 秒后自动取消
+          </div>
+        )}
         <main className="lan-ready-layout">
           <section className="lan-ready-room card">
             <div className="lan-ready-heading">
@@ -504,6 +544,7 @@ function LanRoom({
                   occupiedByOther = Boolean(seat && !current)
                 const disabled =
                   pending ||
+                  ownerOfflineCountdown !== null ||
                   Boolean(room.pendingSwapBy) ||
                   (!color && occupiedByOther) ||
                   (!color && !seat && !nickname.trim())
@@ -513,11 +554,7 @@ function LanRoom({
                     side={side}
                     mark={side === 'red' ? '红' : '黑'}
                     title={side === 'red' ? '红方 · 先行' : '黑方 · 后手'}
-                    status={
-                      seat
-                        ? `${seat.nickname} · ${seat.online ? '在线' : '离线'} · ${seat.ready ? '已准备' : '未准备'}`
-                        : '席位空缺'
-                    }
+                    status={seatStatus(side)}
                     current={current}
                     disabled={disabled}
                     actionLabel={boardSeatLabel(side)}
@@ -592,7 +629,11 @@ function LanRoom({
               {room.isOwner && (
                 <button
                   className="invite"
-                  disabled={pending || Boolean(room.seats.red && room.seats.black)}
+                  disabled={
+                    pending ||
+                    ownerOfflineCountdown !== null ||
+                    Boolean(room.seats.red && room.seats.black)
+                  }
                   onClick={() => (shareToken ? void shareInvite() : send('room-renew-invite'))}
                 >
                   {shareToken
@@ -619,7 +660,7 @@ function LanRoom({
               </label>
             )}
             <details className="lan-room-management">
-              <summary>房间管理</summary>
+              <summary>对局管理</summary>
               <div>
                 {color && <button onClick={() => send('room-leave-seat')}>退出席位并观战</button>}
                 {color && (recoveryToken || getLanToken(roomId)) && (
@@ -641,7 +682,7 @@ function LanRoom({
                     disabled={pending}
                     onClick={() => setDangerAction('dissolve')}
                   >
-                    解散房间
+                    取消对局
                   </button>
                 )}
               </div>
@@ -673,14 +714,26 @@ function LanRoom({
         </main>
         {dangerAction && (
           <ProductDialog
-            title="解散房间"
-            description="房间将立即关闭，所有棋手和观众都会离开。"
-            confirmLabel="确认解散"
+            title="取消对局并返回？"
+            description="对局尚未开始，返回大厅后当前对局将立即取消，席位、聊天和邀请链接都会失效。"
+            confirmLabel="取消对局并返回"
             dangerous
             onCancel={() => setDangerAction(null)}
             onConfirm={() => {
-              send('room-dissolve')
-              setDangerAction(null)
+              if (send('room-dissolve')) setDangerAction(null)
+            }}
+          />
+        )}
+        {returnAction === 'leave-seat' && (
+          <ProductDialog
+            title="释放席位并返回？"
+            description="返回大厅后将立即释放当前席位，其他棋友可以重新加入。"
+            confirmLabel="释放席位并返回"
+            onCancel={() => setReturnAction(null)}
+            onConfirm={() => {
+              if (!send('room-leave-seat')) return
+              setReturnAfterLeaving(true)
+              setReturnAction(null)
             }}
           />
         )}
@@ -710,17 +763,27 @@ function LanRoom({
           <h1>{room.name}</h1>
           <p>
             {room.variant === 'jieqi' ? '揭棋' : '普通象棋'} ·{' '}
-            {room.phase === 'playing' ? '进行中' : '已结束'} · {connected ? '已连接' : '重连中'}
+            {room.phase === 'playing'
+              ? `进行中 · ${connected ? '已连接' : '重连中'}`
+              : '历史对局 · 只读'}
           </p>
         </div>
-        <a href="?lan=1">返回大厅</a>
+        <a href="?lan=1" onClick={requestReturn}>
+          返回大厅
+        </a>
       </header>
       {error && <div className="lan-error">{error}</div>}
       {rematchError && <div className="lan-error">{rematchError}</div>}
+      {room.phase === 'finished' && (
+        <div className="lan-history-notice">
+          本局已结束。当前页面仅供查看结果、棋谱和历史聊天，不再恢复实时席位。
+        </div>
+      )}
       {countdown !== null && (
         <div className="lan-warning">
-          {room.disconnect!.color === 'red' ? '红方' : '黑方'}已断线，
-          {countdown} 秒后判负
+          {room.disconnect!.color === 'both'
+            ? `双方已断线，${countdown} 秒后按和棋结束`
+            : `${room.disconnect!.color === 'red' ? '红方' : '黑方'}已断线，${countdown} 秒后判负`}
         </div>
       )}
       <div className="lan-game">
@@ -763,16 +826,26 @@ function LanRoom({
         </main>
         <div className="lan-side">
           <aside className="lan-panel lan-room-playing card">
-            <h2>{color ? `你是${color === 'red' ? '红方' : '黑方'}` : '观战中'}</h2>
+            <h2>
+              {room.phase === 'finished'
+                ? color
+                  ? `本局身份：${color === 'red' ? '红方' : '黑方'}`
+                  : '对局记录'
+                : color
+                  ? `你是${color === 'red' ? '红方' : '黑方'}`
+                  : '观战中'}
+            </h2>
             <p>
               {room.status === 'playing'
                 ? `${room.turn === 'red' ? '红方' : '黑方'}走棋`
                 : formatResult(room.status, room.statusReason)}
             </p>
             <p>
-              红：{room.seats.red?.nickname || '-'} {room.seats.red?.online ? '●' : '○'}
+              红：{room.seats.red?.nickname || '-'}{' '}
+              {room.phase === 'playing' ? (room.seats.red?.online ? '●' : '○') : ''}
               <br />
-              黑：{room.seats.black?.nickname || '-'} {room.seats.black?.online ? '●' : '○'}
+              黑：{room.seats.black?.nickname || '-'}{' '}
+              {room.phase === 'playing' ? (room.seats.black?.online ? '●' : '○') : ''}
             </p>
             {!color && (
               <button onClick={() => setSpectatorFlipped((value) => !value)}>
@@ -842,13 +915,13 @@ function LanRoom({
                 reject={() => send('room-draw-response', { accept: false })}
               />
             )}
-            {color && (recoveryToken || getLanToken(roomId)) && (
+            {room.phase === 'playing' && color && (recoveryToken || getLanToken(roomId)) && (
               <>
                 <button onClick={shareRecovery}>
                   {recoveryCopyState === 'copied'
                     ? '恢复链接已复制'
                     : room.isOwner
-                      ? '复制房主恢复链接'
+                      ? '复制发起人恢复链接'
                       : '复制席位恢复链接'}
                 </button>
                 {recoveryCopyState === 'manual' && (
@@ -893,24 +966,37 @@ function LanRoom({
               remove={deleteChatMessage}
               mute={muteChatMember}
               updateSettings={updateChatSettings}
+              readOnly={room.phase === 'finished'}
             />
           </MobileChatDock>
         </div>
       </div>
       {dangerAction && (
         <ProductDialog
-          title={dangerAction === 'dissolve' ? '解散房间' : '确认认输'}
+          title={dangerAction === 'dissolve' ? '取消对局' : '确认认输'}
           description={
             dangerAction === 'dissolve'
-              ? '房间将立即关闭，所有棋手和观众都会离开。'
+              ? '对局将立即取消，所有棋手和观众都会离开。'
               : '当前对局将立即结束，并判对方获胜。'
           }
-          confirmLabel={dangerAction === 'dissolve' ? '确认解散' : '确认认输'}
+          confirmLabel={dangerAction === 'dissolve' ? '确认取消' : '确认认输'}
           dangerous
           onCancel={() => setDangerAction(null)}
           onConfirm={() => {
             send(dangerAction === 'dissolve' ? 'room-dissolve' : 'room-resign')
             setDangerAction(null)
+          }}
+        />
+      )}
+      {returnAction === 'disconnect' && (
+        <ProductDialog
+          title="离开进行中的对局？"
+          description="返回大厅后你将进入断线倒计时；如果未及时返回，系统会判你超时负。"
+          confirmLabel="确认离开"
+          dangerous
+          onCancel={() => setReturnAction(null)}
+          onConfirm={() => {
+            location.href = '?lan=1'
           }}
         />
       )}
@@ -929,6 +1015,7 @@ export function LanChat({
   mute,
   updateSettings,
   sideLabels = { red: '红方', black: '黑方' },
+  readOnly = false,
 }: {
   messages: LanChatMessage[]
   connected: boolean
@@ -940,6 +1027,7 @@ export function LanChat({
   mute: (authorId: string, muted: boolean) => boolean
   updateSettings: (everyoneMuted: boolean, words: string[]) => boolean
   sideLabels?: { red: string; black: string }
+  readOnly?: boolean
 }) {
   const [draft, setDraft] = useState('')
   const [managementOpen, setManagementOpen] = useState(false)
@@ -969,11 +1057,18 @@ export function LanChat({
     if (isOwner) setSensitiveDraft(savedSensitiveWords)
   }, [isOwner, savedSensitiveWords])
   useEffect(() => {
+    if (readOnly) {
+      setManagementOpen(false)
+      setSelectedMessageId(null)
+      setDraft('')
+    }
+  }, [readOnly])
+  useEffect(() => {
     const list = listRef.current
     if (list && stickToBottomRef.current) list.scrollTop = list.scrollHeight
   }, [messages])
   const submit = () => {
-    if (!draft.trim() || draftInvalid || !connected || silenced) return
+    if (readOnly || !draft.trim() || draftInvalid || !connected || silenced) return
     if (send(draft)) {
       setDraft('')
       stickToBottomRef.current = true
@@ -983,18 +1078,22 @@ export function LanChat({
     <aside className="lan-panel lan-chat-panel card">
       <div className="lan-chat-heading">
         <div>
-          <h2>聊天</h2>
+          <h2>{readOnly ? '历史聊天' : '聊天'}</h2>
           <p>
-            {settings.everyoneMuted
-              ? '房主已开启全面禁言'
-              : settings.muted
-                ? '你已被房主禁言'
-                : '房主、棋手和观众均可发言'}
+            {readOnly
+              ? '对局已结束，聊天记录仅供查看'
+              : settings.everyoneMuted
+                ? '对局发起人已开启全面禁言'
+                : settings.muted
+                  ? '你已被对局发起人禁言'
+                  : '对局发起人、棋手和观众均可发言'}
           </p>
         </div>
         <div>
-          <span>{connected ? '已连接' : '重连中'}</span>
-          {isOwner && <button onClick={() => setManagementOpen((value) => !value)}>管理</button>}
+          <span>{readOnly ? '只读' : connected ? '已连接' : '重连中'}</span>
+          {isOwner && !readOnly && (
+            <button onClick={() => setManagementOpen((value) => !value)}>管理</button>
+          )}
         </div>
       </div>
       {error && <div className="lan-error">{error}</div>}
@@ -1029,7 +1128,7 @@ export function LanChat({
             </div>
           )}
           <label>
-            房间敏感词
+            对局敏感词
             <textarea
               rows={3}
               value={sensitiveDraft}
@@ -1060,12 +1159,14 @@ export function LanChat({
         }}
       >
         {messages.length === 0 ? (
-          <p className="lan-chat-empty">还没有消息，来打个招呼吧。</p>
+          <p className="lan-chat-empty">
+            {readOnly ? '本局没有聊天记录。' : '还没有消息，来打个招呼吧。'}
+          </p>
         ) : (
           messages.map((chat) => (
             <article className="lan-chat-message" key={chat.id}>
               <div className="lan-chat-line">
-                {isOwner && !chat.isOwner ? (
+                {isOwner && !readOnly && !chat.isOwner ? (
                   <button
                     className="lan-chat-author"
                     onClick={() =>
@@ -1085,7 +1186,7 @@ export function LanChat({
                     minute: '2-digit',
                   })}
                 </time>
-                {isOwner && (
+                {isOwner && !readOnly && (
                   <button
                     className="lan-chat-delete"
                     title="删除消息"
@@ -1096,7 +1197,7 @@ export function LanChat({
                   </button>
                 )}
               </div>
-              {isOwner && selectedMessageId === chat.id && !chat.isOwner && (
+              {isOwner && !readOnly && selectedMessageId === chat.id && !chat.isOwner && (
                 <div className="lan-chat-member-menu">
                   <span>{chat.nickname}</span>
                   <button
@@ -1113,34 +1214,38 @@ export function LanChat({
           ))
         )}
       </div>
-      <div className="lan-chat-compose">
-        <textarea
-          value={draft}
-          rows={2}
-          placeholder={
-            !connected ? '连接恢复后可以发言' : silenced ? '当前无法发言' : '输入消息，Enter 发送'
-          }
-          disabled={!connected || silenced}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault()
-              submit()
+      {readOnly ? (
+        <div className="lan-chat-readonly">实时会话已关闭，可从大厅发起新对局。</div>
+      ) : (
+        <div className="lan-chat-compose">
+          <textarea
+            value={draft}
+            rows={2}
+            placeholder={
+              !connected ? '连接恢复后可以发言' : silenced ? '当前无法发言' : '输入消息，Enter 发送'
             }
-          }}
-        />
-        <div>
-          <span className={draftInvalid ? 'over' : ''}>
-            {lineCount}/4 行 · {contentLength}/200 字
-          </span>
-          <button
-            disabled={!connected || silenced || !draft.trim() || draftInvalid}
-            onClick={submit}
-          >
-            发送
-          </button>
+            disabled={!connected || silenced}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                submit()
+              }
+            }}
+          />
+          <div>
+            <span className={draftInvalid ? 'over' : ''}>
+              {lineCount}/4 行 · {contentLength}/200 字
+            </span>
+            <button
+              disabled={!connected || silenced || !draft.trim() || draftInvalid}
+              onClick={submit}
+            >
+              发送
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </aside>
   )
 }
@@ -1175,7 +1280,7 @@ function findKing(board: import('../types').Board, color: PieceColor) {
   return null
 }
 function formatResult(status: string, reason?: string) {
-  if (status === 'draw') return reason === 'abandoned' ? '对局中止（双方长期离线）' : '和棋'
+  if (status === 'draw') return reason === 'abandoned' ? '和棋（双方离线）' : '和棋'
   return `${status === 'red-wins' ? '红方胜' : '黑方胜'}${reason === 'disconnect' ? '（对方断线）' : reason === 'resignation' ? '（对方认输）' : ''}`
 }
 function pieceName(type: string, color: PieceColor) {

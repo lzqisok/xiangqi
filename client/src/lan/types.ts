@@ -79,7 +79,9 @@ export type LanRoomSnapshot = {
   pendingSwapBy?: PieceColor
   pendingSwapDeadline?: number
   applications?: Array<{ id: string; nickname: string; side: PieceColor }>
-  disconnect?: { color: PieceColor; deadline: number }
+  ownerDisconnectDeadline?: number
+  seatDisconnectDeadlines?: Partial<Record<PieceColor, number>>
+  disconnect?: { color: PieceColor | 'both'; deadline: number }
 }
 export type GomokuLanRoomSnapshot = Omit<
   LanRoomSnapshot,

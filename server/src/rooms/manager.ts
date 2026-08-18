@@ -22,14 +22,16 @@ type Connection = {
 }
 type Application = { id: string; ws: WebSocket; nickname: string; side: RoomColor }
 type Proposal = { by: RoomColor; deadline: number; timer: NodeJS.Timeout }
+type PresenceTimer = { deadline: number; timer: NodeJS.Timeout }
 type Runtime = {
   sockets: Set<WebSocket>
   applications: Map<string, Application>
   pendingDraw?: Proposal
   pendingUndo?: Proposal
   pendingSwap?: Proposal
-  disconnect?: { color: RoomColor; deadline: number; timer: NodeJS.Timeout }
-  bothOfflineSince?: number
+  ownerDisconnect?: PresenceTimer
+  seatDisconnects: Partial<Record<RoomColor, PresenceTimer>>
+  disconnect?: { color: RoomColor | 'both'; deadline: number; timer: NodeJS.Timeout }
   cached?: {
     revision: number
     layout?: string
@@ -45,6 +47,8 @@ type Runtime = {
 export type RoomHintProvider = (room: StoredRoom, color: RoomColor) => Promise<string | null>
 export type RoomManagerOptions = {
   proposalTimeoutMs?: number
+  waitingDisconnectTimeoutMs?: number
+  startupRecoveryTimeoutMs?: number
   waitingTtlMs?: number
   abandonedTtlMs?: number
   finishedTtlMs?: number
@@ -107,7 +111,7 @@ export class RoomManager {
     if (this.repository.list().filter((room) => room.phase !== 'finished').length >= 100) {
       await this.cleanup()
       if (this.repository.list().filter((room) => room.phase !== 'finished').length >= 100)
-        throw new Error('活跃房间数量已达到上限')
+        throw new Error('活跃对局数量已达到上限')
     }
     const ownerToken = randomUUID(),
       inviteToken = randomUUID(),
@@ -117,7 +121,7 @@ export class RoomManager {
       id: randomUUID(),
       name:
         name.trim().slice(0, 60) ||
-        (variant === 'jieqi' ? '揭棋房间' : variant === 'gomoku' ? '五子棋房间' : '象棋房间'),
+        (variant === 'jieqi' ? '揭棋对局' : variant === 'gomoku' ? '五子棋对局' : '象棋对局'),
       variant,
       gomokuRule: variant === 'gomoku' ? gomokuRule : undefined,
       phase: 'waiting',
@@ -131,7 +135,12 @@ export class RoomManager {
       updatedAt: now,
     }
     const saved = await this.repository.create(room)
+    this.updatePresence(saved)
     return { room: saved, ownerToken, inviteToken }
+  }
+
+  startPresenceRecovery() {
+    for (const room of this.repository.list()) this.updatePresence(room, true)
   }
 
   lobby(game?: 'xiangqi' | 'gomoku'): RoomSummary[] {
@@ -140,6 +149,7 @@ export class RoomManager {
       .filter(
         (room) =>
           room.phase !== 'finished' &&
+          (room.phase !== 'waiting' || this.ownerOnline(room.id)) &&
           (!game || (game === 'gomoku') === (room.variant === 'gomoku')),
       )
       .sort((a, b) => b.createdAt - a.createdAt)
@@ -172,7 +182,7 @@ export class RoomManager {
     const type = String(message.type || '')
     if (type === 'room-subscribe') {
       const roomId = String(message.roomId || '')
-      if (!this.repository.get(roomId)) throw new Error('房间不存在')
+      if (!this.repository.get(roomId)) throw new Error('对局不存在')
       const target = this.getRuntime(roomId)
       const previous = this.connections.get(ws)
       const involved =
@@ -186,7 +196,7 @@ export class RoomManager {
       return operation
     }
     const connection = this.connections.get(ws)
-    if (!connection) throw new Error('请先加入房间')
+    if (!connection) throw new Error('请先进入对局')
     const runtime = this.getRuntime(connection.roomId)
     const operation = runtime.queue.then(() => this.handleLocked(ws, message))
     runtime.queue = operation.catch(() => undefined)
@@ -196,14 +206,14 @@ export class RoomManager {
   private async handleLocked(ws: WebSocket, message: Record<string, unknown>) {
     const type = String(message.type || '')
     const connection = this.connections.get(ws)
-    if (!connection) throw new Error('请先加入房间')
+    if (!connection) throw new Error('请先进入对局')
     const commandId =
       typeof message.commandId === 'string' && /^[A-Za-z0-9._:-]{1,100}$/.test(message.commandId)
         ? message.commandId
         : undefined
     if (!commandId) throw new Error('操作标识无效')
     const room = this.requireRoom(connection.roomId)
-    if (message.roomId !== room.id) throw new Error('房间不匹配')
+    if (message.roomId !== room.id) throw new Error('对局不匹配')
     if (type === 'room-chat-send')
       return this.sendChat(ws, room, connection, commandId, message.content, message.nickname)
     if (type === 'room-chat-delete')
@@ -213,7 +223,7 @@ export class RoomManager {
     if (type === 'room-chat-settings-update')
       return this.updateChatSettings(ws, room, connection, commandId, message)
     if (!Number.isInteger(message.expectedRevision) || Number(message.expectedRevision) < 0)
-      throw new Error('房间版本无效')
+      throw new Error('对局版本无效')
     if (this.getRuntime(room.id).commands.has(commandId)) return this.sendSnapshot(ws, room)
     if (message.expectedRevision !== undefined && message.expectedRevision !== room.revision)
       return this.sendSnapshot(ws, room, '状态已更新，请重试')
@@ -286,7 +296,7 @@ export class RoomManager {
         await this.resign(room, connection)
         break
       default:
-        throw new Error('不支持的房间操作')
+        throw new Error('不支持的对局操作')
     }
     if (this.repository.get(room.id)) this.rememberCommand(room.id, commandId, room.revision)
   }
@@ -301,7 +311,7 @@ export class RoomManager {
       if (application.ws === ws) runtime.applications.delete(id)
     const room = this.repository.get(connection.roomId)
     if (!room) return
-    this.updateDisconnect(room)
+    this.updatePresence(room)
     this.broadcast(room)
   }
 
@@ -335,19 +345,8 @@ export class RoomManager {
     })
     if (room.phase === 'waiting' && !hasSockets && now - room.updatedAt >= waitingTtl) {
       await this.deleteRoom(room.id)
-    } else if (room.phase === 'playing' && !hasPlayers) {
-      runtime.bothOfflineSince ??= now
-      if (now - runtime.bothOfflineSince >= abandonedTtl) {
-        room.phase = 'finished'
-        room.status = 'draw'
-        room.statusReason = 'abandoned'
-        room.finishedAt = now
-        this.clearDisconnect(room.id)
-        this.clearProposals(room.id)
-        this.touch(room)
-        await this.repository.save(room)
-        this.broadcast(room)
-      }
+    } else if (room.phase === 'playing' && !hasPlayers && now - room.updatedAt >= abandonedTtl) {
+      await this.finishAbandoned(room, now)
     } else if (
       room.phase === 'finished' &&
       !hasSockets &&
@@ -359,7 +358,7 @@ export class RoomManager {
 
   dispose() {
     for (const [id] of this.runtime) {
-      this.clearDisconnect(id)
+      this.clearPresence(id)
       this.clearProposals(id)
     }
   }
@@ -367,7 +366,7 @@ export class RoomManager {
   private async deleteRoom(id: string) {
     const runtime = this.runtime.get(id)
     if (runtime) {
-      this.clearDisconnect(id)
+      this.clearPresence(id)
       this.clearProposals(id)
     }
     await this.repository.delete(id)
@@ -417,7 +416,7 @@ export class RoomManager {
         }
       }
     }
-    this.updateDisconnect(room)
+    this.updatePresence(room)
     this.broadcast(room)
     this.sendChatHistory(ws, room.id)
     this.sendChatSettings(ws, room.id)
@@ -430,7 +429,7 @@ export class RoomManager {
       if (application.ws === ws) runtime.applications.delete(id)
     const previousRoom = this.repository.get(roomId)
     if (!previousRoom) return
-    this.updateDisconnect(previousRoom)
+    this.updatePresence(previousRoom)
     this.broadcast(previousRoom)
   }
 
@@ -447,6 +446,7 @@ export class RoomManager {
   }
 
   private async inviteSeat(ws: WebSocket, room: StoredRoom, message: Record<string, unknown>) {
+    this.requireWaitingOwnerOnline(room)
     if (!matches(String(message.inviteToken || ''), room.inviteHash) || room.phase !== 'waiting')
       throw new Error('邀请链接无效或已使用')
     room.inviteHash = undefined
@@ -455,6 +455,7 @@ export class RoomManager {
 
   private requestSeat(ws: WebSocket, room: StoredRoom, message: Record<string, unknown>) {
     if (room.phase !== 'waiting') throw new Error('对局已经开始')
+    this.requireWaitingOwnerOnline(room)
     const side = message.side
     if ((side !== 'red' && side !== 'black') || room.seats[side]) throw new Error('该席位不可用')
     const runtime = this.getRuntime(room.id)
@@ -472,7 +473,7 @@ export class RoomManager {
 
   private async approveSeat(ws: WebSocket, room: StoredRoom, message: Record<string, unknown>) {
     const connection = this.connections.get(ws)!
-    if (!connection.isOwner) throw new Error('只有房主可以审批')
+    if (!connection.isOwner) throw new Error('只有对局发起人可以审批')
     const runtime = this.getRuntime(room.id),
       application = runtime.applications.get(String(message.applicationId || ''))
     if (!application) throw new Error('申请已经失效')
@@ -507,7 +508,7 @@ export class RoomManager {
       connection.token = seatToken
     }
     send(ws, { type: 'room-seat-token', roomId: room.id, token: seatToken, role: side })
-    this.updateDisconnect(room)
+    this.updatePresence(room)
     this.broadcast(room)
   }
 
@@ -522,11 +523,14 @@ export class RoomManager {
     connection.role = 'spectator'
     connection.token = connection.isOwner ? connection.token : undefined
     send(ws, { type: 'room-seat-lost', roomId: room.id })
+    this.clearSeatDisconnect(room.id, color)
+    this.updatePresence(room)
     this.broadcast(room)
   }
 
   private async switchSeat(room: StoredRoom, connection: Connection, rawSide: unknown) {
     if (room.phase !== 'waiting') throw new Error('只能在开局前切换席位')
+    this.requireWaitingOwnerOnline(room)
     const current = this.color(connection)
     const target = rawSide === 'red' || rawSide === 'black' ? rawSide : null
     if (!target || target === current) throw new Error('目标席位无效')
@@ -540,15 +544,17 @@ export class RoomManager {
     this.touch(room)
     await this.repository.save(room)
     this.refreshRoles(room)
+    this.updatePresence(room)
     this.broadcast(room)
   }
 
   private async removeSeat(room: StoredRoom, connection: Connection, rawSide: unknown) {
     if (!connection.isOwner || room.phase !== 'waiting')
-      throw new Error('只有房主能在开局前移除棋手')
+      throw new Error('只有对局发起人能在开局前移除棋手')
     const side = rawSide === 'red' || rawSide === 'black' ? rawSide : null
     if (!side || !room.seats[side]) throw new Error('该席位没有棋手')
     delete room.seats[side]
+    this.clearSeatDisconnect(room.id, side)
     this.clearProposals(room.id)
     this.touch(room)
     await this.repository.save(room)
@@ -559,12 +565,13 @@ export class RoomManager {
       if (!target.isOwner) target.token = undefined
       send(socket, { type: 'room-seat-lost', roomId: room.id })
     }
+    this.updatePresence(room)
     this.broadcast(room)
   }
 
   private async renewInvite(ws: WebSocket, room: StoredRoom, connection: Connection) {
     if (!connection.isOwner || room.phase !== 'waiting')
-      throw new Error('只有房主能重新生成邀请链接')
+      throw new Error('只有对局发起人能重新生成邀请链接')
     const inviteToken = randomUUID()
     room.inviteHash = hash(inviteToken)
     this.touch(room)
@@ -575,13 +582,13 @@ export class RoomManager {
 
   private async dissolve(room: StoredRoom, connection: Connection) {
     if (!connection.isOwner || room.phase !== 'waiting')
-      throw new Error('只有房主能解散等待中的房间')
+      throw new Error('只有对局发起人能取消等待中的对局')
     const runtime = this.getRuntime(room.id)
     this.clearProposals(room.id)
-    this.clearDisconnect(room.id)
+    this.clearPresence(room.id)
     await this.repository.delete(room.id)
     for (const socket of runtime.sockets)
-      send(socket, { type: 'room-closed', roomId: room.id, reason: '房间已由房主解散' })
+      send(socket, { type: 'room-closed', roomId: room.id, reason: '对局已由发起人取消' })
     for (const socket of runtime.sockets) this.connections.delete(socket)
     runtime.sockets.clear()
     this.runtime.delete(room.id)
@@ -591,6 +598,10 @@ export class RoomManager {
     const connection = this.connections.get(_ws)!
     const color = this.color(connection)
     if (room.phase !== 'waiting') throw new Error('对局已经开始')
+    this.requireWaitingOwnerOnline(room)
+    const opponent: RoomColor = color === 'red' ? 'black' : 'red'
+    if (ready && room.seats[opponent]?.ready && !this.seatOnline(room.id, opponent))
+      throw new Error('对方已离线，暂时不能开始对局')
     room.seats[color]!.ready = ready
     if (room.seats.red?.ready && room.seats.black?.ready) {
       if (room.variant === 'gomoku') room.initialLayout = undefined
@@ -599,16 +610,20 @@ export class RoomManager {
       room.startedAt = Date.now()
       room.moves = []
       room.status = 'playing'
+      room.inviteHash = undefined
+      this.getRuntime(room.id).applications.clear()
+      this.clearWaitingPresence(room.id)
     }
     this.touch(room)
     await this.repository.save(room)
-    this.updateDisconnect(room)
+    this.updatePresence(room)
     this.broadcast(room)
   }
 
   private async propose(room: StoredRoom, connection: Connection, kind: 'swap' | 'undo' | 'draw') {
     const color = this.color(connection),
       runtime = this.getRuntime(room.id)
+    if (kind === 'swap') this.requireWaitingOwnerOnline(room)
     if (kind === 'swap' && (room.phase !== 'waiting' || !room.seats.red || !room.seats.black))
       throw new Error('当前不能换边')
     if (
@@ -790,6 +805,7 @@ export class RoomManager {
         commandId,
         messageId: previous.messageId,
       })
+    this.requireWritableConversation(room)
     const now = Date.now(),
       rate = this.chatRates.get(ws)
     if (!rate || now - rate.startedAt >= 10_000)
@@ -797,9 +813,9 @@ export class RoomManager {
     else if (++rate.count > 5) throw new Error('发言过于频繁，请稍后再试')
     const content = normalizeChatContent(rawContent)
     const settings = this.repository.chat.settings(room.id)
-    if (!connection.isOwner && settings.everyoneMuted) throw new Error('房间当前已开启全面禁言')
+    if (!connection.isOwner && settings.everyoneMuted) throw new Error('对局当前已开启全面禁言')
     if (!connection.isOwner && settings.mutedAuthorIds.includes(connection.authorId))
-      throw new Error('你已被房主禁言')
+      throw new Error('你已被对局发起人禁言')
     const role: RoomRole =
       connection.isOwner && connection.role === 'spectator' ? 'owner' : connection.role
     const seat =
@@ -809,11 +825,11 @@ export class RoomManager {
     if (!seat)
       connection.nickname = normalizeNickname(
         rawNickname,
-        connection.nickname || (connection.isOwner ? '房主' : '访客'),
+        connection.nickname || (connection.isOwner ? '发起人' : '访客'),
       )
     const nickname = normalizeNickname(
       seat?.nickname,
-      connection.nickname || (connection.isOwner ? '房主' : '访客'),
+      connection.nickname || (connection.isOwner ? '发起人' : '访客'),
     )
     if (containsSensitiveWord(content, settings.roomSensitiveWords)) {
       this.rememberChatCommand(room.id, commandId)
@@ -850,7 +866,8 @@ export class RoomManager {
         commandId,
         messageId: previous.messageId,
       })
-    if (!connection.isOwner) throw new Error('只有房主可以删除聊天消息')
+    this.requireWritableConversation(room)
+    if (!connection.isOwner) throw new Error('只有对局发起人可以删除聊天消息')
     const messageId = String(rawMessageId || '')
     if (!UUID.test(messageId) || !(await this.repository.chat.deleteMessage(room.id, messageId)))
       throw new Error('聊天消息不存在')
@@ -871,7 +888,8 @@ export class RoomManager {
     const runtime = this.getRuntime(room.id),
       previous = runtime.chatCommands.get(commandId)
     if (previous) return send(ws, { type: 'room-chat-ack', roomId: room.id, commandId })
-    if (!connection.isOwner) throw new Error('只有房主可以禁言成员')
+    this.requireWritableConversation(room)
+    if (!connection.isOwner) throw new Error('只有对局发起人可以禁言成员')
     if (typeof rawMuted !== 'boolean') throw new Error('禁言设置无效')
     const authorId = String(rawAuthorId || ''),
       muted = rawMuted
@@ -882,7 +900,7 @@ export class RoomManager {
       .find((message) => message.authorId === authorId)
     if (muted && !target) throw new Error('成员不存在')
     if (muted && (target!.isOwner || authorId === connection.authorId))
-      throw new Error('不能禁言房主')
+      throw new Error('不能禁言对局发起人')
     if (!muted && !settings.mutedAuthorIds.includes(authorId)) throw new Error('成员未被禁言')
     if (
       muted &&
@@ -909,7 +927,8 @@ export class RoomManager {
     const runtime = this.getRuntime(room.id),
       previous = runtime.chatCommands.get(commandId)
     if (previous) return send(ws, { type: 'room-chat-ack', roomId: room.id, commandId })
-    if (!connection.isOwner) throw new Error('只有房主可以修改聊天设置')
+    this.requireWritableConversation(room)
+    if (!connection.isOwner) throw new Error('只有对局发起人可以修改聊天设置')
     if (typeof message.everyoneMuted !== 'boolean') throw new Error('全面禁言设置无效')
     const roomSensitiveWords = normalizeRoomSensitiveWords(message.roomSensitiveWords)
     await this.repository.chat.updateSettings(room.id, {
@@ -961,7 +980,7 @@ export class RoomManager {
       revision: room.revision,
       role: connection.role,
       isOwner: connection.isOwner,
-      inviteAvailable: Boolean(room.inviteHash),
+      inviteAvailable: room.phase === 'waiting' && Boolean(room.inviteHash),
       seats: Object.fromEntries(
         (['red', 'black'] as const).flatMap((color) =>
           room.seats[color]
@@ -1025,6 +1044,12 @@ export class RoomManager {
             side: item.side,
           }))
         : undefined,
+      ownerDisconnectDeadline: runtime.ownerDisconnect?.deadline,
+      seatDisconnectDeadlines: Object.fromEntries(
+        (['red', 'black'] as const).flatMap((color) =>
+          runtime.seatDisconnects[color] ? [[color, runtime.seatDisconnects[color]!.deadline]] : [],
+        ),
+      ),
       disconnect: runtime.disconnect
         ? { color: runtime.disconnect.color, deadline: runtime.disconnect.deadline }
         : undefined,
@@ -1059,8 +1084,15 @@ export class RoomManager {
   }
   private requireRoom(id: string) {
     const room = this.repository.get(id)
-    if (!room) throw new Error('房间不存在')
+    if (!room) throw new Error('对局不存在')
     return room
+  }
+  private requireWaitingOwnerOnline(room: StoredRoom) {
+    if (room.phase === 'waiting' && !this.ownerOnline(room.id))
+      throw new Error('发起人已离线，当前对局即将取消')
+  }
+  private requireWritableConversation(room: StoredRoom) {
+    if (room.phase === 'finished') throw new Error('对局已结束，历史聊天仅供查看')
   }
   private color(connection: Connection): RoomColor {
     if (connection.role !== 'red' && connection.role !== 'black') throw new Error('当前不是棋手')
@@ -1077,6 +1109,7 @@ export class RoomManager {
       value = {
         sockets: new Set(),
         applications: new Map(),
+        seatDisconnects: {},
         commands: new Map(),
         chatCommands: new Map(),
         queue: Promise.resolve(),
@@ -1129,10 +1162,47 @@ export class RoomManager {
           : 'spectator'
     }
   }
+  private ownerOnline(id: string) {
+    const runtime = this.runtime.get(id)
+    return Boolean(
+      runtime &&
+      [...runtime.sockets].some((socket) => this.connections.get(socket)?.isOwner === true),
+    )
+  }
+  private seatOnline(id: string, color: RoomColor) {
+    const runtime = this.runtime.get(id)
+    return Boolean(
+      runtime &&
+      [...runtime.sockets].some((socket) => this.connections.get(socket)?.role === color),
+    )
+  }
+  private clearOwnerDisconnect(id: string) {
+    const runtime = this.runtime.get(id)
+    if (!runtime) return
+    if (runtime.ownerDisconnect) clearTimeout(runtime.ownerDisconnect.timer)
+    runtime.ownerDisconnect = undefined
+  }
+  private clearSeatDisconnect(id: string, color: RoomColor) {
+    const runtime = this.runtime.get(id)
+    if (!runtime) return
+    const current = runtime.seatDisconnects[color]
+    if (current) clearTimeout(current.timer)
+    delete runtime.seatDisconnects[color]
+  }
+  private clearWaitingPresence(id: string) {
+    this.clearOwnerDisconnect(id)
+    this.clearSeatDisconnect(id, 'red')
+    this.clearSeatDisconnect(id, 'black')
+  }
   private clearDisconnect(id: string) {
-    const runtime = this.getRuntime(id)
+    const runtime = this.runtime.get(id)
+    if (!runtime) return
     if (runtime.disconnect) clearTimeout(runtime.disconnect.timer)
     runtime.disconnect = undefined
+  }
+  private clearPresence(id: string) {
+    this.clearWaitingPresence(id)
+    this.clearDisconnect(id)
   }
   private clearProposal(id: string, kind: 'swap' | 'undo' | 'draw') {
     const runtime = this.getRuntime(id)
@@ -1146,36 +1216,139 @@ export class RoomManager {
     this.clearProposal(id, 'undo')
     this.clearProposal(id, 'draw')
   }
-  private updateDisconnect(room: StoredRoom) {
+  private updatePresence(room: StoredRoom, startup = false) {
+    if (room.phase === 'waiting') {
+      this.clearDisconnect(room.id)
+      this.updateWaitingPresence(room, startup)
+      return
+    }
+    this.clearWaitingPresence(room.id)
+    if (room.phase === 'playing') this.updatePlayingDisconnect(room, startup)
+    else this.clearDisconnect(room.id)
+  }
+
+  private updateWaitingPresence(room: StoredRoom, startup: boolean) {
     const runtime = this.getRuntime(room.id)
-    if (room.phase !== 'playing') {
+    if (this.ownerOnline(room.id)) {
+      this.clearOwnerDisconnect(room.id)
+    } else if (!runtime.ownerDisconnect) {
+      const timeout = startup
+        ? (this.options.startupRecoveryTimeoutMs ?? 2 * this.disconnectTimeoutMs)
+        : (this.options.waitingDisconnectTimeoutMs ?? this.disconnectTimeoutMs)
+      const deadline = Date.now() + timeout
+      const timer = setTimeout(
+        () => this.enqueueWaitingOwnerExpiry(room.id, deadline),
+        Math.max(0, timeout),
+      )
+      timer.unref()
+      runtime.ownerDisconnect = { deadline, timer }
+    }
+
+    if (!this.ownerOnline(room.id)) {
+      this.clearSeatDisconnect(room.id, 'red')
+      this.clearSeatDisconnect(room.id, 'black')
+      return
+    }
+
+    for (const color of ['red', 'black'] as const) {
+      const seat = room.seats[color]
+      if (!seat || this.seatOnline(room.id, color)) {
+        this.clearSeatDisconnect(room.id, color)
+        continue
+      }
+      if (runtime.seatDisconnects[color]) continue
+      const timeout = this.options.waitingDisconnectTimeoutMs ?? this.disconnectTimeoutMs
+      const deadline = Date.now() + timeout
+      const timer = setTimeout(
+        () => this.enqueueWaitingSeatExpiry(room.id, color, deadline),
+        Math.max(0, timeout),
+      )
+      timer.unref()
+      runtime.seatDisconnects[color] = { deadline, timer }
+    }
+  }
+
+  private updatePlayingDisconnect(room: StoredRoom, startup: boolean) {
+    const runtime = this.getRuntime(room.id)
+    const redOnline = this.seatOnline(room.id, 'red')
+    const blackOnline = this.seatOnline(room.id, 'black')
+    const color: RoomColor | 'both' | undefined =
+      redOnline && blackOnline ? undefined : redOnline ? 'black' : blackOnline ? 'red' : 'both'
+    if (!color) {
       this.clearDisconnect(room.id)
       return
     }
-    const online = (color: RoomColor) =>
-      [...runtime.sockets].some((ws) => this.connections.get(ws)?.role === color)
-    if (!online('red') && !online('black')) {
-      runtime.bothOfflineSince ??= Date.now()
-      this.clearDisconnect(room.id)
-      return
-    }
-    runtime.bothOfflineSince = undefined
-    if (online('red') && online('black')) {
-      this.clearDisconnect(room.id)
-      return
-    }
-    const color: RoomColor = online('red') ? 'black' : 'red',
-      deadline = Date.now() + this.disconnectTimeoutMs
     if (runtime.disconnect?.color === color) return
     this.clearDisconnect(room.id)
+    const timeout = startup
+      ? (this.options.startupRecoveryTimeoutMs ?? 2 * this.disconnectTimeoutMs)
+      : this.disconnectTimeoutMs
+    const deadline = Date.now() + timeout
     const timer = setTimeout(
       () => this.enqueueDisconnectAdjudication(room.id, color, deadline),
-      this.disconnectTimeoutMs,
+      Math.max(0, timeout),
     )
+    timer.unref()
     runtime.disconnect = { color, deadline, timer }
   }
 
-  private enqueueDisconnectAdjudication(roomId: string, color: RoomColor, deadline: number) {
+  private enqueueWaitingOwnerExpiry(roomId: string, deadline: number) {
+    const runtime = this.getRuntime(roomId)
+    const operation = runtime.queue.then(() => this.expireWaitingOwner(roomId, deadline))
+    runtime.queue = operation.catch((error) => console.error('Waiting owner expiry failed:', error))
+  }
+
+  private async expireWaitingOwner(roomId: string, deadline: number) {
+    const runtime = this.getRuntime(roomId)
+    if (runtime.ownerDisconnect?.deadline !== deadline) return
+    const room = this.repository.get(roomId)
+    if (!room || room.phase !== 'waiting' || this.ownerOnline(roomId)) {
+      this.clearOwnerDisconnect(roomId)
+      return
+    }
+    await this.closeWaitingRoom(room, '发起人离线，对局已自动取消')
+  }
+
+  private enqueueWaitingSeatExpiry(roomId: string, color: RoomColor, deadline: number) {
+    const runtime = this.getRuntime(roomId)
+    const operation = runtime.queue.then(() => this.expireWaitingSeat(roomId, color, deadline))
+    runtime.queue = operation.catch((error) => console.error('Waiting seat expiry failed:', error))
+  }
+
+  private async expireWaitingSeat(roomId: string, color: RoomColor, deadline: number) {
+    const runtime = this.getRuntime(roomId)
+    if (runtime.seatDisconnects[color]?.deadline !== deadline) return
+    const room = this.repository.get(roomId)
+    if (!room || room.phase !== 'waiting' || !room.seats[color] || this.seatOnline(roomId, color)) {
+      this.clearSeatDisconnect(roomId, color)
+      return
+    }
+    delete room.seats[color]
+    this.clearSeatDisconnect(roomId, color)
+    this.clearProposals(room.id)
+    this.touch(room)
+    await this.repository.save(room)
+    this.refreshRoles(room)
+    this.broadcast(room)
+  }
+
+  private async closeWaitingRoom(room: StoredRoom, reason: string) {
+    const runtime = this.getRuntime(room.id)
+    this.clearPresence(room.id)
+    this.clearProposals(room.id)
+    await this.repository.delete(room.id)
+    for (const socket of runtime.sockets)
+      send(socket, { type: 'room-closed', roomId: room.id, reason })
+    for (const socket of runtime.sockets) this.connections.delete(socket)
+    runtime.sockets.clear()
+    this.runtime.delete(room.id)
+  }
+
+  private enqueueDisconnectAdjudication(
+    roomId: string,
+    color: RoomColor | 'both',
+    deadline: number,
+  ) {
     const runtime = this.getRuntime(roomId)
     const operation = runtime.queue.then(() => this.adjudicateDisconnect(roomId, color, deadline))
     runtime.queue = operation.catch((error) =>
@@ -1183,7 +1356,7 @@ export class RoomManager {
     )
   }
 
-  private async adjudicateDisconnect(roomId: string, color: RoomColor, deadline: number) {
+  private async adjudicateDisconnect(roomId: string, color: RoomColor | 'both', deadline: number) {
     const runtime = this.getRuntime(roomId)
     if (runtime.disconnect?.color !== color || runtime.disconnect.deadline !== deadline) return
     const room = this.repository.get(roomId)
@@ -1191,12 +1364,17 @@ export class RoomManager {
       this.clearDisconnect(roomId)
       return
     }
-    const online = (side: RoomColor) =>
-      [...runtime.sockets].some((ws) => this.connections.get(ws)?.role === side)
-    const opponent: RoomColor = color === 'red' ? 'black' : 'red'
-    if (online(color) || !online(opponent)) {
-      this.updateDisconnect(room)
+    const redOnline = this.seatOnline(roomId, 'red')
+    const blackOnline = this.seatOnline(roomId, 'black')
+    const current: RoomColor | 'both' | undefined =
+      redOnline && blackOnline ? undefined : redOnline ? 'black' : blackOnline ? 'red' : 'both'
+    if (current !== color) {
+      this.updatePresence(room)
       this.broadcast(room)
+      return
+    }
+    if (color === 'both') {
+      await this.finishAbandoned(room, Date.now())
       return
     }
     room.status = color === 'red' ? 'black-wins' : 'red-wins'
@@ -1207,6 +1385,18 @@ export class RoomManager {
     this.touch(room)
     await this.repository.save(room)
     this.clearDisconnect(room.id)
+    this.broadcast(room)
+  }
+
+  private async finishAbandoned(room: StoredRoom, finishedAt: number) {
+    room.phase = 'finished'
+    room.status = 'draw'
+    room.statusReason = 'abandoned'
+    room.finishedAt = finishedAt
+    this.clearPresence(room.id)
+    this.clearProposals(room.id)
+    this.touch(room)
+    await this.repository.save(room)
     this.broadcast(room)
   }
 }

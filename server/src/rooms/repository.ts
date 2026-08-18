@@ -165,7 +165,7 @@ export class RoomRepository {
 
   async create(room: StoredRoom) {
     await this.mutate(room.id, async () => {
-      if (this.rooms.has(room.id)) throw new Error('房间已存在')
+      if (this.rooms.has(room.id)) throw new Error('对局已存在')
       await this.write(room)
       this.rooms.set(room.id, structuredClone(room))
     })

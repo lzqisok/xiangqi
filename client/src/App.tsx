@@ -71,7 +71,10 @@ type CandidatePreviewState = {
   stepIndex: number
 }
 
-type WorkspaceTab = 'play' | 'engine' | 'review' | 'variations'
+type WorkspaceTab = 'play' | 'history' | 'engine' | 'review' | 'variations'
+type StartSection = 'play' | 'study'
+type LocalOpponent = 'human-vs-ai' | 'human-vs-human' | 'ai-vs-ai'
+type XiangqiRule = 'xiangqi' | 'jieqi'
 
 export default function App() {
   const search = new URLSearchParams(window.location.search)
@@ -85,12 +88,30 @@ export default function App() {
 }
 
 function HomeScreen() {
+  const [latestGame, setLatestGame] = useState<GameSummary | null>(null)
+
+  useEffect(() => {
+    let active = true
+    listGames()
+      .then(games => {
+        if (active) setLatestGame(games[0] || null)
+      })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [])
+
   return <main className="home-screen">
     <section className="home-card">
-      <div className="home-brand"><span aria-hidden="true">弈</span><div><small>BOARD GAME STUDIO</small><h1>棋局空间</h1><p>选择棋类与对弈方式</p></div></div>
+      <div className="home-brand"><span aria-hidden="true">弈</span><div><small>BOARD GAME STUDIO</small><h1>棋局空间</h1><p>开始对局、和朋友下，或继续你的研究</p></div></div>
+      {latestGame && <a className="home-continue" href={gameUrl(latestGame.id)}>
+        <span>继续上次象棋对局</span>
+        <strong>{latestGame.name}</strong>
+        <small>{formatModeName(latestGame.mode)} · {latestGame.moveCount} 回合</small>
+        <b>继续 →</b>
+      </a>}
       <nav className="home-entries" aria-label="游戏入口">
-        <a href="?type=xiangqi"><span className="home-entry-mark">象</span><strong>中国象棋</strong><small>标准象棋、揭棋、残局训练与局域网对决</small><b>选择模式 →</b></a>
-        <a href="?type=gomoku"><span className="home-entry-mark gomoku">五</span><strong>五子棋</strong><small>本地练习、人机与 AI 对决、局域网房间</small><b>选择模式 →</b></a>
+        <a href="?type=xiangqi"><span className="home-entry-mark">象</span><strong>中国象棋</strong><small>普通象棋、揭棋、人机对弈、残局训练与局域网对战</small><b>进入象棋 →</b></a>
+        <a href="?type=gomoku"><span className="home-entry-mark gomoku">五</span><strong>五子棋</strong><small>标准与有禁手规则，本地练习、AI 对决和局域网房间</small><b>进入五子棋 →</b></a>
       </nav>
     </section>
   </main>
@@ -98,13 +119,14 @@ function HomeScreen() {
 
 function GameModeScreen({ game }: { game: 'xiangqi' | 'gomoku' }) {
   const gomoku = game === 'gomoku'
-  return <main className="home-screen"><section className="home-card">
-    <div className="home-brand"><span className={gomoku ? 'gomoku' : ''} aria-hidden="true">{gomoku ? '五' : '象'}</span><div><small>{gomoku ? 'GOMOKU' : 'XIANGQI'} STUDIO</small><h1>{gomoku ? '五子棋' : '中国象棋'}</h1><p>选择对弈方式</p></div></div>
-    <nav className="home-entries home-mode-entries" aria-label="对弈方式">
-      <a href={gomoku ? '?gomoku=1&local=1' : '?local=1'}><span className="home-entry-mark">练</span><strong>本地</strong><small>{gomoku ? '双人练习、人机挑战、AI 对决与局后复盘' : '人机对弈、双人练习、残局与复盘'}</small><b>进入练习 →</b></a>
-      <a href={gomoku ? '?gomoku=1&lan=1' : '?lan=1'}><span className="home-entry-mark online">联</span><strong>在线</strong><small>创建局域网房间、邀请棋友、实时聊天与观战</small><b>进入大厅 →</b></a>
+  return <main className="home-screen game-console-screen"><section className="home-card game-console-card">
+    <div className="home-brand"><span className={gomoku ? 'gomoku' : ''} aria-hidden="true">{gomoku ? '五' : '象'}</span><div><small>{gomoku ? 'GOMOKU' : 'XIANGQI'} STUDIO</small><h1>{gomoku ? '五子棋' : '中国象棋'}</h1><p>今天想怎么下？</p></div></div>
+    <nav className="home-entries game-goal-entries" aria-label="棋局目标">
+      <a href={gomoku ? '?gomoku=1&local=1' : '?local=1&intent=play'}><span className="home-entry-mark">弈</span><strong>开始一局</strong><small>{gomoku ? '人机挑战、本地双人或观看 AI 对决' : '选择对手、规则、执子方和 AI 强度'}</small><b>配置新对局 →</b></a>
+      <a href={gomoku ? '?gomoku=1&lan=1' : '?lan=1'}><span className="home-entry-mark online">友</span><strong>和朋友下</strong><small>创建局域网房间、邀请棋友、实时聊天与观战</small><b>进入局域网大厅 →</b></a>
+      <a href={gomoku ? '?gomoku=1&local=1&history=1' : '?local=1&intent=study'}><span className="home-entry-mark study">研</span><strong>训练与研究</strong><small>{gomoku ? '打开历史棋局并查看局后复盘' : '进入残局训练、研究局面与棋谱回放'}</small><b>{gomoku ? '查看对局记录 →' : '打开训练中心 →'}</b></a>
     </nav>
-    <a className="home-back-link" href="?">← 返回棋类选择</a>
+    <a className="home-back-link" href="?">← 返回棋局空间</a>
   </section></main>
 }
 
@@ -345,6 +367,11 @@ function LocalApp() {
     () => buildMoveReviews(game.initialFen, game.historyRecords, game.reviewPositions),
     [game.historyRecords, game.initialFen, game.reviewPositions],
   )
+  const gameFinished = game.gameStatus !== 'playing'
+  const showReviewTab = gameFinished || moveReviews.length > 0 || game.reviewThinking
+  const showVariationsTab = gameMode !== 'jieqi' && (
+    gameMode === 'study' || gameFinished || game.variationBranchCount > 0
+  )
   const studyContent = useMemo(() => ({
     initialFen: game.initialFen,
     moves: game.historyRecords,
@@ -364,6 +391,11 @@ function LocalApp() {
     setCandidatePreview(null)
     if (workspaceTab === 'engine' || workspaceTab === 'variations') setWorkspaceTab('play')
   }, [gameMode, workspaceTab])
+
+  useEffect(() => {
+    if (workspaceTab === 'review' && !showReviewTab) setWorkspaceTab('play')
+    if (workspaceTab === 'variations' && !showVariationsTab) setWorkspaceTab('play')
+  }, [showReviewTab, showVariationsTab, workspaceTab])
 
   useEffect(() => {
     setTrainingHintLevel(0)
@@ -679,18 +711,6 @@ function LocalApp() {
         </div>
       </header>
       <div className="game-container">
-        <div className="left-panel">
-          <MoveHistory
-            moves={game.historyRecords}
-            currentIndex={game.currentMoveIndex}
-            onJumpTo={game.jumpToMove}
-            navigationDisabled={gameMode === 'jieqi'}
-            onToggleMark={game.toggleMoveMark}
-            onUpdateNote={game.updateMoveNote}
-            showOnlyAnnotated={showOnlyAnnotatedMoves}
-            onShowOnlyAnnotatedChange={setShowOnlyAnnotatedMoves}
-          />
-        </div>
         {showAnalysis && gameMode !== 'jieqi' && (
           <AnalysisBar
             evaluation={game.evaluation}
@@ -751,16 +771,27 @@ function LocalApp() {
         </div>
         <div className="side-panel">
           <nav className="workspace-tabs" aria-label="棋局工具">
-            <button className={workspaceTab === 'play' ? 'active' : ''} onClick={() => setWorkspaceTab('play')}>对局</button>
+            <button className={workspaceTab === 'play' ? 'active' : ''} onClick={() => setWorkspaceTab('play')}>{gameFinished ? '结果' : '对局'}</button>
+            <button className={workspaceTab === 'history' ? 'active' : ''} onClick={() => setWorkspaceTab('history')}>棋谱{game.historyRecords.length > 0 ? <span>{game.historyRecords.length}</span> : null}</button>
             {gameMode !== 'jieqi' && <button className={workspaceTab === 'engine' ? 'active' : ''} onClick={() => setWorkspaceTab('engine')}>分析</button>}
-            <button className={workspaceTab === 'review' ? 'active' : ''} onClick={() => setWorkspaceTab('review')}>
+            {showReviewTab && <button className={workspaceTab === 'review' ? 'active' : ''} onClick={() => setWorkspaceTab('review')}>
               复盘{moveReviews.length > 0 ? <span>{moveReviews.length}</span> : null}
-            </button>
-            {gameMode !== 'jieqi' && <button className={workspaceTab === 'variations' ? 'active' : ''} onClick={() => setWorkspaceTab('variations')}>
+            </button>}
+            {showVariationsTab && <button className={workspaceTab === 'variations' ? 'active' : ''} onClick={() => setWorkspaceTab('variations')}>
               变招{game.variationBranchCount > 0 ? <span>{game.variationBranchCount}</span> : null}
             </button>}
           </nav>
           <div className="workspace-tool-content">
+          {workspaceTab === 'history' && <MoveHistory
+            moves={game.historyRecords}
+            currentIndex={game.currentMoveIndex}
+            onJumpTo={game.jumpToMove}
+            navigationDisabled={gameMode === 'jieqi'}
+            onToggleMark={game.toggleMoveMark}
+            onUpdateNote={game.updateMoveNote}
+            showOnlyAnnotated={showOnlyAnnotatedMoves}
+            onShowOnlyAnnotatedChange={setShowOnlyAnnotatedMoves}
+          />}
           {workspaceTab === 'play' && <GamePanel
             currentTurn={game.currentTurn}
             gameMode={gameMode}
@@ -1193,11 +1224,19 @@ function StartScreen({ games, loading, storeError, starting, onRetry, onOpen, on
   onImport: (file: File) => void
   onStart: (mode: GameMode, difficulty: Difficulty, side: PlayerSide, redDifficulty: Difficulty, blackDifficulty: Difficulty) => void
 }) {
-  const [mode, setMode] = useState<GameMode>('human-vs-ai')
+  const [section, setSection] = useState<StartSection>(() => (
+    new URLSearchParams(window.location.search).get('intent') === 'study' ? 'study' : 'play'
+  ))
+  const [opponent, setOpponent] = useState<LocalOpponent>('human-vs-ai')
+  const [rule, setRule] = useState<XiangqiRule>('xiangqi')
+  const [studyMode, setStudyMode] = useState<'endgame' | 'study'>('endgame')
   const [diff, setDiff] = useState<Difficulty>('medium')
   const [side, setSide] = useState<PlayerSide>('red')
   const [redDiff, setRedDiff] = useState<Difficulty>('medium')
   const [blackDiff, setBlackDiff] = useState<Difficulty>('medium')
+  const mode: GameMode = section === 'study'
+    ? studyMode
+    : rule === 'jieqi' ? 'jieqi' : opponent
 
   return (
     <div className="start-screen">
@@ -1212,44 +1251,43 @@ function StartScreen({ games, loading, storeError, starting, onRetry, onOpen, on
             <span>多级 AI</span>
             <span>研究与复盘</span>
           </div>
-          <a className="start-home-link" href="?type=xiangqi">← 返回模式选择</a>
+          <a className="start-home-link" href="?type=xiangqi">← 返回象棋控制台</a>
         </section>
 
         <section className="start-config">
         <div className="start-config-heading">
-          <span>新对局</span>
-          <small>选择模式后开始</small>
+          <span>{section === 'play' ? '开始一局' : '训练与研究'}</span>
+          <small>{section === 'play' ? '按目标配置本局' : '选择要打开的内容'}</small>
         </div>
 
-        <div className="option-group mode-option-group">
-          <label>游戏模式</label>
-          <div className="btn-group mode-btn-group">
-            <button
-              className={mode === 'human-vs-ai' ? 'active' : ''}
-              onClick={() => setMode('human-vs-ai')}
-            >人机对弈</button>
-            <button
-              className={mode === 'human-vs-human' ? 'active' : ''}
-              onClick={() => setMode('human-vs-human')}
-            >双人对弈</button>
-            <button
-              className={mode === 'ai-vs-ai' ? 'active' : ''}
-              onClick={() => setMode('ai-vs-ai')}
-            >AI 对战</button>
-            <button
-              className={mode === 'jieqi' ? 'active' : ''}
-              onClick={() => setMode('jieqi')}
-            >揭棋</button>
-            <button
-              className={mode === 'endgame' ? 'active' : ''}
-              onClick={() => setMode('endgame')}
-            >残局模式</button>
-            <button
-              className={mode === 'study' ? 'active' : ''}
-              onClick={() => setMode('study')}
-            >研究局面</button>
-          </div>
+        <div className="start-section-switch" aria-label="象棋目标">
+          <button className={section === 'play' ? 'active' : ''} onClick={() => setSection('play')}><strong>开始一局</strong><span>人机、本地双人或 AI 对决</span></button>
+          <button className={section === 'study' ? 'active' : ''} onClick={() => setSection('study')}><strong>训练与研究</strong><span>残局训练、研究局面与回放</span></button>
         </div>
+
+        {section === 'play' ? <>
+          <div className="option-group mode-option-group">
+            <label>选择对手</label>
+            <div className="btn-group opponent-btn-group">
+              <button className={opponent === 'human-vs-ai' ? 'active' : ''} onClick={() => setOpponent('human-vs-ai')}>挑战 AI</button>
+              <button className={opponent === 'human-vs-human' ? 'active' : ''} onClick={() => { setOpponent('human-vs-human'); setRule('xiangqi') }}>本地双人</button>
+              <button className={opponent === 'ai-vs-ai' ? 'active' : ''} onClick={() => { setOpponent('ai-vs-ai'); setRule('xiangqi') }}>AI 对决</button>
+            </div>
+          </div>
+          <div className="option-group rule-option-group">
+            <label>选择规则</label>
+            <div className="rule-choice-grid">
+              <button className={rule === 'xiangqi' ? 'active' : ''} onClick={() => setRule('xiangqi')}><strong>普通象棋</strong><span>完整支持全部对手类型和分析工具</span></button>
+              <button className={rule === 'jieqi' ? 'active' : ''} onClick={() => { setRule('jieqi'); setOpponent('human-vs-ai') }}><strong>揭棋</strong><span>暗子移动后揭晓，当前支持人机对弈</span></button>
+            </div>
+          </div>
+        </> : <div className="option-group study-choice-group">
+          <label>选择内容</label>
+          <div className="study-choice-grid">
+            <button className={studyMode === 'endgame' ? 'active' : ''} onClick={() => setStudyMode('endgame')}><strong>残局训练</strong><span>从内置或自定义残局开始，使用分层提示练习</span></button>
+            <button className={studyMode === 'study' ? 'active' : ''} onClick={() => setStudyMode('study')}><strong>研究局面</strong><span>打开已保存研究、棋谱回放和变招树</span></button>
+          </div>
+        </div>}
 
         {(mode === 'human-vs-ai' || mode === 'jieqi') && (
           <>
@@ -1301,7 +1339,7 @@ function StartScreen({ games, loading, storeError, starting, onRetry, onOpen, on
         )}
 
         <button className="start-btn" disabled={starting} onClick={() => onStart(mode, diff, side, redDiff, blackDiff)}>
-          {starting ? '正在创建…' : '开始游戏'}
+          {starting ? '正在创建…' : section === 'study' ? studyMode === 'endgame' ? '选择残局' : '打开研究库' : '开始游戏'}
         </button>
 
         <div className="saved-games-section">

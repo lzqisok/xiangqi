@@ -23,7 +23,7 @@ export default function GomokuApp() {
   const forbiddenEnabled = useGameStore(state => state.forbiddenEnabled)
   const loadRecordedGame = useGameStore(state => state.loadRecordedGame)
   const [showRestartConfirm, setShowRestartConfirm] = useState(false)
-  const [showHistory, setShowHistory] = useState(false)
+  const [showHistory, setShowHistory] = useState(() => new URLSearchParams(window.location.search).has('history'))
   const [history, setHistory] = useState<GomokuGameRecord[]>(loadGomokuHistory)
   const savedSignature = useRef('')
 

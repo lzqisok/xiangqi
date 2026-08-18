@@ -1,4 +1,5 @@
-import { MoveRecord, StudyPosition, VariationTree } from '../types'
+import { BoardAnnotation, MoveRecord, StudyPosition, VariationTree } from '../types'
+import { MAX_NODE_ANNOTATIONS } from '../annotations/model'
 
 const STORAGE_KEY = 'xiangqi.study-positions.v1'
 
@@ -51,6 +52,11 @@ function isValidVariationTree(value: unknown): value is VariationTree {
       Array.isArray(node.children) &&
       node.children.every(childId => typeof childId === 'string' && Boolean(nodes[childId])) &&
       (node.mainChildId === undefined || (typeof node.mainChildId === 'string' && node.children.includes(node.mainChildId))) &&
+      (node.annotations === undefined || (
+        Array.isArray(node.annotations) &&
+        node.annotations.length <= MAX_NODE_ANNOTATIONS &&
+        node.annotations.every(isValidBoardAnnotation)
+      )) &&
       typeof node.createdAt === 'number' &&
       typeof node.updatedAt === 'number'
     )
@@ -71,6 +77,22 @@ function isValidVariationTree(value: unknown): value is VariationTree {
     }
   }
   return reachable.size === entries.length && reachable.has(tree.currentNodeId)
+}
+
+function isValidBoardAnnotation(value: unknown): value is BoardAnnotation {
+  if (!value || typeof value !== 'object') return false
+  const annotation = value as Record<string, unknown>
+  const from = annotation.from
+  const to = annotation.to
+  const validFrom = isPosition(from) && from.row >= 0 && from.row < 10 && from.col >= 0 && from.col < 9
+  const validTo = isPosition(to) && to.row >= 0 && to.row < 10 && to.col >= 0 && to.col < 9
+  return (
+    typeof annotation.id === 'string' && annotation.id.length > 0 && annotation.id.length <= 100 &&
+    (annotation.color === 'red' || annotation.color === 'green' || annotation.color === 'blue') &&
+    (annotation.type === 'circle' && validFrom && annotation.to === undefined ||
+      annotation.type === 'arrow' && validFrom && validTo &&
+      (from.row !== to.row || from.col !== to.col))
+  )
 }
 
 function isPosition(value: unknown): value is { row: number; col: number } {
@@ -182,7 +204,7 @@ export function duplicateStudyPosition(id: string): StudyPosition[] {
 
 export function exportStudyPositionsJson(): string {
   return JSON.stringify({
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     studies: loadStudyPositions(),
   }, null, 2)

@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Board, Position, Move, MoveRecord, PieceColor,
   GameMode, Difficulty, PlayerSide, GameStatus, GameStatusReason, WSMessage, PlayerConfig, AnalysisPoint, MoveCandidate, EngineSearchLimit,
-  EngineRuntimeOptions, ReviewPosition, VariationTree,
+  BoardAnnotation, EngineRuntimeOptions, ReviewPosition, VariationTree,
 } from '../types'
 import { parseFen, boardToFen, applyMove, INITIAL_FEN, findKing } from '../engine/board'
 import { getLegalMoves, isInCheck, getGameStatusDetail } from '../engine/rules'
@@ -28,8 +28,10 @@ import {
   getVariationLine,
   selectVariationNode,
   setMainVariation,
+  updateVariationAnnotations,
   updateVariationMove,
 } from '../variations/tree'
+import { MAX_NODE_ANNOTATIONS } from '../annotations/model'
 
 interface UseGameOptions {
   gameMode: GameMode | null
@@ -1046,6 +1048,47 @@ export function useGame({
     setMoveHistory(line.records)
   }, [canEditGame])
 
+  const addCurrentNodeAnnotation = useCallback((annotation: BoardAnnotation) => {
+    if (!canEditGame || gameMode !== 'study') return
+    const currentTree = variationTreeRef.current
+    const node = currentTree.nodes[currentTree.currentNodeId]
+    if (!node) return
+    const annotations = [...(node.annotations || []), annotation].slice(-MAX_NODE_ANNOTATIONS)
+    const nextTree = updateVariationAnnotations(currentTree, node.id, annotations)
+    variationTreeRef.current = nextTree
+    setVariationTree(nextTree)
+  }, [canEditGame, gameMode])
+
+  const removeCurrentNodeAnnotation = useCallback((annotationId: string) => {
+    if (!canEditGame || gameMode !== 'study') return
+    const currentTree = variationTreeRef.current
+    const node = currentTree.nodes[currentTree.currentNodeId]
+    if (!node?.annotations?.some(annotation => annotation.id === annotationId)) return
+    const nextTree = updateVariationAnnotations(currentTree, node.id, node.annotations.filter(annotation => annotation.id !== annotationId))
+    variationTreeRef.current = nextTree
+    setVariationTree(nextTree)
+  }, [canEditGame, gameMode])
+
+  const undoCurrentNodeAnnotation = useCallback(() => {
+    if (!canEditGame || gameMode !== 'study') return
+    const currentTree = variationTreeRef.current
+    const node = currentTree.nodes[currentTree.currentNodeId]
+    if (!node?.annotations?.length) return
+    const nextTree = updateVariationAnnotations(currentTree, node.id, node.annotations.slice(0, -1))
+    variationTreeRef.current = nextTree
+    setVariationTree(nextTree)
+  }, [canEditGame, gameMode])
+
+  const clearCurrentNodeAnnotations = useCallback(() => {
+    if (!canEditGame || gameMode !== 'study') return
+    const currentTree = variationTreeRef.current
+    const node = currentTree.nodes[currentTree.currentNodeId]
+    if (!node?.annotations?.length) return
+    const nextTree = updateVariationAnnotations(currentTree, node.id, [])
+    variationTreeRef.current = nextTree
+    setVariationTree(nextTree)
+  }, [canEditGame, gameMode])
+
   const requestHint = useCallback(() => {
     if (!connected || gameStatus !== 'playing' || aiThinking || hintThinking || candidateThinking || reviewThinking) return
     if (currentPlayerConfig.type !== 'human') return
@@ -1200,6 +1243,7 @@ export function useGame({
     if (!currentNode) return []
     return currentNode.children.flatMap(id => variationTree.nodes[id] ? [variationTree.nodes[id]] : [])
   }, [variationTree])
+  const currentNodeAnnotations = variationTree.nodes[variationTree.currentNodeId]?.annotations || []
 
   return {
     board,
@@ -1221,6 +1265,8 @@ export function useGame({
     moveRecords,
     historyRecords: moveHistory,
     variationTree,
+    currentVariationNodeId: variationTree.currentNodeId,
+    currentNodeAnnotations,
     variationChildren,
     variationBranchCount: countVariationBranches(variationTree),
     mainVariationChildId: variationTree.nodes[variationTree.currentNodeId]?.mainChildId,
@@ -1251,6 +1297,10 @@ export function useGame({
     jumpToMove,
     selectVariation,
     setMainVariationChild,
+    addCurrentNodeAnnotation,
+    removeCurrentNodeAnnotation,
+    undoCurrentNodeAnnotation,
+    clearCurrentNodeAnnotations,
     requestHint,
     requestCandidates,
     requestReview,

@@ -1,4 +1,4 @@
-import { MoveRecord, VariationNode, VariationTree } from '../types'
+import { BoardAnnotation, MoveRecord, VariationNode, VariationTree } from '../types'
 import { moveToUci } from '../engine/notation'
 
 export interface VariationLine {
@@ -161,6 +161,22 @@ export function updateVariationMove(tree: VariationTree, nodeId: string, record:
     nodes: {
       ...tree.nodes,
       [nodeId]: { ...node, move: record, fen: record.fen, updatedAt: now },
+    },
+  }
+}
+
+export function updateVariationAnnotations(tree: VariationTree, nodeId: string, annotations: BoardAnnotation[], now = Date.now()): VariationTree {
+  const node = tree.nodes[nodeId]
+  if (!node) return tree
+  return {
+    ...tree,
+    nodes: {
+      ...tree.nodes,
+      [nodeId]: {
+        ...node,
+        annotations: annotations.length > 0 ? annotations : undefined,
+        updatedAt: now,
+      },
     },
   }
 }

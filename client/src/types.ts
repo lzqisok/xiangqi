@@ -103,6 +103,17 @@ export interface ReviewPosition {
   pv: string[]
 }
 
+export type BoardAnnotationType = 'arrow' | 'circle'
+export type BoardAnnotationColor = 'red' | 'green' | 'blue'
+
+export interface BoardAnnotation {
+  id: string
+  type: BoardAnnotationType
+  color: BoardAnnotationColor
+  from: Position
+  to?: Position
+}
+
 export interface VariationNode {
   id: string
   parentId: string | null
@@ -110,6 +121,7 @@ export interface VariationNode {
   fen: string
   children: string[]
   mainChildId?: string
+  annotations?: BoardAnnotation[]
   createdAt: number
   updatedAt: number
 }

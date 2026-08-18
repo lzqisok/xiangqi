@@ -1,5 +1,5 @@
-import { forwardRef, useImperativeHandle, useRef, useEffect, useCallback } from 'react'
-import { Board as BoardType, Position, Move, GameStatus, GameStatusReason } from '../types'
+import { forwardRef, useImperativeHandle, useRef, useEffect, useCallback, useState } from 'react'
+import { Board as BoardType, BoardAnnotation, BoardAnnotationColor, BoardAnnotationType, Position, Move, GameStatus, GameStatusReason } from '../types'
 import { ROWS, COLS } from '../engine/board'
 
 interface Props {
@@ -15,6 +15,9 @@ interface Props {
   aiThinking: boolean
   thinkingText: string
   interactionDisabled?: boolean
+  annotations?: BoardAnnotation[]
+  annotationTool?: { type: BoardAnnotationType; color: BoardAnnotationColor } | null
+  onAnnotationCreate?: (type: BoardAnnotationType, color: BoardAnnotationColor, from: Position, to?: Position) => void
   onCellClick: (pos: Position) => void
   onCancelSelection: () => void
 }
@@ -77,12 +80,16 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
   aiThinking,
   thinkingText,
   interactionDisabled = false,
+  annotations = [],
+  annotationTool = null,
+  onAnnotationCreate,
   onCellClick,
   onCancelSelection,
 }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const longPressHandledRef = useRef(false)
+  const [annotationDraft, setAnnotationDraft] = useState<{ from: Position; to: Position } | null>(null)
   const animRef = useRef<{
     piece: BoardType[0][0]
     fromX: number; fromY: number
@@ -238,8 +245,19 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
       )
     }
 
+    for (const annotation of annotations) drawBoardAnnotation(ctx, annotation, getPixelPos)
+    if (annotationTool && annotationDraft) {
+      drawBoardAnnotation(ctx, {
+        id: 'annotation-draft',
+        type: annotationTool.type,
+        color: annotationTool.color,
+        from: annotationDraft.from,
+        to: annotationTool.type === 'arrow' ? annotationDraft.to : undefined,
+      }, getPixelPos, true)
+    }
+
     ctx.restore()
-  }, [board, selectedPos, legalMoves, lastMove, hintMove, inCheck, flipped, getPixelPos])
+  }, [annotationDraft, annotationTool, annotations, board, selectedPos, legalMoves, lastMove, hintMove, inCheck, flipped, getPixelPos])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -289,6 +307,14 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     if (interactionDisabled) return
+    if (annotationTool) {
+      const position = getClosestPosition(e.clientX, e.clientY, getPointerTolerance(e.pointerType))
+      if (position) {
+        e.currentTarget.setPointerCapture(e.pointerId)
+        setAnnotationDraft({ from: position, to: position })
+      }
+      return
+    }
     longPressHandledRef.current = false
     clearLongPressTimer()
     const pointerType = e.pointerType
@@ -300,10 +326,23 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
       onCancelSelection()
       if (pointerType === 'touch') navigator.vibrate?.(12)
     }, 520)
-  }, [clearLongPressTimer, interactionDisabled, onCancelSelection])
+  }, [annotationTool, clearLongPressTimer, getClosestPosition, getPointerTolerance, interactionDisabled, onCancelSelection])
+
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!annotationTool || !annotationDraft || interactionDisabled) return
+    const position = getClosestPosition(e.clientX, e.clientY, getPointerTolerance(e.pointerType))
+    if (position) setAnnotationDraft(current => current ? { ...current, to: position } : null)
+  }, [annotationDraft, annotationTool, getClosestPosition, getPointerTolerance, interactionDisabled])
 
   const handlePointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     if (interactionDisabled) return
+    if (annotationTool && annotationDraft) {
+      const position = getClosestPosition(e.clientX, e.clientY, getPointerTolerance(e.pointerType)) || annotationDraft.to
+      onAnnotationCreate?.(annotationTool.type, annotationTool.color, annotationDraft.from, position)
+      setAnnotationDraft(null)
+      if (e.pointerType === 'touch') navigator.vibrate?.(8)
+      return
+    }
     clearLongPressTimer()
     if (longPressHandledRef.current) return
 
@@ -312,21 +351,27 @@ const Board = forwardRef<BoardHandle, Props>(function Board({
       if (e.pointerType === 'touch') navigator.vibrate?.(8)
       onCellClick(closest)
     }
-  }, [clearLongPressTimer, getClosestPosition, getPointerTolerance, interactionDisabled, onCellClick])
+  }, [annotationDraft, annotationTool, clearLongPressTimer, getClosestPosition, getPointerTolerance, interactionDisabled, onAnnotationCreate, onCellClick])
 
   const handlePointerCancel = useCallback(() => {
     clearLongPressTimer()
+    setAnnotationDraft(null)
   }, [clearLongPressTimer])
 
   useEffect(() => clearLongPressTimer, [clearLongPressTimer])
+
+  useEffect(() => {
+    if (!annotationTool) setAnnotationDraft(null)
+  }, [annotationTool])
 
   return (
     <div className="board-wrapper">
       <canvas
         ref={canvasRef}
-        aria-label={`中国象棋棋盘，${interactionDisabled ? '当前不可操作' : '可落子'}`}
-        className={`board-canvas ${interactionDisabled ? 'interaction-disabled' : ''}`}
+        aria-label={`中国象棋棋盘，${annotationTool ? `${annotationTool.type === 'arrow' ? '箭头' : '圈点'}标注模式` : interactionDisabled ? '当前不可操作' : '可落子'}`}
+        className={`board-canvas ${interactionDisabled ? 'interaction-disabled' : ''} ${annotationTool ? 'annotation-active' : ''}`}
         onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
         onPointerLeave={handlePointerCancel}
@@ -388,6 +433,70 @@ function drawPiece(ctx: CanvasRenderingContext2D, x: number, y: number, color: s
 function highlightCell(ctx: CanvasRenderingContext2D, x: number, y: number, color: string) {
   ctx.fillStyle = color
   ctx.fillRect(x - CELL_SIZE / 2, y - CELL_SIZE / 2, CELL_SIZE, CELL_SIZE)
+}
+
+const ANNOTATION_COLORS: Record<BoardAnnotationColor, string> = {
+  red: '#c83f36',
+  green: '#2c8b64',
+  blue: '#347aaa',
+}
+
+function drawBoardAnnotation(
+  ctx: CanvasRenderingContext2D,
+  annotation: BoardAnnotation,
+  getPixelPos: (row: number, col: number) => [number, number],
+  draft = false,
+) {
+  const [fromX, fromY] = getPixelPos(annotation.from.row, annotation.from.col)
+  const color = ANNOTATION_COLORS[annotation.color]
+  ctx.save()
+  ctx.globalAlpha = draft ? 0.68 : 0.86
+  ctx.strokeStyle = color
+  ctx.fillStyle = color
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.shadowColor = 'rgba(255,248,232,.72)'
+  ctx.shadowBlur = 3
+
+  if (annotation.type === 'circle') {
+    ctx.lineWidth = 6
+    ctx.beginPath()
+    ctx.arc(fromX, fromY, PIECE_RADIUS + 6, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.restore()
+    return
+  }
+
+  if (!annotation.to) {
+    ctx.restore()
+    return
+  }
+  const [targetX, targetY] = getPixelPos(annotation.to.row, annotation.to.col)
+  const angle = Math.atan2(targetY - fromY, targetX - fromX)
+  const distance = Math.hypot(targetX - fromX, targetY - fromY)
+  if (distance < 1) {
+    ctx.restore()
+    return
+  }
+  const startOffset = 18
+  const endOffset = 26
+  const startX = fromX + Math.cos(angle) * startOffset
+  const startY = fromY + Math.sin(angle) * startOffset
+  const endX = targetX - Math.cos(angle) * endOffset
+  const endY = targetY - Math.sin(angle) * endOffset
+  ctx.lineWidth = 7
+  ctx.beginPath()
+  ctx.moveTo(startX, startY)
+  ctx.lineTo(endX, endY)
+  ctx.stroke()
+  ctx.shadowBlur = 0
+  ctx.beginPath()
+  ctx.moveTo(targetX - Math.cos(angle) * 12, targetY - Math.sin(angle) * 12)
+  ctx.lineTo(endX + Math.cos(angle + Math.PI / 2) * 11, endY + Math.sin(angle + Math.PI / 2) * 11)
+  ctx.lineTo(endX + Math.cos(angle - Math.PI / 2) * 11, endY + Math.sin(angle - Math.PI / 2) * 11)
+  ctx.closePath()
+  ctx.fill()
+  ctx.restore()
 }
 
 function outlineCell(ctx: CanvasRenderingContext2D, x: number, y: number, color: string) {

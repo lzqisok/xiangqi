@@ -16,6 +16,7 @@
 - 已完成旧线性棋谱到变招树的自动迁移。
 - 已完成悔棋后创建支线、分支切换和设为主线。
 - 已完成研究本地存储、自动保存、复制与 JSON v2 导入导出。
+- 已完成节点级箭头/圈点标注，并升级为 JSON v3 导出；JSON v2 继续兼容导入。
 - 已完成当前节点后续分支展示、切换和设为主线。
 - 回放链接仍只分享当前活动线；节点独立评估留待后续阶段。
 
@@ -40,6 +41,7 @@ export interface VariationNode {
   fen: string
   children: string[]
   mainChildId?: string
+  annotations?: BoardAnnotation[]
   createdAt: number
   updatedAt: number
 }
@@ -58,6 +60,7 @@ export interface VariationTree {
 - `children` 保存所有后续分支。
 - `mainChildId` 表示主线，每个节点最多一个主线子节点。
 - 星标和备注当前保存在节点内的 `MoveRecord` 上。
+- 棋盘箭头与圈点保存在节点的 `annotations` 上，根节点也可以拥有标注。
 - 引擎评估仍按活动线的步索引保存于研究对象；提升为节点独立评估是后续工作。
 
 ## 线性记录迁移
@@ -142,7 +145,7 @@ export interface VariationTree {
 - `StudyPosition` 增加 `variationTree?: VariationTree`。
 - 保存新研究时写入树结构。
 - 导入旧研究时自动迁移。
-- 导出时保留版本号。
+- 导出时保留版本号；节点标注落地后新导出版本为 JSON v3，旧版 JSON v2 继续可导入。
 
 验收：
 

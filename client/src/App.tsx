@@ -11,6 +11,7 @@ import CandidateList from './components/CandidateList'
 import CandidatePreviewControls from './components/CandidatePreviewControls'
 import ReviewPanel from './components/ReviewPanel'
 import VariationPanel from './components/VariationPanel'
+import AnnotationPanel from './components/AnnotationPanel'
 import StudyLibrary from './components/StudyLibrary'
 import ProductDialog, { ProductDialogRequest } from './components/ProductDialog'
 import MobileStageBar from './components/MobileStageBar'
@@ -47,11 +48,12 @@ import { formatTrainingHintHistory, getEndgameTrainingFeedback, getEndgameTraini
 import { createReplayUrl, parseReplayStudyFromSearch } from './share/replayLink'
 import { buildCandidatePreview, getCandidatePreviewFrame } from './analysis/candidatePreview'
 import { buildMoveReviews } from './analysis/moveReview'
+import { createBoardAnnotation } from './annotations/model'
 import { createStudyContentSignature, createStudySaveInput } from './studies/autosave'
 import { createGame, deleteGame, gameExportUrl, importGames, listGames, loadGame, renameGame } from './games/api'
 import { clearGameUrl, createInitialPersistedState, gameUrl } from './games/state'
 import { GameSaveStatus, useGamePersistence } from './games/useGamePersistence'
-import { EndgameDefinition, EndgameStartConfig, EndgameTarget, GameDocument, GameMode, Difficulty, GameSummary, LiveGameMode, MoveCandidate, MoveRecord, PersistedGameConfig, PersistedGameState, PlayerSide, StudyPosition } from './types'
+import { BoardAnnotationColor, BoardAnnotationType, EndgameDefinition, EndgameStartConfig, EndgameTarget, GameDocument, GameMode, Difficulty, GameSummary, LiveGameMode, MoveCandidate, MoveRecord, PersistedGameConfig, PersistedGameState, PlayerSide, StudyPosition } from './types'
 import LanApp from './lan/LanApp'
 
 const GomokuApp = lazy(() => import('./gomoku/GomokuApp'))
@@ -74,7 +76,7 @@ type CandidatePreviewState = {
   stepIndex: number
 }
 
-type WorkspaceTab = 'play' | 'history' | 'engine' | 'review' | 'variations'
+type WorkspaceTab = 'play' | 'history' | 'engine' | 'review' | 'variations' | 'annotations'
 type StartSection = 'play' | 'study'
 type LocalOpponent = 'human-vs-ai' | 'human-vs-human' | 'ai-vs-ai'
 type XiangqiRule = 'xiangqi' | 'jieqi'
@@ -169,6 +171,8 @@ function LocalApp() {
   const [candidatePreview, setCandidatePreview] = useState<CandidatePreviewState | null>(null)
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('play')
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false)
+  const [annotationTool, setAnnotationTool] = useState<BoardAnnotationType | null>(null)
+  const [annotationColor, setAnnotationColor] = useState<BoardAnnotationColor>('red')
   const [studySaveStatus, setStudySaveStatus] = useState<'saved' | 'unsaved' | 'shared' | null>(null)
   const [engineSettings, setEngineSettings] = useState<EngineSettings>(() => loadEngineSettings())
   const [trainingHintLevel, setTrainingHintLevel] = useState(0)
@@ -434,6 +438,7 @@ function LocalApp() {
   const canRequestTrainingHint = Boolean(selectedEndgame?.solution?.length) && game.gameStatus === 'playing'
   const selectWorkspaceTab = (tab: WorkspaceTab) => {
     setWorkspaceTab(tab)
+    if (tab !== 'annotations') setAnnotationTool(null)
     setMobileToolsOpen(true)
   }
 
@@ -466,7 +471,12 @@ function LocalApp() {
   useEffect(() => {
     if (workspaceTab === 'review' && !showReviewTab) setWorkspaceTab('play')
     if (workspaceTab === 'variations' && !showVariationsTab) setWorkspaceTab('play')
-  }, [showReviewTab, showVariationsTab, workspaceTab])
+    if (workspaceTab === 'annotations' && gameMode !== 'study') setWorkspaceTab('play')
+  }, [gameMode, showReviewTab, showVariationsTab, workspaceTab])
+
+  useEffect(() => {
+    if (gameMode !== 'study') setAnnotationTool(null)
+  }, [gameMode])
 
   useEffect(() => {
     setTrainingHintLevel(0)
@@ -866,9 +876,19 @@ function LocalApp() {
             aiThinking={candidatePreview ? false : game.aiThinking}
             thinkingText={`${game.currentTurn === 'red' ? '红方' : '黑方'} AI 思考中...`}
             interactionDisabled={Boolean(candidatePreview) || !game.canEditGame}
+            annotations={candidatePreview ? [] : game.currentNodeAnnotations}
+            annotationTool={gameMode === 'study' && annotationTool ? { type: annotationTool, color: annotationColor } : null}
+            onAnnotationCreate={(type, color, from, to) => {
+              const annotation = createBoardAnnotation(type, color, from, to)
+              if (annotation) game.addCurrentNodeAnnotation(annotation)
+            }}
             onCellClick={game.handleCellClick}
             onCancelSelection={game.cancelSelection}
           />
+          {gameMode === 'study' && annotationTool && <div className="board-annotation-mode" role="status">
+            <span>{annotationColor === 'red' ? '红色' : annotationColor === 'green' ? '绿色' : '蓝色'}{annotationTool === 'arrow' ? '箭头' : '圈点'}标注中</span>
+            <button onClick={() => setAnnotationTool(null)}>退出标注</button>
+          </div>}
           {gameMode === 'jieqi' && (
             <JieqiCapturedPieces records={game.moveRecords} viewer={playerSide} />
           )}
@@ -900,6 +920,9 @@ function LocalApp() {
             </button>}
             {showVariationsTab && <button className={workspaceTab === 'variations' ? 'active' : ''} onClick={() => selectWorkspaceTab('variations')}>
               变招{game.variationBranchCount > 0 ? <span>{game.variationBranchCount}</span> : null}
+            </button>}
+            {gameMode === 'study' && <button className={workspaceTab === 'annotations' ? 'active' : ''} onClick={() => selectWorkspaceTab('annotations')}>
+              标注{game.currentNodeAnnotations.length > 0 ? <span>{game.currentNodeAnnotations.length}</span> : null}
             </button>}
           </nav>
           <div className="workspace-tool-content">
@@ -1132,6 +1155,16 @@ function LocalApp() {
             onSelect={game.selectVariation}
             onSetMain={game.setMainVariationChild}
           />}
+          {gameMode === 'study' && workspaceTab === 'annotations' && <AnnotationPanel
+            annotations={game.currentNodeAnnotations}
+            tool={annotationTool}
+            color={annotationColor}
+            onToolChange={setAnnotationTool}
+            onColorChange={setAnnotationColor}
+            onRemove={game.removeCurrentNodeAnnotation}
+            onUndo={game.undoCurrentNodeAnnotation}
+            onClear={game.clearCurrentNodeAnnotations}
+          />}
           {gameMode !== 'jieqi' && workspaceTab === 'engine' && showAnalysis && <AnalysisCurve points={game.analysisPoints} />}
           </div>
         </div>
@@ -1143,6 +1176,7 @@ function LocalApp() {
           { id: 'engine', label: '分析', available: gameMode !== 'jieqi' },
           { id: 'review', label: '复盘', badge: moveReviews.length, available: showReviewTab },
           { id: 'variations', label: '变招', badge: game.variationBranchCount, available: showVariationsTab },
+          { id: 'annotations', label: '标注', badge: game.currentNodeAnnotations.length, available: gameMode === 'study' },
         ]}
         active={workspaceTab}
         open={mobileToolsOpen}

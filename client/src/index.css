@@ -268,6 +268,32 @@ body {
   filter: saturate(0.92);
 }
 
+.board-canvas.annotation-active { cursor: crosshair; }
+
+.board-annotation-mode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 11px;
+  border: 1px solid rgba(164, 67, 55, .22);
+  border-radius: 9px;
+  background: #fff5e8;
+  color: #75483d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.board-annotation-mode button {
+  flex: none;
+  padding: 5px 9px;
+  border: 1px solid rgba(164, 67, 55, .24);
+  border-radius: 7px;
+  background: #fffaf1;
+  color: #9b3f34;
+  cursor: pointer;
+}
+
 .candidate-preview-controls {
   display: flex;
   align-items: center;
@@ -427,6 +453,7 @@ body {
 .workspace-tool-content > .candidate-list,
 .workspace-tool-content > .review-panel,
 .workspace-tool-content > .variation-panel,
+.workspace-tool-content > .annotation-panel,
 .workspace-tool-content > .analysis-curve {
   border: 0;
   border-radius: 0;
@@ -1159,6 +1186,50 @@ body {
   padding: 14px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
+
+.annotation-panel {
+  display: grid;
+  gap: 12px;
+  padding: 15px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.annotation-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.annotation-header h3 { margin: 0; color: #8f382e; font: 800 15px 'Noto Serif SC', serif; }
+.annotation-header span { color: var(--text-secondary); font-size: 11px; }
+.annotation-header b { min-width: 24px; padding: 3px 7px; border-radius: 999px; background: rgba(164,67,55,.1); color: #9b3f34; text-align: center; font-size: 11px; }
+.annotation-tool-group,
+.annotation-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.annotation-tool-group button,
+.annotation-actions button {
+  min-height: 38px;
+  border: 1px solid rgba(74,61,45,.14);
+  border-radius: 8px;
+  background: #f5f0e7;
+  color: #66594c;
+  cursor: pointer;
+  font-weight: 800;
+}
+.annotation-tool-group button.active { border-color: #a44337; background: #a44337; color: #fffaf1; }
+.annotation-actions button:disabled { cursor: not-allowed; opacity: .45; }
+.annotation-colors { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.annotation-colors button { display: grid; place-items: center; min-height: 38px; border: 1px solid rgba(74,61,45,.14); border-radius: 8px; background: #f5f0e7; cursor: pointer; }
+.annotation-colors button.active { box-shadow: inset 0 0 0 2px #fffaf1, 0 0 0 2px #6f6254; }
+.annotation-colors button span,
+.annotation-swatch { display: block; width: 18px; height: 18px; border-radius: 50%; background: #c83f36; }
+.annotation-colors button.green span,
+.annotation-swatch.green { background: #2c8b64; }
+.annotation-colors button.blue span,
+.annotation-swatch.blue { background: #347aaa; }
+.annotation-help,
+.annotation-empty { margin: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.55; }
+.annotation-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.annotation-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid rgba(74,61,45,.1); border-radius: 8px; background: #fffaf1; font-size: 11px; }
+.annotation-swatch { width: 10px; height: 10px; }
+.annotation-list button { border: 0; background: transparent; color: #a44337; cursor: pointer; font-size: 11px; }
 
 .variation-header {
   display: flex;
@@ -3422,6 +3493,7 @@ body {
     background: rgba(251,248,241,.96);
     box-shadow: 0 12px 34px rgba(53,41,29,.23);
     backdrop-filter: blur(12px);
+    overflow-x: auto;
   }
   .mobile-stage-bar button { position: relative; display: grid; place-items: center; min-height: 43px; padding: 5px 7px; border: 0; border-radius: 9px; background: transparent; color: #756a5e; font-size: 11px; font-weight: 800; }
   .mobile-stage-bar button.active { background: #a44337; color: #fffaf1; }

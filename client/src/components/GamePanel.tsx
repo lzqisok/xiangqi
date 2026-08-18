@@ -205,7 +205,10 @@ export default function GamePanel({
 
       {gameStatus !== 'playing' && !isJieqi && (
         <div className="panel-section phase-primary-action">
-          <button className="primary-action accent-action" onClick={onOpenReview}>开始复盘</button>
+          <button className="review-entry-action" onClick={onOpenReview}>
+            <span>开始复盘</span>
+            <span aria-hidden="true">→</span>
+          </button>
         </div>
       )}
 

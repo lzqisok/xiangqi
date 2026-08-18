@@ -112,13 +112,18 @@ export default function StudyLibrary({ studies, onBack, onStart, onDelete, onDel
 
   return (
     <div className="start-screen">
-      <div className="start-card endgame-library-card">
-        <h1>研究局面</h1>
-        <p className="subtitle">保存完整走法、标记、备注和分析曲线</p>
-
-        <div className="endgame-library-actions">
-          <button onClick={onBack}>返回</button>
-          <div className="endgame-library-action-group">
+      <section className="start-card study-library-card">
+        <header className="study-library-header">
+          <button className="study-library-back" onClick={onBack}><span aria-hidden="true">←</span>返回训练中心</button>
+          <div className="study-library-heading">
+            <div>
+              <small>STUDY LIBRARY</small>
+              <h1>研究局面</h1>
+              <p>保存完整走法、节点标注、备注与分析曲线，随时继续推演。</p>
+            </div>
+            <span className="study-library-count">{studies.length} 份研究</span>
+          </div>
+          <div className="study-library-actions">
             <button onClick={onExportJson} disabled={studies.length === 0}>导出 JSON</button>
             <label className="endgame-import-btn">
               导入 JSON
@@ -133,22 +138,26 @@ export default function StudyLibrary({ studies, onBack, onStart, onDelete, onDel
               />
             </label>
           </div>
-        </div>
+        </header>
 
-        <div className="endgame-library-toolbar">
-          <input
-            className="endgame-input"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="搜索名称、说明、备注、走法或 FEN..."
-          />
-          <div className="btn-group endgame-filter-group">
-            <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button>
-            <button className={filter === 'marked' ? 'active' : ''} onClick={() => setFilter('marked')}>有标记</button>
-            <button className={filter === 'notes' ? 'active' : ''} onClick={() => setFilter('notes')}>有备注</button>
-            <button className={filter === 'recent' ? 'active' : ''} onClick={() => setFilter('recent')}>最近</button>
-          </div>
-          {studies.length > 0 && (
+        {studies.length > 0 && (
+          <div className="study-library-toolbar">
+            <div className="study-library-search-row">
+              <label className="study-library-search">
+                <span aria-hidden="true">⌕</span>
+                <input
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  placeholder="搜索名称、说明、备注、走法或 FEN..."
+                />
+              </label>
+              <div className="study-library-filters" aria-label="研究筛选">
+                <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button>
+                <button className={filter === 'marked' ? 'active' : ''} onClick={() => setFilter('marked')}>有标记</button>
+                <button className={filter === 'notes' ? 'active' : ''} onClick={() => setFilter('notes')}>有备注</button>
+                <button className={filter === 'recent' ? 'active' : ''} onClick={() => setFilter('recent')}>最近</button>
+              </div>
+            </div>
             <div className="study-bulk-toolbar">
               <label>
                 <input
@@ -163,8 +172,8 @@ export default function StudyLibrary({ studies, onBack, onStart, onDelete, onDel
               <button onClick={duplicateSelected} disabled={selectedIds.length !== 1}>复制</button>
               <button className="endgame-delete-btn" onClick={deleteSelected} disabled={selectedIds.length === 0}>批量删除</button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="study-list">
           {visibleStudies.map(study => (
@@ -202,12 +211,22 @@ export default function StudyLibrary({ studies, onBack, onStart, onDelete, onDel
             </div>
           ))}
           {studies.length === 0 ? (
-            <div className="endgame-empty">暂无研究局面。进入对局后可从侧栏保存当前研究。</div>
+            <div className="study-empty-state">
+              <span aria-hidden="true">研</span>
+              <h2>还没有研究局面</h2>
+              <p>开始一盘对局或打开棋谱后，可以从侧栏保存当前局面、完整走法和标注。</p>
+              <button onClick={onBack}>返回训练中心</button>
+            </div>
           ) : visibleStudies.length === 0 && (
-            <div className="endgame-empty">没有符合条件的研究局面，请调整筛选或搜索词。</div>
+            <div className="study-empty-state compact">
+              <span aria-hidden="true">筛</span>
+              <h2>没有符合条件的研究</h2>
+              <p>尝试切换筛选条件，或清空当前搜索词。</p>
+              <button onClick={() => { setQuery(''); setFilter('all') }}>清空筛选</button>
+            </div>
           )}
         </div>
-      </div>
+      </section>
       {dialog && <ProductDialog
         {...dialog}
         onCancel={() => setDialog(null)}

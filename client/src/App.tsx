@@ -601,6 +601,36 @@ function LocalApp() {
     }
   }
 
+  const handleReturnToMenu = async () => {
+    setAiAutoPlaying(false)
+    setStudyAutoPlaying(false)
+    if (activeGame) {
+      const saved = await gamePersistence.flush(liveGameState)
+      if (!saved) {
+        const confirmed = await requestProductDialog({
+          title: '当前对局尚未保存',
+          description: '返回象棋菜单可能丢失尚未写入的走棋。',
+          confirmLabel: '仍要返回',
+          dangerous: true,
+        })
+        if (!confirmed) return
+      }
+    } else if (gameMode === 'study' && selectedStudy) {
+      if (selectedStudyIsPersisted) {
+        saveStudyPosition(createStudySaveInput(selectedStudy, studyContent))
+      } else {
+        const confirmed = await requestProductDialog({
+          title: '分享回放尚未保存',
+          description: '返回象棋菜单后，需要通过原分享链接才能再次打开这份回放。',
+          confirmLabel: '仍要返回',
+          dangerous: true,
+        })
+        if (!confirmed) return
+      }
+    }
+    window.location.assign('?type=xiangqi')
+  }
+
   if (!gameMode) {
     return <>
     <StartScreen
@@ -816,12 +846,18 @@ function LocalApp() {
   return (
     <div className="app">
       <header className="workspace-header">
-        <div className="workspace-brand">
-          <span className="workspace-brand-mark" aria-hidden="true">象</span>
-          <span>
-            <strong>棋境</strong>
-            <small>PIKAFISH XIANGQI</small>
-          </span>
+        <div className="workspace-header-leading">
+          <button className="workspace-back-button" type="button" onClick={() => void handleReturnToMenu()} aria-label="返回象棋菜单">
+            <span aria-hidden="true">←</span>
+            返回菜单
+          </button>
+          <div className="workspace-brand">
+            <span className="workspace-brand-mark" aria-hidden="true">象</span>
+            <span>
+              <strong>棋境</strong>
+              <small>PIKAFISH XIANGQI</small>
+            </span>
+          </div>
         </div>
         <div className="workspace-header-actions">
           <div className="workspace-context">

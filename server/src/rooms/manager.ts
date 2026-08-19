@@ -1,4 +1,4 @@
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 import { WebSocket } from 'ws'
 import { containsSensitiveWord, normalizeRoomSensitiveWords } from './chatPolicy.js'
 import { MAX_ROOM_CHAT_CONTENT_LENGTH } from './chatRepository.js'
@@ -95,6 +95,7 @@ export class RoomManager {
   private readonly runtime = new Map<string, Runtime>()
   private readonly rates = new WeakMap<WebSocket, { startedAt: number; count: number }>()
   private readonly chatRates = new WeakMap<WebSocket, { startedAt: number; count: number }>()
+  private matchmakingQueue: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly repository: RoomRepository,
@@ -108,11 +109,7 @@ export class RoomManager {
     variant: 'xiangqi' | 'jieqi' | 'gomoku',
     gomokuRule: 'freestyle' | 'renju' = 'freestyle',
   ) {
-    if (this.repository.list().filter((room) => room.phase !== 'finished').length >= 100) {
-      await this.cleanup()
-      if (this.repository.list().filter((room) => room.phase !== 'finished').length >= 100)
-        throw new Error('活跃对局数量已达到上限')
-    }
+    await this.ensureRoomCapacity()
     const ownerToken = randomUUID(),
       inviteToken = randomUUID(),
       now = Date.now()
@@ -139,6 +136,21 @@ export class RoomManager {
     return { room: saved, ownerToken, inviteToken }
   }
 
+  async quickMatch(
+    nickname: string,
+    variant: 'xiangqi' | 'jieqi' | 'gomoku',
+    gomokuRule: 'freestyle' | 'renju' = 'freestyle',
+  ) {
+    const operation = this.matchmakingQueue.then(() =>
+      this.quickMatchLocked(nickname, variant, gomokuRule),
+    )
+    this.matchmakingQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return operation
+  }
+
   startPresenceRecovery() {
     for (const room of this.repository.list()) this.updatePresence(room, true)
   }
@@ -149,6 +161,7 @@ export class RoomManager {
       .filter(
         (room) =>
           room.phase !== 'finished' &&
+          (room.phase !== 'waiting' || !room.matchmaking) &&
           (room.phase !== 'waiting' || this.ownerOnline(room.id)) &&
           (!game || (game === 'gomoku') === (room.variant === 'gomoku')),
       )
@@ -316,6 +329,7 @@ export class RoomManager {
   }
 
   async flush() {
+    await this.matchmakingQueue
     await Promise.all([...this.runtime.values()].map((runtime) => runtime.queue))
     await this.repository.flush()
   }
@@ -373,7 +387,7 @@ export class RoomManager {
     this.runtime.delete(id)
   }
 
-  private subscribe(ws: WebSocket, message: Record<string, unknown>) {
+  private async subscribe(ws: WebSocket, message: Record<string, unknown>) {
     if (ws.readyState !== WebSocket.OPEN) return
     const room = this.requireRoom(String(message.roomId || ''))
     const token =
@@ -417,6 +431,7 @@ export class RoomManager {
       }
     }
     this.updatePresence(room)
+    await this.startMatchmakingIfReady(room)
     this.broadcast(room)
     this.sendChatHistory(ws, room.id)
     this.sendChatSettings(ws, room.id)
@@ -603,17 +618,7 @@ export class RoomManager {
     if (ready && room.seats[opponent]?.ready && !this.seatOnline(room.id, opponent))
       throw new Error('对方已离线，暂时不能开始对局')
     room.seats[color]!.ready = ready
-    if (room.seats.red?.ready && room.seats.black?.ready) {
-      if (room.variant === 'gomoku') room.initialLayout = undefined
-      else room.initialLayout = createRoomInitialState(room.variant).layout
-      room.phase = 'playing'
-      room.startedAt = Date.now()
-      room.moves = []
-      room.status = 'playing'
-      room.inviteHash = undefined
-      this.getRuntime(room.id).applications.clear()
-      this.clearWaitingPresence(room.id)
-    }
+    if (room.seats.red?.ready && room.seats.black?.ready) this.beginGame(room)
     this.touch(room)
     await this.repository.save(room)
     this.updatePresence(room)
@@ -812,12 +817,12 @@ export class RoomManager {
       this.chatRates.set(ws, { startedAt: now, count: 1 })
     else if (++rate.count > 5) throw new Error('发言过于频繁，请稍后再试')
     const content = normalizeChatContent(rawContent)
-    const settings = this.repository.chat.settings(room.id)
-    if (!connection.isOwner && settings.everyoneMuted) throw new Error('对局当前已开启全面禁言')
-    if (!connection.isOwner && settings.mutedAuthorIds.includes(connection.authorId))
+    const settings = this.repository.chat.settings(room.id),
+      moderator = this.canModerateChat(room, connection)
+    if (!moderator && settings.everyoneMuted) throw new Error('对局当前已开启全面禁言')
+    if (!moderator && settings.mutedAuthorIds.includes(connection.authorId))
       throw new Error('你已被对局发起人禁言')
-    const role: RoomRole =
-      connection.isOwner && connection.role === 'spectator' ? 'owner' : connection.role
+    const role: RoomRole = moderator && connection.role === 'spectator' ? 'owner' : connection.role
     const seat =
       connection.role === 'red' || connection.role === 'black'
         ? room.seats[connection.role]
@@ -825,11 +830,11 @@ export class RoomManager {
     if (!seat)
       connection.nickname = normalizeNickname(
         rawNickname,
-        connection.nickname || (connection.isOwner ? '发起人' : '访客'),
+        connection.nickname || (moderator ? '发起人' : '访客'),
       )
     const nickname = normalizeNickname(
       seat?.nickname,
-      connection.nickname || (connection.isOwner ? '发起人' : '访客'),
+      connection.nickname || (moderator ? '发起人' : '访客'),
     )
     if (containsSensitiveWord(content, settings.roomSensitiveWords)) {
       this.rememberChatCommand(room.id, commandId)
@@ -840,7 +845,7 @@ export class RoomManager {
       authorId: connection.authorId,
       nickname,
       role,
-      isOwner: connection.isOwner,
+      isOwner: moderator,
       content,
       createdAt: now,
     })
@@ -867,7 +872,7 @@ export class RoomManager {
         messageId: previous.messageId,
       })
     this.requireWritableConversation(room)
-    if (!connection.isOwner) throw new Error('只有对局发起人可以删除聊天消息')
+    if (!this.canModerateChat(room, connection)) throw new Error('只有对局发起人可以删除聊天消息')
     const messageId = String(rawMessageId || '')
     if (!UUID.test(messageId) || !(await this.repository.chat.deleteMessage(room.id, messageId)))
       throw new Error('聊天消息不存在')
@@ -889,7 +894,7 @@ export class RoomManager {
       previous = runtime.chatCommands.get(commandId)
     if (previous) return send(ws, { type: 'room-chat-ack', roomId: room.id, commandId })
     this.requireWritableConversation(room)
-    if (!connection.isOwner) throw new Error('只有对局发起人可以禁言成员')
+    if (!this.canModerateChat(room, connection)) throw new Error('只有对局发起人可以禁言成员')
     if (typeof rawMuted !== 'boolean') throw new Error('禁言设置无效')
     const authorId = String(rawAuthorId || ''),
       muted = rawMuted
@@ -928,7 +933,7 @@ export class RoomManager {
       previous = runtime.chatCommands.get(commandId)
     if (previous) return send(ws, { type: 'room-chat-ack', roomId: room.id, commandId })
     this.requireWritableConversation(room)
-    if (!connection.isOwner) throw new Error('只有对局发起人可以修改聊天设置')
+    if (!this.canModerateChat(room, connection)) throw new Error('只有对局发起人可以修改聊天设置')
     if (typeof message.everyoneMuted !== 'boolean') throw new Error('全面禁言设置无效')
     const roomSensitiveWords = normalizeRoomSensitiveWords(message.roomSensitiveWords)
     await this.repository.chat.updateSettings(room.id, {
@@ -946,16 +951,18 @@ export class RoomManager {
 
   private sendChatSettings(ws: WebSocket, roomId: string) {
     const connection = this.connections.get(ws)
-    if (!connection) return
-    const settings = this.repository.chat.settings(roomId)
+    const room = this.repository.get(roomId)
+    if (!connection || !room) return
+    const settings = this.repository.chat.settings(roomId),
+      moderator = this.canModerateChat(room, connection)
     send(ws, {
       type: 'room-chat-settings',
       roomId,
       settings: {
         everyoneMuted: settings.everyoneMuted,
-        muted: !connection.isOwner && settings.mutedAuthorIds.includes(connection.authorId),
-        mutedAuthorIds: connection.isOwner ? settings.mutedAuthorIds : undefined,
-        roomSensitiveWords: connection.isOwner ? settings.roomSensitiveWords : undefined,
+        muted: !moderator && settings.mutedAuthorIds.includes(connection.authorId),
+        mutedAuthorIds: moderator ? settings.mutedAuthorIds : undefined,
+        roomSensitiveWords: moderator ? settings.roomSensitiveWords : undefined,
       },
     })
   }
@@ -976,6 +983,7 @@ export class RoomManager {
       name: room.name,
       variant: room.variant,
       gomokuRule: room.gomokuRule,
+      matchmaking: room.matchmaking,
       phase: room.phase,
       revision: room.revision,
       role: connection.role,
@@ -1069,6 +1077,7 @@ export class RoomManager {
       name: room.name,
       variant: room.variant,
       gomokuRule: room.gomokuRule,
+      matchmaking: room.matchmaking,
       phase: room.phase,
       red: room.seats.red?.nickname || null,
       black: room.seats.black?.nickname || null,
@@ -1087,12 +1096,144 @@ export class RoomManager {
     if (!room) throw new Error('对局不存在')
     return room
   }
+  private async ensureRoomCapacity() {
+    if (this.repository.list().filter((room) => room.phase !== 'finished').length < 100) return
+    await this.cleanup()
+    if (this.repository.list().filter((room) => room.phase !== 'finished').length >= 100)
+      throw new Error('活跃对局数量已达到上限')
+  }
+  private async quickMatchLocked(
+    nickname: string,
+    variant: 'xiangqi' | 'jieqi' | 'gomoku',
+    gomokuRule: 'freestyle' | 'renju',
+  ) {
+    const normalizedNickname = normalizeNickname(nickname, '棋友')
+    const candidate = this.repository
+      .list()
+      .filter(
+        (room) =>
+          room.matchmaking === true &&
+          room.phase === 'waiting' &&
+          room.variant === variant &&
+          (variant !== 'gomoku' || room.gomokuRule === gomokuRule) &&
+          Boolean(room.seats.red) !== Boolean(room.seats.black) &&
+          this.ownerOnline(room.id) &&
+          this.seatOnline(room.id, room.seats.red ? 'red' : 'black'),
+      )
+      .sort((left, right) => left.createdAt - right.createdAt)[0]
+    if (candidate) {
+      const runtime = this.getRuntime(candidate.id)
+      const operation = runtime.queue.then(async () => {
+        const room = this.requireRoom(candidate.id)
+        const occupiedSide: RoomColor | null = room.seats.red
+            ? room.seats.black
+              ? null
+              : 'red'
+            : room.seats.black
+              ? 'black'
+              : null,
+          openSide: RoomColor | null =
+            occupiedSide === 'red' ? 'black' : occupiedSide ? 'red' : null
+        if (
+          !room.matchmaking ||
+          room.phase !== 'waiting' ||
+          !occupiedSide ||
+          !openSide ||
+          !this.ownerOnline(room.id) ||
+          !this.seatOnline(room.id, occupiedSide)
+        )
+          return null
+        const token = randomUUID()
+        room.seats[openSide] = {
+          nickname: normalizedNickname,
+          credentialHash: hash(token),
+          ready: true,
+          hintsUsed: 0,
+        }
+        this.touch(room)
+        await this.repository.save(room)
+        this.updatePresence(room)
+        this.broadcast(room)
+        return { room: this.summary(room), token, role: openSide, created: false }
+      })
+      runtime.queue = operation.then(
+        () => undefined,
+        () => undefined,
+      )
+      const matched = await operation
+      if (matched) return matched
+    }
+    await this.ensureRoomCapacity()
+    const token = randomUUID(),
+      side: RoomColor = randomInt(2) === 0 ? 'red' : 'black',
+      now = Date.now()
+    const room: StoredRoom = {
+      schemaVersion: 1,
+      id: randomUUID(),
+      name:
+        variant === 'jieqi'
+          ? '快速匹配 · 揭棋'
+          : variant === 'gomoku'
+            ? `快速匹配 · ${gomokuRule === 'renju' ? '黑方禁手' : '标准五子棋'}`
+            : '快速匹配 · 普通象棋',
+      variant,
+      gomokuRule: variant === 'gomoku' ? gomokuRule : undefined,
+      matchmaking: true,
+      phase: 'waiting',
+      revision: 0,
+      ownerHash: hash(token),
+      seats: {
+        [side]: {
+          nickname: normalizedNickname,
+          credentialHash: hash(token),
+          ready: true,
+          hintsUsed: 0,
+        },
+      },
+      moves: [],
+      status: 'playing',
+      createdAt: now,
+      updatedAt: now,
+    }
+    const saved = await this.repository.create(room)
+    this.updatePresence(saved)
+    return { room: this.summary(saved), token, role: side, created: true }
+  }
+  private beginGame(room: StoredRoom) {
+    if (room.variant === 'gomoku') room.initialLayout = undefined
+    else room.initialLayout = createRoomInitialState(room.variant).layout
+    room.phase = 'playing'
+    room.startedAt = Date.now()
+    room.moves = []
+    room.status = 'playing'
+    room.inviteHash = undefined
+    this.getRuntime(room.id).applications.clear()
+    this.clearWaitingPresence(room.id)
+  }
+  private async startMatchmakingIfReady(room: StoredRoom) {
+    if (
+      !room.matchmaking ||
+      room.phase !== 'waiting' ||
+      !room.seats.red?.ready ||
+      !room.seats.black?.ready ||
+      !this.seatOnline(room.id, 'red') ||
+      !this.seatOnline(room.id, 'black')
+    )
+      return
+    this.beginGame(room)
+    this.touch(room)
+    await this.repository.save(room)
+    this.updatePresence(room)
+  }
   private requireWaitingOwnerOnline(room: StoredRoom) {
     if (room.phase === 'waiting' && !this.ownerOnline(room.id))
       throw new Error('发起人已离线，当前对局即将取消')
   }
   private requireWritableConversation(room: StoredRoom) {
     if (room.phase === 'finished') throw new Error('对局已结束，历史聊天仅供查看')
+  }
+  private canModerateChat(room: StoredRoom, connection: Connection) {
+    return connection.isOwner && room.matchmaking !== true
   }
   private color(connection: Connection): RoomColor {
     if (connection.role !== 'red' && connection.role !== 'black') throw new Error('当前不是棋手')

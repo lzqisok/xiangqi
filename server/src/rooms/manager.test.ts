@@ -139,6 +139,108 @@ test('Gomoku rooms reuse seats and revisions while keeping lobby and move rules 
   manager.dispose()
 })
 
+test('quick match pairs compatible online players and starts only after both subscribe', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'quick-match-rooms-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory)
+  await repository.init()
+  const manager = new RoomManager(repository, async () => null)
+
+  const first = await manager.quickMatch('甲', 'xiangqi')
+  assert.equal(first.created, true)
+  assert.ok(first.role === 'red' || first.role === 'black')
+  assert.equal(first.room.matchmaking, true)
+  assert.equal(
+    manager.lobby('xiangqi').some((room) => room.id === first.room.id),
+    false,
+  )
+
+  const firstMessages: unknown[] = []
+  const firstSocket = socket(firstMessages)
+  await manager.handle(firstSocket, {
+    type: 'room-subscribe',
+    roomId: first.room.id,
+    token: first.token,
+    nickname: '甲',
+  })
+  assert.equal(snapshot(firstMessages).phase, 'waiting')
+  assert.equal(snapshot(firstMessages).seats[first.role]?.ready, true)
+
+  const second = await manager.quickMatch('乙', 'xiangqi')
+  assert.equal(second.created, false)
+  assert.equal(second.room.id, first.room.id)
+  assert.notEqual(second.role, first.role)
+  assert.equal(second.room.phase, 'waiting')
+
+  const secondMessages: unknown[] = []
+  const secondSocket = socket(secondMessages)
+  await manager.handle(secondSocket, {
+    type: 'room-subscribe',
+    roomId: second.room.id,
+    token: second.token,
+    nickname: '乙',
+  })
+  assert.equal(snapshot(firstMessages).phase, 'playing')
+  assert.equal(snapshot(secondMessages).phase, 'playing')
+  assert.equal(snapshot(secondMessages).role, second.role)
+  assert.equal(snapshot(secondMessages).matchmaking, true)
+  await assert.rejects(
+    () =>
+      manager.handle(firstSocket, {
+        type: 'room-chat-settings-update',
+        roomId: first.room.id,
+        commandId: 'quick-match-moderation',
+        everyoneMuted: true,
+        roomSensitiveWords: [],
+      }),
+    /只有对局发起人可以修改聊天设置/,
+  )
+  assert.equal(
+    manager.lobby('xiangqi').some((room) => room.id === first.room.id),
+    true,
+  )
+
+  await manager.flush()
+  manager.dispose()
+})
+
+test('quick match serializes competing requests and isolates every ruleset', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'quick-match-rules-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const repository = new RoomRepository(directory)
+  await repository.init()
+  const manager = new RoomManager(repository, async () => null)
+
+  const waiting = await manager.quickMatch('先到者', 'gomoku', 'freestyle')
+  const waitingMessages: unknown[] = []
+  await manager.handle(socket(waitingMessages), {
+    type: 'room-subscribe',
+    roomId: waiting.room.id,
+    token: waiting.token,
+    nickname: '先到者',
+  })
+
+  const [matched, overflow] = await Promise.all([
+    manager.quickMatch('匹配者', 'gomoku', 'freestyle'),
+    manager.quickMatch('排队者', 'gomoku', 'freestyle'),
+  ])
+  assert.equal(matched.room.id, waiting.room.id)
+  assert.equal(matched.created, false)
+  assert.equal(overflow.created, true)
+  assert.notEqual(overflow.room.id, waiting.room.id)
+
+  const renju = await manager.quickMatch('禁手玩家', 'gomoku', 'renju')
+  const jieqi = await manager.quickMatch('揭棋玩家', 'jieqi')
+  assert.equal(renju.created, true)
+  assert.equal(renju.room.gomokuRule, 'renju')
+  assert.notEqual(renju.room.id, overflow.room.id)
+  assert.equal(jieqi.created, true)
+  assert.equal(jieqi.room.variant, 'jieqi')
+
+  await manager.flush()
+  manager.dispose()
+})
+
 test('room chat supports every role without changing the gameplay revision', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'xiangqi-room-chat-manager-'))
   t.after(() => rm(directory, { recursive: true, force: true }))

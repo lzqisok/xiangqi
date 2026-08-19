@@ -997,6 +997,9 @@ body {
   color: var(--text-primary);
   cursor: pointer;
 }
+.candidate-header button {
+  min-width: 74px;
+}
 
 .candidate-header button:disabled {
   opacity: 0.45;
@@ -1093,6 +1096,7 @@ body {
 }
 
 .review-header button {
+  min-width: 86px;
   padding: 7px 10px;
   border: 0;
   border-radius: 7px;
@@ -4049,9 +4053,11 @@ body {
 .lan-variant-picker button i {
   grid-row: 1;
   grid-column: 2;
+  min-width: 3em;
   color: #8b7861;
   font-size: 11px;
   font-style: normal;
+  text-align: right;
 }
 .lan-variant-picker button.active {
   border-color: #8d3930;
@@ -4455,6 +4461,94 @@ body {
   color: #887866;
   font-size: 11px;
 }
+.lan-quick-match {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.85fr) minmax(170px, 0.75fr) minmax(220px, 1fr) minmax(
+      164px,
+      164px
+    );
+  align-items: end;
+  gap: 16px;
+  width: min(100%, 900px);
+  margin: 0 auto 18px;
+  background:
+    radial-gradient(circle at 12% 20%, rgba(164, 67, 55, 0.1), transparent 34%),
+    rgba(255, 250, 240, 0.92) !important;
+}
+.lan-quick-copy small {
+  color: #a44337;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+}
+.lan-quick-copy h2,
+.lan-quick-copy p {
+  margin: 0;
+}
+.lan-quick-copy h2 {
+  margin-top: 3px;
+  font-size: 21px;
+}
+.lan-quick-copy p {
+  margin-top: 6px;
+  color: #81715f;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.lan-quick-match > label {
+  display: grid;
+  gap: 6px;
+  color: #665646;
+  font-size: 12px;
+  font-weight: 700;
+}
+.lan-quick-match input {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #c9b89e;
+  border-radius: 8px;
+  background: #fffdf8;
+}
+.lan-quick-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+.lan-quick-options button {
+  display: grid;
+  gap: 2px;
+  padding: 9px 10px;
+  border: 1px solid #d8c8ad;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #665646;
+  text-align: left;
+  cursor: pointer;
+}
+.lan-quick-options button.active {
+  border-color: #7b3028;
+  background: #fff0ed;
+  color: #7b3028;
+}
+.lan-quick-options span {
+  color: #887866;
+  font-size: 9px;
+}
+.lan-quick-submit {
+  min-height: 57px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 9px;
+  background: #7b3028;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.lan-quick-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
 .lan-lobby-heading {
   display: flex;
   align-items: flex-start;
@@ -4689,6 +4783,7 @@ body {
   background: #eee7db;
 }
 .lan-ready-primary button.invite {
+  min-width: 136px;
   min-height: 42px;
   padding: 0 22px;
   border: 0;
@@ -4741,6 +4836,12 @@ body {
 }
 
 @media (max-width: 1000px) {
+  .lan-quick-match {
+    grid-template-columns: 1fr 1fr;
+  }
+  .lan-quick-submit {
+    min-height: 44px;
+  }
   .lan-ready-layout {
     grid-template-columns: 1fr;
     max-width: 680px;
@@ -4754,6 +4855,7 @@ body {
 }
 @media (max-width: 640px) {
   .lan-lobby-switch,
+  .lan-quick-match,
   .lan-ready-seats {
     grid-template-columns: 1fr;
   }

@@ -80,6 +80,7 @@ export type StoredRoom = {
   name: string
   variant: RoomVariant
   gomokuRule?: 'freestyle' | 'renju'
+  matchmaking?: boolean
   phase: RoomPhase
   revision: number
   ownerHash: string
@@ -100,6 +101,7 @@ export type RoomSummary = {
   name: string
   variant: RoomVariant
   gomokuRule?: 'freestyle' | 'renju'
+  matchmaking?: boolean
   phase: RoomPhase
   red: string | null
   black: string | null
@@ -123,6 +125,7 @@ export type RoomSnapshot = {
   name: string
   variant: RoomVariant
   gomokuRule?: 'freestyle' | 'renju'
+  matchmaking?: boolean
   phase: RoomPhase
   revision: number
   role: RoomRole

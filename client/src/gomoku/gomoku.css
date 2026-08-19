@@ -539,6 +539,9 @@
   min-height: 30px;
   padding: 5px 8px;
 }
+.gomoku-review-header-actions > button:last-child {
+  min-width: 96px;
+}
 .gomoku-review-source {
   display: block;
   margin-top: 3px;

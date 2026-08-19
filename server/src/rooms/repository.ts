@@ -60,6 +60,7 @@ function validRoom(value: unknown): value is StoredRoom {
       : room.gomokuRule !== undefined
   )
     return false
+  if (room.matchmaking !== undefined && typeof room.matchmaking !== 'boolean') return false
   if (
     !Number.isInteger(room.revision) ||
     room.revision < 0 ||

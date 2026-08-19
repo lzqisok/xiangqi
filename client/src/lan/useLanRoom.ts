@@ -2,6 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createLanCommandId } from './browser'
 import { mergeLanChatMessage } from './chat'
 import { AnyLanRoomSnapshot, LanChatMessage, LanChatSettings, LanRoomSnapshot } from './types'
+import { quickMatchLanRoom } from './api'
+import {
+  parseQuickMatch,
+  quickMatchRoomUrl,
+  removeQuickMatchMarker,
+  shouldRequeueQuickMatch,
+} from './quickMatch'
 
 const COMMAND_TIMEOUT_MS = 10_000
 const HINT_TIMEOUT_MS = 70_000
@@ -92,6 +99,7 @@ export function useLanRoom<T extends AnyLanRoomSnapshot = LanRoomSnapshot>(
     muted: false,
   })
   const [recoveryToken, setRecoveryToken] = useState(() => getLanToken(roomId))
+  const [quickMatchConfig] = useState(() => parseQuickMatch(location.search))
   const wsRef = useRef<WebSocket | null>(null)
   const tokenRef = useRef(getLanToken(roomId))
   const reconnectRef = useRef<number>()
@@ -100,9 +108,37 @@ export function useLanRoom<T extends AnyLanRoomSnapshot = LanRoomSnapshot>(
   const chatCommandIdsRef = useRef(new Set<string>())
   const roomRef = useRef(room)
   const nicknameRef = useRef(nickname)
+  const quickMatchRecoveryRef = useRef(Boolean(quickMatchConfig))
+  const requeueingRef = useRef(false)
   const [chatClientId] = useState(getChatClientId)
   roomRef.current = room
   nicknameRef.current = nickname
+
+  const restartQuickMatch = useCallback(async () => {
+    if (!quickMatchConfig || !quickMatchRecoveryRef.current || requeueingRef.current) return false
+    requeueingRef.current = true
+    setError('对手已离开，正在重新匹配…')
+    forgetLanRoom(roomId)
+    try {
+      const result = await quickMatchLanRoom(
+        nicknameRef.current,
+        quickMatchConfig.variant,
+        quickMatchConfig.gomokuRule,
+      )
+      saveLanToken(result.room.id, result.token)
+      location.replace(quickMatchRoomUrl(location.href, result.room.id, quickMatchConfig.key))
+    } catch (cause) {
+      requeueingRef.current = false
+      setError(cause instanceof Error ? cause.message : '重新匹配失败，请返回大厅后重试')
+    }
+    return true
+  }, [quickMatchConfig, roomId])
+
+  const disableQuickMatchRecovery = useCallback(() => {
+    quickMatchRecoveryRef.current = false
+    if (new URLSearchParams(location.search).has('quick'))
+      history.replaceState(null, '', removeQuickMatchMarker(location.href))
+  }, [])
 
   const finishPending = useCallback(() => {
     clearTimeout(pendingTimerRef.current)
@@ -163,6 +199,13 @@ export function useLanRoom<T extends AnyLanRoomSnapshot = LanRoomSnapshot>(
         }
         if (message.type === 'room-snapshot') {
           const snapshot = message.room as T
+          if (
+            quickMatchRecoveryRef.current &&
+            shouldRequeueQuickMatch(quickMatchConfig, { snapshot })
+          ) {
+            void restartQuickMatch()
+            return
+          }
           setRoom(snapshot)
           try {
             localStorage.setItem(
@@ -240,6 +283,10 @@ export function useLanRoom<T extends AnyLanRoomSnapshot = LanRoomSnapshot>(
             }
           }
         } else if (message.type === 'room-closed') {
+          if (quickMatchRecoveryRef.current) {
+            void restartQuickMatch()
+            return
+          }
           forgetLanRoom(roomId)
           location.href = roomRef.current?.variant === 'gomoku' ? '?gomoku=1&lan=1' : '?lan=1'
         } else if (message.type === 'error') {
@@ -249,7 +296,16 @@ export function useLanRoom<T extends AnyLanRoomSnapshot = LanRoomSnapshot>(
             setChatError(String(message.message || '发送失败'))
           } else {
             finishPending()
-            setError(String(message.message || '操作失败'))
+            const errorMessage = String(message.message || '操作失败')
+            if (
+              quickMatchRecoveryRef.current &&
+              !roomRef.current &&
+              shouldRequeueQuickMatch(quickMatchConfig, { error: errorMessage })
+            ) {
+              void restartQuickMatch()
+              return
+            }
+            setError(errorMessage)
           }
         }
       }
@@ -271,7 +327,7 @@ export function useLanRoom<T extends AnyLanRoomSnapshot = LanRoomSnapshot>(
       chatCommandIdsRef.current.clear()
       wsRef.current?.close()
     }
-  }, [finishChatCommand, finishPending, roomId, subscribe])
+  }, [finishChatCommand, finishPending, restartQuickMatch, roomId, subscribe])
 
   const send = useCallback(
     (type: string, payload: Record<string, unknown> = {}) => {
@@ -360,5 +416,6 @@ export function useLanRoom<T extends AnyLanRoomSnapshot = LanRoomSnapshot>(
         everyoneMuted,
         roomSensitiveWords,
       }),
+    disableQuickMatchRecovery,
   }
 }

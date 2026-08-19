@@ -7,6 +7,7 @@ export type LanRoomSummary = {
   name: string
   variant: 'xiangqi' | 'jieqi' | 'gomoku'
   gomokuRule?: 'freestyle' | 'renju'
+  matchmaking?: boolean
   phase: LanPhase
   red: string | null
   black: string | null
@@ -37,6 +38,7 @@ export type LanRoomSnapshot = {
   id: string
   name: string
   variant: 'xiangqi' | 'jieqi'
+  matchmaking?: boolean
   phase: LanPhase
   revision: number
   role: LanRole

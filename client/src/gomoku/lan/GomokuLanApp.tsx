@@ -1,16 +1,22 @@
 import { type MouseEvent, useEffect, useMemo, useState } from 'react'
-import { createGomokuLanRoom, listLanRoomHistory, listLanRooms } from '../../lan/api'
+import {
+  createGomokuLanRoom,
+  listLanRoomHistory,
+  listLanRooms,
+  quickMatchLanRoom,
+} from '../../lan/api'
 import { copyLanText } from '../../lan/browser'
 import { resolveLanShareUrl } from '../../lan/network'
 import { LanChat } from '../../lan/LanApp'
 import { GomokuLanRoomSnapshot, LanRoomSummary } from '../../lan/types'
 import { getLanRecentRooms, getLanToken, saveLanToken, useLanRoom } from '../../lan/useLanRoom'
+import { quickMatchKey, quickMatchRoomUrl } from '../../lan/quickMatch'
 import { PieceColor } from '../../types'
 import { GomokuLanBoard } from './GomokuLanBoard'
 import ProductDialog from '../../components/ProductDialog'
 import MobileChatDock from '../../components/MobileChatDock'
 import ProductState from '../../components/ProductState'
-import { LanReadySeat, LanRoomCard } from '../../lan/LanProduct'
+import { LanQuickMatch, LanReadySeat, LanRoomCard } from '../../lan/LanProduct'
 
 const NICKNAME_KEY = 'gomoku-lan-nickname'
 function load(key: string) {
@@ -54,7 +60,8 @@ function Lobby({
   const [name, setName] = useState('五子棋切磋'),
     [rule, setRule] = useState<'freestyle' | 'renju'>('freestyle')
   const [error, setError] = useState(''),
-    [creating, setCreating] = useState(false)
+    [creating, setCreating] = useState(false),
+    [matching, setMatching] = useState(false)
   const [lobbyView, setLobbyView] = useState<'find' | 'create'>('find')
   const [roomFilter, setRoomFilter] = useState<
     'all' | 'waiting' | 'playing' | 'finished' | 'recent'
@@ -99,6 +106,23 @@ function Lobby({
       setCreating(false)
     }
   }
+  const quickMatch = async () => {
+    if (!nickname.trim() || matching) return
+    setMatching(true)
+    setError('')
+    try {
+      const result = await quickMatchLanRoom(nickname, 'gomoku', rule)
+      saveLanToken(result.room.id, result.token)
+      location.href = quickMatchRoomUrl(
+        location.href,
+        result.room.id,
+        quickMatchKey('gomoku', rule),
+      )
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '快速匹配失败')
+      setMatching(false)
+    }
+  }
   const roomIds = new Set([...rooms, ...history].map((room) => room.id))
   const roomItems = [...rooms, ...history]
     .map((room) => ({
@@ -136,6 +160,20 @@ function Lobby({
           <span>选择规则并邀请棋友</span>
         </button>
       </nav>
+      {lobbyView === 'find' && (
+        <LanQuickMatch
+          nickname={nickname}
+          onNickname={onNickname}
+          options={[
+            { value: 'freestyle', label: '标准五子棋', description: '先连五子获胜' },
+            { value: 'renju', label: '黑方禁手', description: '长连、双四、双三禁手' },
+          ]}
+          selected={rule}
+          onSelect={setRule}
+          matching={matching}
+          onMatch={() => void quickMatch()}
+        />
+      )}
       {lobbyView === 'create' && (
         <form
           className="lan-create card"
@@ -289,7 +327,7 @@ function Room({
   onNickname: (value: string) => void
 }) {
   const state = useLanRoom<GomokuLanRoomSnapshot>(roomId, nickname),
-    { room, connected, error, pending, recoveryToken, send } = state
+    { room, connected, error, pending, recoveryToken, send, disableQuickMatchRecovery } = state
   const [now, setNow] = useState(Date.now()),
     [copyState, setCopyState] = useState('')
   const [manualCopyUrl, setManualCopyUrl] = useState('')
@@ -438,8 +476,20 @@ function Room({
           <section className="lan-ready-room card">
             <div className="lan-ready-heading">
               <div>
-                <small>{incomingInvite && !color ? '棋友邀请' : '等待开局'}</small>
-                <h2>{incomingInvite && !color ? '确认昵称与席位后加入' : '双方选择席位并准备'}</h2>
+                <small>
+                  {room.matchmaking
+                    ? '快速匹配'
+                    : incomingInvite && !color
+                      ? '棋友邀请'
+                      : '等待开局'}
+                </small>
+                <h2>
+                  {room.matchmaking
+                    ? '正在寻找同玩法的在线对手'
+                    : incomingInvite && !color
+                      ? '确认昵称与席位后加入'
+                      : '双方选择席位并准备'}
+                </h2>
                 <p>
                   {room.gomokuRule === 'renju'
                     ? '黑方先手且需遵守长连、双四、双三禁手。'
@@ -453,6 +503,7 @@ function Room({
               <input
                 value={nickname}
                 maxLength={20}
+                disabled={room.matchmaking}
                 onChange={(event) => onNickname(event.target.value)}
               />
             </label>
@@ -462,6 +513,7 @@ function Room({
                   current = color === side
                 const disabled =
                   pending ||
+                  room.matchmaking ||
                   ownerOfflineCountdown !== null ||
                   Boolean(!color && seat) ||
                   Boolean(color && seat && room.pendingSwapBy)
@@ -477,7 +529,7 @@ function Room({
                     actionLabel={seatActionText(side)}
                     onAction={() => act(side)}
                     onRemove={
-                      room.isOwner && seat && !current
+                      room.isOwner && !room.matchmaking && seat && !current
                         ? () => send('room-remove-seat', { side })
                         : undefined
                     }
@@ -498,6 +550,7 @@ function Room({
               />
             )}
             {room.isOwner &&
+              !room.matchmaking &&
               room.applications?.map((item) => (
                 <div className="lan-request" key={item.id}>
                   {item.nickname} 申请成为{sideName(item.side)}{' '}
@@ -524,7 +577,7 @@ function Room({
                 </div>
               ))}
             <div className="lan-ready-primary">
-              {room.isOwner && (
+              {room.isOwner && !room.matchmaking && (
                 <button
                   className="invite"
                   disabled={
@@ -541,7 +594,9 @@ function Room({
               <span>
                 {room.seats.red?.ready && room.seats.black?.ready
                   ? '双方已准备，正在开始…'
-                  : '双方入座并准备后自动开始'}
+                  : room.matchmaking
+                    ? '保持页面在线，匹配成功后自动开局'
+                    : '双方入座并准备后自动开始'}
               </span>
             </div>
             {copyState && <small className="gomoku-copy-state">{copyState}</small>}
@@ -555,37 +610,39 @@ function Room({
                 />
               </label>
             )}
-            <details className="lan-room-management">
-              <summary>对局管理</summary>
-              <div>
-                {color && <button onClick={() => send('room-leave-seat')}>退出席位并观战</button>}
-                {color && (
-                  <button onClick={() => void copy(recoveryUrl, '席位恢复链接已复制')}>
-                    复制席位恢复链接
-                  </button>
-                )}
-                {room.isOwner && (
-                  <button disabled={pending} onClick={() => send('room-renew-invite')}>
-                    作废邀请并重新生成
-                  </button>
-                )}
-                {room.isOwner && (
-                  <button
-                    className="danger"
-                    disabled={pending}
-                    onClick={() => setDangerAction('dissolve')}
-                  >
-                    取消对局
-                  </button>
-                )}
-              </div>
-            </details>
+            {!room.matchmaking && (
+              <details className="lan-room-management">
+                <summary>对局管理</summary>
+                <div>
+                  {color && <button onClick={() => send('room-leave-seat')}>退出席位并观战</button>}
+                  {color && (
+                    <button onClick={() => void copy(recoveryUrl, '席位恢复链接已复制')}>
+                      复制席位恢复链接
+                    </button>
+                  )}
+                  {room.isOwner && (
+                    <button disabled={pending} onClick={() => send('room-renew-invite')}>
+                      作废邀请并重新生成
+                    </button>
+                  )}
+                  {room.isOwner && (
+                    <button
+                      className="danger"
+                      disabled={pending}
+                      onClick={() => setDangerAction('dissolve')}
+                    >
+                      取消对局
+                    </button>
+                  )}
+                </div>
+              </details>
+            )}
           </section>
           <MobileChatDock messageCount={state.chatMessages.length}>
             <LanChat
               messages={state.chatMessages}
               connected={connected}
-              isOwner={room.isOwner}
+              isOwner={room.isOwner && !room.matchmaking}
               settings={state.chatSettings}
               error={state.chatError}
               send={state.sendChat}
@@ -604,7 +661,9 @@ function Room({
             dangerous
             onCancel={() => setDangerAction(null)}
             onConfirm={() => {
-              if (send('room-dissolve')) setDangerAction(null)
+              if (!send('room-dissolve')) return
+              disableQuickMatchRecovery()
+              setDangerAction(null)
             }}
           />
         )}
@@ -616,6 +675,7 @@ function Room({
             onCancel={() => setReturnAction(null)}
             onConfirm={() => {
               if (!send('room-leave-seat')) return
+              disableQuickMatchRecovery()
               setReturnAfterLeaving(true)
               setReturnAction(null)
             }}
@@ -849,7 +909,7 @@ function Room({
             <LanChat
               messages={state.chatMessages}
               connected={connected}
-              isOwner={room.isOwner}
+              isOwner={room.isOwner && !room.matchmaking}
               settings={state.chatSettings}
               error={state.chatError}
               send={state.sendChat}

@@ -3,11 +3,11 @@ import Board from '../components/Board'
 import ProductDialog from '../components/ProductDialog'
 import MobileChatDock from '../components/MobileChatDock'
 import ProductState from '../components/ProductState'
-import { LanReadySeat, LanRoomCard } from './LanProduct'
+import { LanQuickMatch, LanReadySeat, LanRoomCard } from './LanProduct'
 import { getLegalMoves, isInCheck } from '../engine/rules'
 import { uciToMove } from '../engine/notation'
 import { Move, PieceColor, Position } from '../types'
-import { createLanRoom, listLanRoomHistory, listLanRooms } from './api'
+import { createLanRoom, listLanRoomHistory, listLanRooms, quickMatchLanRoom } from './api'
 import { copyLanText } from './browser'
 import { resolveLanShareUrl } from './network'
 import {
@@ -18,6 +18,7 @@ import {
 } from './chat'
 import { LanChatMessage, LanRoomSummary } from './types'
 import { getLanRecentRooms, getLanToken, saveLanToken, useLanRoom } from './useLanRoom'
+import { quickMatchKey, quickMatchRoomUrl } from './quickMatch'
 
 const NICKNAME_KEY = 'xiangqi-lan-nickname'
 function storageGet(key: string) {
@@ -74,6 +75,7 @@ function LanLobby({
   const [variant, setVariant] = useState<'xiangqi' | 'jieqi'>('xiangqi')
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
+  const [matching, setMatching] = useState(false)
   const [lobbyView, setLobbyView] = useState<'find' | 'create'>('find')
   const [roomFilter, setRoomFilter] = useState<
     'all' | 'waiting' | 'playing' | 'finished' | 'recent'
@@ -118,6 +120,19 @@ function LanLobby({
       setCreating(false)
     }
   }
+  const quickMatch = async () => {
+    if (!nickname.trim() || matching) return
+    setMatching(true)
+    setError('')
+    try {
+      const result = await quickMatchLanRoom(nickname, variant)
+      saveLanToken(result.room.id, result.token)
+      location.href = quickMatchRoomUrl(location.href, result.room.id, quickMatchKey(variant))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '快速匹配失败')
+      setMatching(false)
+    }
+  }
   const roomIds = new Set([...rooms, ...historyRooms].map((room) => room.id))
   const roomItems = [
     ...rooms.map((room) => ({
@@ -159,6 +174,20 @@ function LanLobby({
           <span>选择规则并邀请棋友</span>
         </button>
       </nav>
+      {lobbyView === 'find' && (
+        <LanQuickMatch
+          nickname={nickname}
+          onNickname={onNickname}
+          options={[
+            { value: 'xiangqi', label: '普通象棋', description: '标准规则' },
+            { value: 'jieqi', label: '揭棋', description: '暗子玩法' },
+          ]}
+          selected={variant}
+          onSelect={setVariant}
+          matching={matching}
+          onMatch={() => void quickMatch()}
+        />
+      )}
       {lobbyView === 'create' && (
         <form
           className="lan-create card"
@@ -335,6 +364,7 @@ function LanRoom({
     deleteChatMessage,
     muteChatMember,
     updateChatSettings,
+    disableQuickMatchRecovery,
   } = useLanRoom(roomId, nickname)
   const [selected, setSelected] = useState<Position | null>(null)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'manual'>('idle')
@@ -519,8 +549,20 @@ function LanRoom({
           <section className="lan-ready-room card">
             <div className="lan-ready-heading">
               <div>
-                <small>{incomingInvite && !color ? '棋友邀请' : '等待开局'}</small>
-                <h2>{incomingInvite && !color ? '确认昵称与席位后加入' : '双方选择席位并准备'}</h2>
+                <small>
+                  {room.matchmaking
+                    ? '快速匹配'
+                    : incomingInvite && !color
+                      ? '棋友邀请'
+                      : '等待开局'}
+                </small>
+                <h2>
+                  {room.matchmaking
+                    ? '正在寻找同玩法的在线对手'
+                    : incomingInvite && !color
+                      ? '确认昵称与席位后加入'
+                      : '双方选择席位并准备'}
+                </h2>
                 <p>
                   {room.variant === 'jieqi'
                     ? '揭棋：暗子移动后揭晓，暗吃身份仅捕获方可见。'
@@ -534,6 +576,7 @@ function LanRoom({
               <input
                 value={nickname}
                 maxLength={20}
+                disabled={room.matchmaking}
                 onChange={(event) => onNickname(event.target.value)}
               />
             </label>
@@ -544,6 +587,7 @@ function LanRoom({
                   occupiedByOther = Boolean(seat && !current)
                 const disabled =
                   pending ||
+                  room.matchmaking ||
                   ownerOfflineCountdown !== null ||
                   Boolean(room.pendingSwapBy) ||
                   (!color && occupiedByOther) ||
@@ -560,7 +604,7 @@ function LanRoom({
                     actionLabel={boardSeatLabel(side)}
                     onAction={() => actOnBoardSeat(side)}
                     onRemove={
-                      room.isOwner && occupiedByOther
+                      room.isOwner && !room.matchmaking && occupiedByOther
                         ? () => send('room-remove-seat', { side })
                         : undefined
                     }
@@ -599,6 +643,7 @@ function LanRoom({
               </div>
             )}
             {room.isOwner &&
+              !room.matchmaking &&
               room.applications?.map((item) => (
                 <div className="lan-request" key={item.id}>
                   {item.nickname} 申请成为
@@ -626,7 +671,7 @@ function LanRoom({
                 </div>
               ))}
             <div className="lan-ready-primary">
-              {room.isOwner && (
+              {room.isOwner && !room.matchmaking && (
                 <button
                   className="invite"
                   disabled={
@@ -646,7 +691,9 @@ function LanRoom({
               <span>
                 {room.seats.red?.ready && room.seats.black?.ready
                   ? '双方已准备，正在开始…'
-                  : '双方入座并准备后自动开始'}
+                  : room.matchmaking
+                    ? '保持页面在线，匹配成功后自动开局'
+                    : '双方入座并准备后自动开始'}
               </span>
             </div>
             {copyState === 'manual' && (
@@ -659,34 +706,36 @@ function LanRoom({
                 />
               </label>
             )}
-            <details className="lan-room-management">
-              <summary>对局管理</summary>
-              <div>
-                {color && <button onClick={() => send('room-leave-seat')}>退出席位并观战</button>}
-                {color && (recoveryToken || getLanToken(roomId)) && (
-                  <button onClick={shareRecovery}>
-                    {recoveryCopyState === 'copied' ? '恢复链接已复制' : '复制席位恢复链接'}
-                  </button>
-                )}
-                {room.isOwner && (
-                  <button
-                    disabled={pending || Boolean(room.seats.red && room.seats.black)}
-                    onClick={() => send('room-renew-invite')}
-                  >
-                    作废邀请并重新生成
-                  </button>
-                )}
-                {room.isOwner && (
-                  <button
-                    className="danger"
-                    disabled={pending}
-                    onClick={() => setDangerAction('dissolve')}
-                  >
-                    取消对局
-                  </button>
-                )}
-              </div>
-            </details>
+            {!room.matchmaking && (
+              <details className="lan-room-management">
+                <summary>对局管理</summary>
+                <div>
+                  {color && <button onClick={() => send('room-leave-seat')}>退出席位并观战</button>}
+                  {color && (recoveryToken || getLanToken(roomId)) && (
+                    <button onClick={shareRecovery}>
+                      {recoveryCopyState === 'copied' ? '恢复链接已复制' : '复制席位恢复链接'}
+                    </button>
+                  )}
+                  {room.isOwner && (
+                    <button
+                      disabled={pending || Boolean(room.seats.red && room.seats.black)}
+                      onClick={() => send('room-renew-invite')}
+                    >
+                      作废邀请并重新生成
+                    </button>
+                  )}
+                  {room.isOwner && (
+                    <button
+                      className="danger"
+                      disabled={pending}
+                      onClick={() => setDangerAction('dissolve')}
+                    >
+                      取消对局
+                    </button>
+                  )}
+                </div>
+              </details>
+            )}
             {recoveryCopyState === 'manual' && (
               <label className="lan-copy-fallback">
                 请手动复制恢复链接
@@ -702,7 +751,7 @@ function LanRoom({
             <LanChat
               messages={chatMessages}
               connected={connected}
-              isOwner={room.isOwner}
+              isOwner={room.isOwner && !room.matchmaking}
               settings={chatSettings}
               error={chatError}
               send={sendChat}
@@ -720,7 +769,9 @@ function LanRoom({
             dangerous
             onCancel={() => setDangerAction(null)}
             onConfirm={() => {
-              if (send('room-dissolve')) setDangerAction(null)
+              if (!send('room-dissolve')) return
+              disableQuickMatchRecovery()
+              setDangerAction(null)
             }}
           />
         )}
@@ -732,6 +783,7 @@ function LanRoom({
             onCancel={() => setReturnAction(null)}
             onConfirm={() => {
               if (!send('room-leave-seat')) return
+              disableQuickMatchRecovery()
               setReturnAfterLeaving(true)
               setReturnAction(null)
             }}
@@ -959,7 +1011,7 @@ function LanRoom({
             <LanChat
               messages={chatMessages}
               connected={connected}
-              isOwner={room.isOwner}
+              isOwner={room.isOwner && !room.matchmaking}
               settings={chatSettings}
               error={chatError}
               send={sendChat}

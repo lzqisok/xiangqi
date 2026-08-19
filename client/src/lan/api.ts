@@ -35,3 +35,18 @@ export async function createGomokuLanRoom(name: string, gomokuRule: 'freestyle' 
     body: JSON.stringify({ name, variant: 'gomoku', gomokuRule }),
   })
 }
+export async function quickMatchLanRoom(
+  nickname: string,
+  variant: 'xiangqi' | 'jieqi' | 'gomoku',
+  gomokuRule?: 'freestyle' | 'renju',
+) {
+  return json<{
+    room: LanRoomSummary
+    token: string
+    role: 'red' | 'black'
+    created: boolean
+  }>('/api/rooms/quick-match', {
+    method: 'POST',
+    body: JSON.stringify({ nickname, variant, gomokuRule }),
+  })
+}

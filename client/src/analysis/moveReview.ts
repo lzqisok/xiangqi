@@ -5,6 +5,8 @@ import { moveToNotation, moveToUci, uciToMove } from '../engine/notation'
 export type MoveReviewCategory = 'best' | 'good' | 'inaccuracy' | 'mistake' | 'blunder'
 
 export interface MoveReview {
+  /** 走棋前局面的稳定节点引用。 */
+  nodeId: string
   moveIndex: number
   mover: PieceColor
   playedNotation: string
@@ -64,7 +66,7 @@ export function buildMoveReviews(
   return records.flatMap((record, moveIndex) => {
     const before = byIndex.get(moveIndex - 1)
     const after = byIndex.get(moveIndex)
-    if (!before || !after) return []
+    if (!before?.nodeId || !after?.nodeId) return []
 
     const positionFen = moveIndex === 0 ? initialFen : records[moveIndex - 1].fen
     const mover = parseFen(positionFen).turn
@@ -81,6 +83,7 @@ export function buildMoveReviews(
 
     return [
       {
+        nodeId: before.nodeId,
         moveIndex,
         mover,
         playedNotation: record.notation,

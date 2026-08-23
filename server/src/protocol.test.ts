@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   isStaleEngineResponse,
   MAX_MOVE_COUNT,
+  MAX_NODE_ANALYSIS_COUNT,
   MAX_REVIEW_MOVE_COUNT,
   parseClientMessage,
 } from './protocol.js'
@@ -245,6 +246,78 @@ test('parseClientMessage accepts bounded review requests and requires an id', ()
       oversized.error,
       `review moves must contain at most ${MAX_REVIEW_MOVE_COUNT} items`,
     )
+})
+
+test('parseClientMessage accepts bounded node analysis positions', () => {
+  const result = parseClientMessage(
+    JSON.stringify({
+      type: 'analyze-nodes',
+      requestId: 'nodes-1',
+      fen: VALID_FEN,
+      moves: ['h2e2'],
+      moveIndexes: [-1, 0],
+      searchMode: 'depth',
+      searchDepth: 18,
+    }),
+  )
+  assert.equal(result.ok, true)
+  if (result.ok) assert.deepEqual(result.message.moveIndexes, [-1, 0])
+
+  const missing = parseClientMessage(
+    JSON.stringify({
+      type: 'analyze-nodes',
+      requestId: 'nodes-missing',
+      fen: VALID_FEN,
+      moves: [],
+    }),
+  )
+  assert.equal(missing.ok, false)
+  if (!missing.ok) assert.equal(missing.error, 'moveIndexes is required')
+
+  const duplicate = parseClientMessage(
+    JSON.stringify({
+      type: 'analyze-nodes',
+      requestId: 'nodes-duplicate',
+      fen: VALID_FEN,
+      moves: ['h2e2'],
+      moveIndexes: [0, 0],
+    }),
+  )
+  assert.equal(duplicate.ok, false)
+
+  const outOfRange = parseClientMessage(
+    JSON.stringify({
+      type: 'analyze-nodes',
+      requestId: 'nodes-range',
+      fen: VALID_FEN,
+      moves: ['h2e2'],
+      moveIndexes: [1],
+    }),
+  )
+  assert.equal(outOfRange.ok, false)
+
+  const tooMany = parseClientMessage(
+    JSON.stringify({
+      type: 'analyze-nodes',
+      requestId: 'nodes-many',
+      fen: VALID_FEN,
+      moves: [],
+      moveIndexes: Array.from({ length: MAX_NODE_ANALYSIS_COUNT + 1 }, (_, index) => index - 1),
+    }),
+  )
+  assert.equal(tooMany.ok, false)
+
+  const jieqi = parseClientMessage(
+    JSON.stringify({
+      type: 'analyze-nodes',
+      requestId: 'nodes-jieqi',
+      variant: 'jieqi',
+      fen: JIEQI_FEN,
+      moves: [],
+      moveIndexes: [-1],
+    }),
+  )
+  assert.equal(jieqi.ok, false)
 })
 
 test('parseClientMessage rejects invalid JSON, missing requestId, and bad FEN', () => {

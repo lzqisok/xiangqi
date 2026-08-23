@@ -19,6 +19,7 @@ import {
   EngineRuntimeOptions,
   ReviewPosition,
   VariationTree,
+  NodeAnalysis,
 } from '../types'
 import { parseFen, boardToFen, applyMove, INITIAL_FEN, findKing } from '../engine/board'
 import { getLegalMoves, isInCheck, getGameStatusDetail } from '../engine/rules'
@@ -47,11 +48,21 @@ import {
 import { playMoveSound, playCaptureSound, playCheckSound, playGameOverSound } from '../audio'
 import {
   addVariationMove,
+  buildNodeAnalysisTaskEntries,
   countVariationBranches,
   createVariationTree,
+  deleteVariationBranch,
+  deriveAnalysisPoints,
+  getNodeIdAtMoveIndex,
   getVariationLine,
+  hasReusableNodeAnalysis,
+  migrateAnalysisPointsToTree,
+  NodeAnalysisTaskEntry,
   selectVariationNode,
   setMainVariation,
+  setVariationAnalysis,
+  shouldAcceptAnalysisInfo,
+  shouldAcceptNodeAnalysisTaskEntry,
   updateVariationAnnotations,
   updateVariationMove,
 } from '../variations/tree'
@@ -134,6 +145,37 @@ type PendingEngineRequest = {
   movesKey: string
 }
 
+type PendingAnalysisRequest = {
+  id: string
+  movesKey: string
+  /** 分析发起时对应的变招节点,info 结果写回该节点。 */
+  nodeId: string
+  /** 分析发起时的行棋方,用于把引擎分值转成红方视角。 */
+  turn: PieceColor
+  searchLimit: EngineSearchLimit | undefined
+  engineThreads: number | 'auto' | undefined
+  engineHashMb: number | undefined
+}
+
+type PendingReviewRequest = {
+  id: string
+  movesKey: string
+  entries: NodeAnalysisTaskEntry[]
+}
+
+type PendingNodeAnalysisTask = {
+  id: string
+  kind: 'node' | 'branch'
+  entries: NodeAnalysisTaskEntry[]
+  cachedCount: number
+  total: number
+  searchLimit: EngineSearchLimit | undefined
+  engineThreads: number | 'auto' | undefined
+  engineHashMb: number | undefined
+}
+
+const MAX_NODE_ANALYSIS_COUNT = 200
+
 function makeRequestId(kind: string): string {
   return `${kind}-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
@@ -203,7 +245,6 @@ export function useGame({
   const [evaluation, setEvaluation] = useState<number | null>(null)
   const [bestLine, setBestLine] = useState<string[]>([])
   const [analysisDepth, setAnalysisDepth] = useState(0)
-  const [analysisPoints, setAnalysisPoints] = useState<AnalysisPoint[]>([])
   const [moveCandidates, setMoveCandidates] = useState<MoveCandidate[]>([])
   const [aiThinking, setAiThinking] = useState(false)
   const [hintThinking, setHintThinking] = useState(false)
@@ -215,6 +256,13 @@ export function useGame({
   })
   const [reviewPositions, setReviewPositions] = useState<ReviewPosition[]>([])
   const [reviewedMovesKey, setReviewedMovesKey] = useState('')
+  const [nodeAnalysisThinking, setNodeAnalysisThinking] = useState(false)
+  const [nodeAnalysisProgress, setNodeAnalysisProgress] = useState({
+    completed: 0,
+    total: 0,
+    cached: 0,
+  })
+  const [nodeAnalysisStatus, setNodeAnalysisStatus] = useState('')
   const [variationTree, setVariationTree] = useState<VariationTree>(() =>
     createVariationTree(resolvedInitialFen, [], -1),
   )
@@ -240,9 +288,10 @@ export function useGame({
   const currentMoveIndexRef = useRef(currentMoveIndex)
   currentMoveIndexRef.current = currentMoveIndex
   const pendingRequestRef = useRef<PendingEngineRequest | null>(null)
-  const analysisRequestRef = useRef<{ id: string; movesKey: string } | null>(null)
+  const analysisRequestRef = useRef<PendingAnalysisRequest | null>(null)
   const candidateRequestRef = useRef<{ id: string; movesKey: string } | null>(null)
-  const reviewRequestRef = useRef<{ id: string; movesKey: string } | null>(null)
+  const reviewRequestRef = useRef<PendingReviewRequest | null>(null)
+  const nodeAnalysisTaskRef = useRef<PendingNodeAnalysisTask | null>(null)
   const variationTreeRef = useRef(variationTree)
   variationTreeRef.current = variationTree
   const activeVariationNodeIdsRef = useRef(activeVariationNodeIds)
@@ -299,15 +348,17 @@ export function useGame({
 
   const commitVariationMove = useCallback((record: MoveRecord, parentMoveIndex: number) => {
     const currentTree = variationTreeRef.current
-    const parentId =
-      parentMoveIndex >= 0 ? activeVariationNodeIdsRef.current[parentMoveIndex] : currentTree.rootId
+    const parentId = getNodeIdAtMoveIndex(
+      currentTree,
+      activeVariationNodeIdsRef.current,
+      parentMoveIndex,
+    )
     const added = addVariationMove(currentTree, parentId || currentTree.rootId, record)
     const line = getVariationLine(added.tree, added.nodeId)
     variationTreeRef.current = added.tree
     activeVariationNodeIdsRef.current = line.nodeIds
     setVariationTree(added.tree)
     setActiveVariationNodeIds(line.nodeIds)
-    setAnalysisPoints((prev) => prev.filter((point) => point.moveIndex <= parentMoveIndex))
     return line
   }, [])
 
@@ -438,24 +489,48 @@ export function useGame({
         }
       } else if (msg.type === 'info') {
         if (isJieqi) return
-        const currentAnalysis = analysisRequestRef.current
-        if (msg.requestId && (!currentAnalysis || msg.requestId !== currentAnalysis.id)) {
+        if (
+          !shouldAcceptAnalysisInfo(
+            analysisRequestRef.current,
+            msg.requestId,
+            uciMovesRef.current.join(' '),
+          )
+        ) {
           return
         }
-        const redPerspectiveScore = turnRef.current === 'red' ? msg.data.score : -msg.data.score
+        const currentAnalysis = analysisRequestRef.current!
+        const redPerspectiveScore =
+          currentAnalysis.turn === 'red' ? msg.data.score : -msg.data.score
         setEvaluation(redPerspectiveScore)
         setBestLine(msg.data.pv)
         setAnalysisDepth(msg.data.depth)
-        setAnalysisPoints((prev) => {
-          const point = {
-            moveIndex: currentMoveIndexRef.current,
-            evaluation: redPerspectiveScore,
-            depth: msg.data.depth,
+        const nodeAnalysis: NodeAnalysis = {
+          complete: false,
+          score: redPerspectiveScore,
+          depth: msg.data.depth,
+          bestMove: msg.data.pv[0],
+          pv: msg.data.pv,
+          searchLimit: currentAnalysis.searchLimit,
+          engineThreads: currentAnalysis.engineThreads,
+          engineHashMb: currentAnalysis.engineHashMb,
+          updatedAt: Date.now(),
+        }
+        const currentTree = variationTreeRef.current
+        if (currentTree.nodes[currentAnalysis.nodeId]) {
+          const existing = currentTree.nodes[currentAnalysis.nodeId].analysis
+          if (
+            !hasReusableNodeAnalysis(
+              existing,
+              currentAnalysis.searchLimit,
+              currentAnalysis.engineThreads,
+              currentAnalysis.engineHashMb,
+            )
+          ) {
+            const nextTree = setVariationAnalysis(currentTree, currentAnalysis.nodeId, nodeAnalysis)
+            variationTreeRef.current = nextTree
+            setVariationTree(nextTree)
           }
-          return [...prev.filter((item) => item.moveIndex !== point.moveIndex), point].sort(
-            (a, b) => a.moveIndex - b.moveIndex,
-          )
-        })
+        }
       } else if (msg.type === 'engine-status') {
         setEngineAvailable(msg.available)
         setEngineStatusMessage(
@@ -492,14 +567,77 @@ export function useGame({
       } else if (msg.type === 'review-result') {
         const request = reviewRequestRef.current
         if (!request || msg.requestId !== request.id) return
-        setReviewPositions(msg.positions)
+        const currentLine = getVariationLine(variationTreeRef.current)
+        if (uciListFromRecords(currentLine.records).join(' ') !== request.movesKey) {
+          setReviewThinking(false)
+          reviewRequestRef.current = null
+          return
+        }
+        const entryByMoveIndex = new Map(request.entries.map((entry) => [entry.moveIndex, entry]))
+        const positions = msg.positions.flatMap((position) => {
+          const entry = entryByMoveIndex.get(position.moveIndex)
+          return entry && shouldAcceptNodeAnalysisTaskEntry(variationTreeRef.current, entry)
+            ? [{ ...position, nodeId: entry.nodeId }]
+            : []
+        })
+        setReviewPositions(positions)
         setReviewedMovesKey(request.movesKey)
         setReviewProgress({
-          completed: msg.positions.length,
-          total: msg.positions.length,
+          completed: positions.length,
+          total: request.entries.length,
         })
         setReviewThinking(false)
         reviewRequestRef.current = null
+      } else if (msg.type === 'node-analysis-progress') {
+        const request = nodeAnalysisTaskRef.current
+        if (!request || msg.requestId !== request.id) return
+        setNodeAnalysisProgress({
+          completed: request.cachedCount + msg.completed,
+          total: request.total,
+          cached: request.cachedCount,
+        })
+      } else if (msg.type === 'node-analysis-result') {
+        const request = nodeAnalysisTaskRef.current
+        if (!request || msg.requestId !== request.id) return
+        const byMoveIndex = new Map(msg.positions.map((position) => [position.moveIndex, position]))
+        let nextTree = variationTreeRef.current
+        let writtenCount = 0
+        request.entries.forEach((entry) => {
+          const position = byMoveIndex.get(entry.moveIndex)
+          if (!position || !shouldAcceptNodeAnalysisTaskEntry(nextTree, entry)) return
+          nextTree = setVariationAnalysis(nextTree, entry.nodeId, {
+            complete: true,
+            score: position.evaluation,
+            depth: position.depth,
+            bestMove: position.bestMove,
+            pv: position.pv,
+            searchLimit: request.searchLimit,
+            engineThreads: request.engineThreads,
+            engineHashMb: request.engineHashMb,
+            updatedAt: Date.now(),
+          })
+          writtenCount++
+        })
+        variationTreeRef.current = nextTree
+        setVariationTree(nextTree)
+        const currentAnalysis = nextTree.nodes[nextTree.currentNodeId]?.analysis
+        if (currentAnalysis) {
+          setEvaluation(currentAnalysis.score)
+          setBestLine(currentAnalysis.pv || [])
+          setAnalysisDepth(currentAnalysis.depth)
+        }
+        setNodeAnalysisThinking(false)
+        setNodeAnalysisProgress({
+          completed: request.cachedCount + writtenCount,
+          total: request.total,
+          cached: request.cachedCount,
+        })
+        setNodeAnalysisStatus(
+          `${request.kind === 'branch' ? '当前分支' : '当前节点'}分析完成${
+            request.cachedCount > 0 ? `，复用 ${request.cachedCount} 个缓存` : ''
+          }`,
+        )
+        nodeAnalysisTaskRef.current = null
       } else if (msg.type === 'error') {
         setEngineStatusMessage(msg.message)
         if (msg.message.toLowerCase().includes('engine')) {
@@ -508,6 +646,11 @@ export function useGame({
         pendingRequestRef.current = null
         candidateRequestRef.current = null
         reviewRequestRef.current = null
+        if (nodeAnalysisTaskRef.current?.id === msg.requestId) {
+          nodeAnalysisTaskRef.current = null
+          setNodeAnalysisThinking(false)
+          setNodeAnalysisStatus('节点分析失败，请检查引擎状态后重试')
+        }
         setAiThinking(false)
         setHintThinking(false)
         setCandidateThinking(false)
@@ -555,10 +698,12 @@ export function useGame({
     analysisRequestRef.current = null
     candidateRequestRef.current = null
     reviewRequestRef.current = null
+    nodeAnalysisTaskRef.current = null
     setAiThinking(false)
     setHintThinking(false)
     setCandidateThinking(false)
     setReviewThinking(false)
+    setNodeAnalysisThinking(false)
     setEngineStatusMessage('后端连接已断开，重连后将恢复计算')
   }, [connectionState])
 
@@ -569,7 +714,6 @@ export function useGame({
   const prevInitialFen = useRef<string | undefined>(undefined)
   const prevInitialMoveRecords = useRef<MoveRecord[] | undefined>(undefined)
   const prevInitialCurrentMoveIndex = useRef<number | undefined>(undefined)
-  const prevInitialAnalysisPoints = useRef<AnalysisPoint[] | undefined>(undefined)
   const prevInitialVariationTree = useRef<VariationTree | undefined>(undefined)
   const prevInitialJieqiBoard = useRef<Board | undefined>(undefined)
   const prevInitialGameStatus = useRef<GameStatus | undefined>(undefined)
@@ -590,7 +734,6 @@ export function useGame({
     const fenChanged = prevInitialFen.current !== resolvedInitialFen
     const recordsChanged = prevInitialMoveRecords.current !== initialMoveRecords
     const indexChanged = prevInitialCurrentMoveIndex.current !== initialCurrentMoveIndex
-    const analysisPointsChanged = prevInitialAnalysisPoints.current !== initialAnalysisPoints
     const variationTreeChanged = prevInitialVariationTree.current !== initialVariationTree
     const jieqiBoardChanged = prevInitialJieqiBoard.current !== initialJieqiBoard
     const initialStatusChanged =
@@ -605,7 +748,6 @@ export function useGame({
     prevInitialFen.current = resolvedInitialFen
     prevInitialMoveRecords.current = initialMoveRecords
     prevInitialCurrentMoveIndex.current = initialCurrentMoveIndex
-    prevInitialAnalysisPoints.current = initialAnalysisPoints
     prevInitialVariationTree.current = initialVariationTree
     prevInitialJieqiBoard.current = initialJieqiBoard
     prevInitialGameStatus.current = initialGameStatus
@@ -620,7 +762,6 @@ export function useGame({
       !fenChanged &&
       !recordsChanged &&
       !indexChanged &&
-      !analysisPointsChanged &&
       !variationTreeChanged &&
       !jieqiBoardChanged &&
       !initialStatusChanged &&
@@ -630,13 +771,14 @@ export function useGame({
       return
 
     const legacyRecords = initialMoveRecords || []
-    const restoredTree =
+    const baseTree =
       initialVariationTree ||
       createVariationTree(
         resolvedInitialFen,
         legacyRecords,
         initialCurrentMoveIndex ?? legacyRecords.length - 1,
       )
+    const restoredTree = migrateAnalysisPointsToTree(baseTree, initialAnalysisPoints || [])
     const restoredLine = getVariationLine(restoredTree)
     const restoredRecords = restoredLine.records
     const restoredIndex = restoredLine.currentMoveIndex
@@ -681,7 +823,6 @@ export function useGame({
     setEvaluation(null)
     setBestLine([])
     setAnalysisDepth(0)
-    setAnalysisPoints(initialAnalysisPoints || [])
     setMoveCandidates([])
     setFlipped(gameMode === 'human-vs-ai' || gameMode === 'jieqi' ? playerSide === 'black' : false)
     setAiThinking(false)
@@ -691,6 +832,9 @@ export function useGame({
     setReviewProgress({ completed: 0, total: 0 })
     setReviewPositions([])
     setReviewedMovesKey('')
+    setNodeAnalysisThinking(false)
+    setNodeAnalysisProgress({ completed: 0, total: 0, cached: 0 })
+    setNodeAnalysisStatus('')
     setHintMove(null)
     setEngineAvailable(null)
     setEngineStatusMessage('')
@@ -699,6 +843,7 @@ export function useGame({
     analysisRequestRef.current = null
     candidateRequestRef.current = null
     reviewRequestRef.current = null
+    nodeAnalysisTaskRef.current = null
   }, [
     gameMode,
     difficulty,
@@ -727,10 +872,12 @@ export function useGame({
       setHintThinking(false)
       setCandidateThinking(false)
       setReviewThinking(false)
+      setNodeAnalysisThinking(false)
       pendingRequestRef.current = null
       analysisRequestRef.current = null
       candidateRequestRef.current = null
       reviewRequestRef.current = null
+      nodeAnalysisTaskRef.current = null
     }
   }, [connected])
 
@@ -758,13 +905,42 @@ export function useGame({
     if (!gameMode || isJieqi || initializedMode !== gameMode || !connected || !analysisEnabled)
       return
 
-    setEvaluation(null)
-    setBestLine([])
-    setAnalysisDepth(0)
+    const currentNodeId =
+      getNodeIdAtMoveIndex(
+        variationTreeRef.current,
+        activeVariationNodeIdsRef.current,
+        currentMoveIndexRef.current,
+      ) ?? variationTreeRef.current.rootId
+    const engineThreads = engineRuntimeOptions?.engineThreads
+    const engineHashMb = engineRuntimeOptions?.engineHashMb
+
+    // 同配置分析默认直接复用，避免重复启动引擎任务。
+    const existing = variationTreeRef.current.nodes[currentNodeId]?.analysis
+    const hasFreshCache = hasReusableNodeAnalysis(
+      existing,
+      searchLimit,
+      engineThreads,
+      engineHashMb,
+    )
+    if (hasFreshCache && existing) {
+      setEvaluation(existing.score)
+      setBestLine(existing.pv || [])
+      setAnalysisDepth(existing.depth)
+      return
+    } else {
+      setEvaluation(null)
+      setBestLine([])
+      setAnalysisDepth(0)
+    }
     const requestId = makeRequestId('analyze')
     analysisRequestRef.current = {
       id: requestId,
       movesKey: uciMoves.join(' '),
+      nodeId: currentNodeId,
+      turn: turnRef.current,
+      searchLimit,
+      engineThreads,
+      engineHashMb,
     }
     send({
       type: 'analyze',
@@ -821,6 +997,7 @@ export function useGame({
       !canEditGame ||
       initializedMode !== gameMode ||
       reviewThinking ||
+      nodeAnalysisThinking ||
       engineAvailable === false ||
       !shouldAutoRequestAiMove({
         gameStatus,
@@ -858,6 +1035,7 @@ export function useGame({
     gameStatus,
     aiThinking,
     reviewThinking,
+    nodeAnalysisThinking,
     gameMode,
     initializedMode,
     currentPlayerConfig,
@@ -878,6 +1056,7 @@ export function useGame({
       if (currentPlayerConfig.type === 'ai') return
       if (aiThinking) return
       if (reviewThinking) return
+      if (nodeAnalysisThinking) return
 
       const piece = board[pos.row][pos.col]
 
@@ -976,6 +1155,7 @@ export function useGame({
       gameStatus,
       aiThinking,
       reviewThinking,
+      nodeAnalysisThinking,
       currentMoveIndex,
       commitVariationMove,
       engineBaseFen,
@@ -998,16 +1178,18 @@ export function useGame({
     setHintThinking(false)
     setCandidateThinking(false)
     setReviewThinking(false)
+    setNodeAnalysisThinking(false)
     setHintMove(null)
     setMoveCandidates([])
     pendingRequestRef.current = null
     candidateRequestRef.current = null
     reviewRequestRef.current = null
+    nodeAnalysisTaskRef.current = null
   }, [connected, send])
 
   const setVariationCurrentIndex = useCallback((index: number) => {
     const tree = variationTreeRef.current
-    const nodeId = index >= 0 ? activeVariationNodeIdsRef.current[index] : tree.rootId
+    const nodeId = getNodeIdAtMoveIndex(tree, activeVariationNodeIdsRef.current, index)
     if (!nodeId) return
     const nextTree = selectVariationNode(tree, nodeId)
     variationTreeRef.current = nextTree
@@ -1133,7 +1315,11 @@ export function useGame({
         const next = prev.map((record, i) =>
           i === index ? { ...record, marked: !record.marked } : record,
         )
-        const nodeId = activeVariationNodeIdsRef.current[index]
+        const nodeId = getNodeIdAtMoveIndex(
+          variationTreeRef.current,
+          activeVariationNodeIdsRef.current,
+          index,
+        )
         if (nodeId && next[index]) {
           const nextTree = updateVariationMove(variationTreeRef.current, nodeId, next[index])
           variationTreeRef.current = nextTree
@@ -1152,7 +1338,11 @@ export function useGame({
         const next = prev.map((record, i) =>
           i === index ? { ...record, note: note.trim() || undefined } : record,
         )
-        const nodeId = activeVariationNodeIdsRef.current[index]
+        const nodeId = getNodeIdAtMoveIndex(
+          variationTreeRef.current,
+          activeVariationNodeIdsRef.current,
+          index,
+        )
         if (nodeId && next[index]) {
           const nextTree = updateVariationMove(variationTreeRef.current, nodeId, next[index])
           variationTreeRef.current = nextTree
@@ -1269,7 +1459,6 @@ export function useGame({
         setEvaluation(null)
         setBestLine([])
         setAnalysisDepth(0)
-        setAnalysisPoints([])
         const emptyTree = createVariationTree(normalizedFen, [], -1)
         variationTreeRef.current = emptyTree
         activeVariationNodeIdsRef.current = []
@@ -1292,8 +1481,8 @@ export function useGame({
       if (selectedTree === variationTreeRef.current) return
       const line = getVariationLine(selectedTree, nodeId)
       const node = selectedTree.nodes[nodeId]
-      if (!node?.move) return
-      const { board: selectedBoard, turn } = node.move.snapshot || parseFen(node.fen)
+      if (!node) return
+      const { board: selectedBoard, turn } = node.move?.snapshot || parseFen(node.fen)
       variationTreeRef.current = selectedTree
       activeVariationNodeIdsRef.current = line.nodeIds
       setVariationTree(selectedTree)
@@ -1303,10 +1492,9 @@ export function useGame({
       setUciMoves(uciListFromRecords(line.records.slice(0, line.currentMoveIndex + 1)))
       setBoard(selectedBoard)
       setCurrentTurn(turn)
-      setLastMove(node.move.move)
+      setLastMove(node.move?.move || null)
       setSelectedPos(null)
       setLegalMoves([])
-      setAnalysisPoints([])
       stopActiveRequests()
       const statusDetail = getResolvedGameStatus(
         selectedBoard,
@@ -1336,6 +1524,26 @@ export function useGame({
       setMoveHistory(line.records)
     },
     [canEditGame],
+  )
+
+  const removeVariationBranch = useCallback(
+    (nodeId: string) => {
+      if (!canEditGame || !canNavigateHistory(gameMode)) return
+      const currentTree = variationTreeRef.current
+      const nextTree = deleteVariationBranch(currentTree, nodeId)
+      if (nextTree === currentTree) return
+      stopActiveRequests()
+      const line = getVariationLine(nextTree, nextTree.currentNodeId)
+      variationTreeRef.current = nextTree
+      activeVariationNodeIdsRef.current = line.nodeIds
+      setVariationTree(nextTree)
+      setActiveVariationNodeIds(line.nodeIds)
+      setMoveHistory(line.records)
+      setCurrentMoveIndex(line.currentMoveIndex)
+      setUciMoves(uciListFromRecords(line.records.slice(0, line.currentMoveIndex + 1)))
+      setNodeAnalysisStatus('已删除分支及其节点分析')
+    },
+    [canEditGame, gameMode, stopActiveRequests],
   )
 
   const addCurrentNodeAnnotation = useCallback(
@@ -1396,7 +1604,8 @@ export function useGame({
       aiThinking ||
       hintThinking ||
       candidateThinking ||
-      reviewThinking
+      reviewThinking ||
+      nodeAnalysisThinking
     )
       return
     if (currentPlayerConfig.type !== 'human') return
@@ -1433,6 +1642,7 @@ export function useGame({
     hintThinking,
     candidateThinking,
     reviewThinking,
+    nodeAnalysisThinking,
     currentPlayerConfig,
     currentMoveIndex,
     currentTurn,
@@ -1454,7 +1664,8 @@ export function useGame({
       aiThinking ||
       hintThinking ||
       candidateThinking ||
-      reviewThinking
+      reviewThinking ||
+      nodeAnalysisThinking
     )
       return
 
@@ -1486,6 +1697,7 @@ export function useGame({
     hintThinking,
     candidateThinking,
     reviewThinking,
+    nodeAnalysisThinking,
     isJieqi,
     send,
     engineBaseFen,
@@ -1497,6 +1709,128 @@ export function useGame({
     engineVariant,
   ])
 
+  const requestNodeAnalysisTask = useCallback(
+    (kind: 'node' | 'branch') => {
+      if (
+        isJieqi ||
+        !connected ||
+        engineAvailable === false ||
+        aiThinking ||
+        hintThinking ||
+        candidateThinking ||
+        reviewThinking ||
+        nodeAnalysisThinking
+      )
+        return
+
+      const tree = variationTreeRef.current
+      const line = getVariationLine(tree, tree.currentNodeId)
+      const allEntries = buildNodeAnalysisTaskEntries(tree, [tree.rootId, ...line.nodeIds])
+      const targetEntries =
+        kind === 'node'
+          ? allEntries.filter((entry) => entry.nodeId === tree.currentNodeId)
+          : allEntries
+      if (targetEntries.length === 0) return
+      if (targetEntries.length > MAX_NODE_ANALYSIS_COUNT) {
+        setNodeAnalysisStatus(`当前分支超过 ${MAX_NODE_ANALYSIS_COUNT} 个局面，请缩短后再分析`)
+        return
+      }
+
+      const engineThreads = engineRuntimeOptions?.engineThreads
+      const engineHashMb = engineRuntimeOptions?.engineHashMb
+      const pendingEntries = targetEntries.filter(
+        (entry) =>
+          !hasReusableNodeAnalysis(
+            tree.nodes[entry.nodeId]?.analysis,
+            searchLimit,
+            engineThreads,
+            engineHashMb,
+          ),
+      )
+      const cachedCount = targetEntries.length - pendingEntries.length
+      if (pendingEntries.length === 0) {
+        const existing = tree.nodes[tree.currentNodeId]?.analysis
+        if (existing) {
+          setEvaluation(existing.score)
+          setBestLine(existing.pv || [])
+          setAnalysisDepth(existing.depth)
+        }
+        setNodeAnalysisProgress({
+          completed: targetEntries.length,
+          total: targetEntries.length,
+          cached: cachedCount,
+        })
+        setNodeAnalysisStatus(`${kind === 'branch' ? '当前分支' : '当前节点'}已复用同配置缓存`)
+        return
+      }
+
+      const requestId = makeRequestId('analyze-nodes')
+      nodeAnalysisTaskRef.current = {
+        id: requestId,
+        kind,
+        entries: pendingEntries,
+        cachedCount,
+        total: targetEntries.length,
+        searchLimit,
+        engineThreads,
+        engineHashMb,
+      }
+      setNodeAnalysisThinking(true)
+      setNodeAnalysisProgress({
+        completed: cachedCount,
+        total: targetEntries.length,
+        cached: cachedCount,
+      })
+      setNodeAnalysisStatus(kind === 'branch' ? '正在分析当前分支' : '正在分析当前节点')
+      const sent = send({
+        type: 'analyze-nodes',
+        requestId,
+        fen: engineBaseFen,
+        moves: uciListFromRecords(line.records),
+        moveIndexes: pendingEntries.map((entry) => entry.moveIndex),
+        variant: 'xiangqi',
+        ...searchLimit,
+      })
+      if (!sent) {
+        nodeAnalysisTaskRef.current = null
+        setNodeAnalysisThinking(false)
+        setNodeAnalysisStatus('节点分析未发送，请检查连接后重试')
+      }
+    },
+    [
+      aiThinking,
+      candidateThinking,
+      connected,
+      engineAvailable,
+      engineBaseFen,
+      engineRuntimeOptions,
+      hintThinking,
+      isJieqi,
+      nodeAnalysisThinking,
+      reviewThinking,
+      searchLimit,
+      send,
+    ],
+  )
+
+  const requestCurrentNodeAnalysis = useCallback(
+    () => requestNodeAnalysisTask('node'),
+    [requestNodeAnalysisTask],
+  )
+
+  const requestCurrentBranchAnalysis = useCallback(
+    () => requestNodeAnalysisTask('branch'),
+    [requestNodeAnalysisTask],
+  )
+
+  const cancelNodeAnalysisTask = useCallback(() => {
+    const request = nodeAnalysisTaskRef.current
+    if (connected && request) send({ type: 'stop', requestId: request.id })
+    nodeAnalysisTaskRef.current = null
+    setNodeAnalysisThinking(false)
+    setNodeAnalysisStatus('已停止节点分析')
+  }, [connected, send])
+
   const requestReview = useCallback(() => {
     if (
       isJieqi ||
@@ -1506,11 +1840,17 @@ export function useGame({
       moveHistory.length > 120
     )
       return
-    if (aiThinking || hintThinking || candidateThinking || reviewThinking) return
+    if (aiThinking || hintThinking || candidateThinking || reviewThinking || nodeAnalysisThinking)
+      return
 
     const moves = uciListFromRecords(moveHistory)
+    const tree = variationTreeRef.current
+    const entries = buildNodeAnalysisTaskEntries(tree, [
+      tree.rootId,
+      ...activeVariationNodeIdsRef.current,
+    ])
     const requestId = makeRequestId('review')
-    reviewRequestRef.current = { id: requestId, movesKey: moves.join(' ') }
+    reviewRequestRef.current = { id: requestId, movesKey: moves.join(' '), entries }
     setReviewThinking(true)
     setReviewProgress({ completed: 0, total: moves.length + 1 })
     setReviewPositions([])
@@ -1534,6 +1874,7 @@ export function useGame({
     hintThinking,
     isJieqi,
     moveHistory,
+    nodeAnalysisThinking,
     reviewThinking,
     send,
   ])
@@ -1549,7 +1890,14 @@ export function useGame({
   const nextAiMove = useCallback(() => {
     if (!canEditGame) return
     if (gameMode !== 'ai-vs-ai') return
-    if (!connected || gameStatus !== 'playing' || aiThinking || reviewThinking) return
+    if (
+      !connected ||
+      gameStatus !== 'playing' ||
+      aiThinking ||
+      reviewThinking ||
+      nodeAnalysisThinking
+    )
+      return
 
     const difficultyForTurn = currentTurn === 'red' ? aiRedDifficulty : aiBlackDifficulty
     setAiThinking(true)
@@ -1581,6 +1929,7 @@ export function useGame({
     gameStatus,
     aiThinking,
     reviewThinking,
+    nodeAnalysisThinking,
     currentTurn,
     aiRedDifficulty,
     aiBlackDifficulty,
@@ -1626,6 +1975,7 @@ export function useGame({
     !hintThinking &&
     !candidateThinking &&
     !reviewThinking &&
+    !nodeAnalysisThinking &&
     currentPlayerConfig.type === 'human'
 
   const canStepAi =
@@ -1635,7 +1985,18 @@ export function useGame({
     engineAvailable !== false &&
     gameStatus === 'playing' &&
     !aiThinking &&
-    !reviewThinking
+    !reviewThinking &&
+    !nodeAnalysisThinking
+
+  const canRequestNodeAnalysis =
+    !isJieqi &&
+    connected &&
+    engineAvailable !== false &&
+    !aiThinking &&
+    !hintThinking &&
+    !candidateThinking &&
+    !reviewThinking &&
+    !nodeAnalysisThinking
 
   const bestLineNotation = useMemo(() => {
     return translatePv(bestLine, board)
@@ -1644,6 +2005,11 @@ export function useGame({
   const moveRecords = useMemo(
     () => moveHistory.slice(0, currentMoveIndex + 1),
     [moveHistory, currentMoveIndex],
+  )
+  /** 分析曲线从活动线各节点的分析结果派生,根节点(初始局面)作为 -1,切换分支后自动对应各自节点。 */
+  const analysisPoints = useMemo<AnalysisPoint[]>(
+    () => deriveAnalysisPoints(variationTree, activeVariationNodeIds),
+    [activeVariationNodeIds, variationTree],
   )
   const variationChildren = useMemo(() => {
     const currentNode = variationTree.nodes[variationTree.currentNodeId]
@@ -1685,6 +2051,9 @@ export function useGame({
     reviewThinking,
     reviewProgress,
     reviewPositions,
+    nodeAnalysisThinking,
+    nodeAnalysisProgress,
+    nodeAnalysisStatus,
     aiThinking,
     connectionState,
     connected,
@@ -1696,14 +2065,16 @@ export function useGame({
       currentMoveIndex >= 0 &&
       !aiThinking &&
       !hintThinking &&
-      !reviewThinking,
+      !reviewThinking &&
+      !nodeAnalysisThinking,
     canRedo:
       canEditGame &&
       canNavigateHistory(gameMode) &&
       currentMoveIndex < moveHistory.length - 1 &&
       !aiThinking &&
       !hintThinking &&
-      !reviewThinking,
+      !reviewThinking &&
+      !nodeAnalysisThinking,
     canRequestHint,
     canRequestCandidates:
       !isJieqi &&
@@ -1713,7 +2084,8 @@ export function useGame({
       !aiThinking &&
       !hintThinking &&
       !candidateThinking &&
-      !reviewThinking,
+      !reviewThinking &&
+      !nodeAnalysisThinking,
     canRequestReview:
       !isJieqi &&
       connected &&
@@ -1723,7 +2095,11 @@ export function useGame({
       !aiThinking &&
       !hintThinking &&
       !candidateThinking &&
-      !reviewThinking,
+      !reviewThinking &&
+      !nodeAnalysisThinking,
+    canRequestNodeAnalysis,
+    canRequestBranchAnalysis:
+      canRequestNodeAnalysis && activeVariationNodeIds.length + 1 <= MAX_NODE_ANALYSIS_COUNT,
     canStepAi,
     handleCellClick,
     undo,
@@ -1735,6 +2111,7 @@ export function useGame({
     jumpToMove,
     selectVariation,
     setMainVariationChild,
+    removeVariationBranch,
     addCurrentNodeAnnotation,
     removeCurrentNodeAnnotation,
     undoCurrentNodeAnnotation,
@@ -1743,6 +2120,9 @@ export function useGame({
     requestCandidates,
     requestReview,
     cancelReview,
+    requestCurrentNodeAnalysis,
+    requestCurrentBranchAnalysis,
+    cancelNodeAnalysisTask,
     nextAiMove,
     declareDraw,
     resign,

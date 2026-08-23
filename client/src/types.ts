@@ -94,6 +94,30 @@ export interface AnalysisPoint {
   depth: number
 }
 
+/**
+ * 变招节点的独立引擎分析结果。
+ * 评估归属具体节点,切换分支后曲线仍对应各自的节点数据。
+ */
+export interface NodeAnalysis {
+  /** 只有有限分析任务正常结束后才可作为同配置缓存复用。 */
+  complete?: boolean
+  /** 红方视角分值(cp)。 */
+  score: number
+  /** 实际到达深度。 */
+  depth: number
+  /** UCI 最佳着。 */
+  bestMove?: string
+  /** 主变化 UCI 走法列表。 */
+  pv?: string[]
+  /** 分析时的搜索限制,用于缓存签名比较。 */
+  searchLimit?: EngineSearchLimit
+  /** 分析时的引擎线程配置。 */
+  engineThreads?: number | 'auto'
+  /** 分析时的引擎 Hash 配置(MB)。 */
+  engineHashMb?: number
+  updatedAt: number
+}
+
 export interface MoveCandidate {
   move: string
   notation?: string
@@ -104,6 +128,8 @@ export interface MoveCandidate {
 }
 
 export interface ReviewPosition {
+  /** 客户端把服务端步索引响应绑定到稳定的变招节点。 */
+  nodeId?: string
   moveIndex: number
   evaluation: number
   depth: number
@@ -130,6 +156,7 @@ export interface VariationNode {
   children: string[]
   mainChildId?: string
   annotations?: BoardAnnotation[]
+  analysis?: NodeAnalysis
   createdAt: number
   updatedAt: number
 }
@@ -280,6 +307,14 @@ export type WSMessage =
       variant?: EngineVariant
     } & EngineSearchLimit)
   | ({
+      type: 'analyze-nodes'
+      requestId: string
+      fen: string
+      moves: string[]
+      moveIndexes: number[]
+      variant?: EngineVariant
+    } & EngineSearchLimit)
+  | ({
       type: 'candidates'
       requestId?: string
       fen?: string
@@ -316,6 +351,13 @@ export type WSMessage =
       total: number
     }
   | { type: 'review-result'; requestId: string; positions: ReviewPosition[] }
+  | {
+      type: 'node-analysis-progress'
+      requestId: string
+      completed: number
+      total: number
+    }
+  | { type: 'node-analysis-result'; requestId: string; positions: ReviewPosition[] }
   | { type: 'engine-status'; available: boolean; message?: string }
   | {
       type: 'game-lease'

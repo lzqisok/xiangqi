@@ -7,6 +7,7 @@ export type RequestKind =
   | 'analyze'
   | 'candidates'
   | 'review'
+  | 'analyze-nodes'
   | 'stop'
   | 'init'
   | 'claim-game'
@@ -18,6 +19,7 @@ export interface EngineRequest {
   requestId?: string
   fen?: string
   moves?: string[]
+  moveIndexes?: number[]
   difficulty?: 'easy' | 'medium' | 'hard' | 'master'
   count?: number
   searchMode?: 'depth' | 'time'
@@ -53,6 +55,7 @@ const JIEQI_RESERVE_LIMITS: Record<string, number> = {
 }
 export const MAX_MOVE_COUNT = 2000
 export const MAX_REVIEW_MOVE_COUNT = 120
+export const MAX_NODE_ANALYSIS_COUNT = 200
 
 export function validateJieqiFen(fen: string): { ok: boolean; errors: string[] } {
   const fields = fen.trim().split(/\s+/)
@@ -157,6 +160,7 @@ export function parseClientMessage(raw: string): ProtocolValidation {
       'analyze',
       'candidates',
       'review',
+      'analyze-nodes',
       'stop',
       'init',
       'claim-game',
@@ -223,6 +227,36 @@ export function parseClientMessage(raw: string): ProtocolValidation {
       requestId,
       error: `review moves must contain at most ${MAX_REVIEW_MOVE_COUNT} items`,
     }
+  }
+
+  if (msg.moveIndexes !== undefined) {
+    if (
+      msg.type !== 'analyze-nodes' ||
+      !Array.isArray(msg.moveIndexes) ||
+      msg.moveIndexes.length === 0 ||
+      msg.moveIndexes.length > MAX_NODE_ANALYSIS_COUNT ||
+      !msg.moveIndexes.every(
+        (index) =>
+          typeof index === 'number' &&
+          Number.isInteger(index) &&
+          index >= -1 &&
+          Array.isArray(msg.moves) &&
+          index < msg.moves.length,
+      ) ||
+      new Set(msg.moveIndexes).size !== msg.moveIndexes.length
+    ) {
+      return {
+        ok: false,
+        requestId,
+        error: `moveIndexes must contain 1-${MAX_NODE_ANALYSIS_COUNT} unique positions in range`,
+      }
+    }
+  } else if (msg.type === 'analyze-nodes') {
+    return { ok: false, requestId, error: 'moveIndexes is required' }
+  }
+
+  if (msg.type === 'analyze-nodes' && variant === 'jieqi') {
+    return { ok: false, requestId, error: 'node analysis is unavailable for jieqi' }
   }
 
   if (Array.isArray(msg.moves) && msg.moves.length > 0 && typeof msg.fen !== 'string') {
@@ -296,7 +330,8 @@ export function parseClientMessage(raw: string): ProtocolValidation {
       msg.type === 'hint' ||
       msg.type === 'analyze' ||
       msg.type === 'candidates' ||
-      msg.type === 'review') &&
+      msg.type === 'review' ||
+      msg.type === 'analyze-nodes') &&
     typeof msg.requestId !== 'string'
   ) {
     return { ok: false, error: 'requestId is required' }
@@ -335,6 +370,7 @@ export function parseClientMessage(raw: string): ProtocolValidation {
       requestId,
       fen: typeof msg.fen === 'string' ? msg.fen : undefined,
       moves: Array.isArray(msg.moves) ? msg.moves : undefined,
+      moveIndexes: Array.isArray(msg.moveIndexes) ? (msg.moveIndexes as number[]) : undefined,
       difficulty:
         typeof msg.difficulty === 'string'
           ? (msg.difficulty as EngineRequest['difficulty'])

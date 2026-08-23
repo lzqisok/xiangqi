@@ -559,6 +559,84 @@ wss.on('connection', async (ws, request) => {
           break
         }
 
+        case 'analyze-nodes': {
+          const engine = await getEngine(engineSlots, msg.variant)
+          if (!engine) {
+            sendEngineStatus(ws, false, 'Engine not available')
+            sendError(ws, 'Engine not available', msg.requestId)
+            break
+          }
+
+          const requestId = msg.requestId
+          const fen = msg.fen || INITIAL_FEN
+          const moves: string[] = msg.moves || []
+          const moveIndexes = msg.moveIndexes || []
+          const resumeAnalysis = shouldResumeLocalAnalysis(msg.variant || 'xiangqi')
+          if (resumeAnalysis) detachAnalysisHandler(engine)
+
+          try {
+            const generation = requestGeneration
+            if (requestId) activeFiniteRequests.set(requestId, engine)
+            const initialTurn = fen.trim().split(/\s+/)[1] === 'b' ? 'black' : 'red'
+            const positions = []
+            const searchLimit = getSearchLimit(msg) || {
+              searchMode: 'depth' as const,
+              searchDepth: 16,
+            }
+
+            for (let index = 0; index < moveIndexes.length; index++) {
+              if (generation !== requestGeneration || ws.readyState !== WebSocket.OPEN) break
+              const moveIndex = moveIndexes[index]
+              const prefixLength = moveIndex + 1
+              const candidates = await engine.getCandidates(
+                fen,
+                moves.slice(0, prefixLength),
+                'master',
+                1,
+                searchLimit,
+              )
+              if (generation !== requestGeneration || ws.readyState !== WebSocket.OPEN) break
+              const candidate = candidates[0]
+              if (!candidate) throw new Error('Engine returned no node analysis candidate')
+              const redToMove =
+                prefixLength % 2 === 0 ? initialTurn === 'red' : initialTurn === 'black'
+              positions.push({
+                moveIndex,
+                evaluation: redToMove ? candidate.score : -candidate.score,
+                depth: candidate.depth,
+                bestMove: candidate.move,
+                pv: candidate.pv,
+              })
+              ws.send(
+                JSON.stringify({
+                  type: 'node-analysis-progress',
+                  requestId,
+                  completed: index + 1,
+                  total: moveIndexes.length,
+                }),
+              )
+            }
+
+            if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'node-analysis-result', requestId, positions }))
+            }
+          } catch (err) {
+            console.error('Node analysis engine error:', err)
+            sendError(ws, 'Node analysis engine error', requestId)
+          } finally {
+            if (requestId) activeFiniteRequests.delete(requestId)
+            if (resumeAnalysis && shouldResumeLocalAnalysis(msg.variant || 'xiangqi')) {
+              try {
+                attachAnalysisHandler(engine)
+                await engine.analyze(localAnalysisFen, localAnalysisMoves, localAnalysisLimit)
+              } catch (err) {
+                console.error('Resume analysis error:', err)
+              }
+            }
+          }
+          break
+        }
+
         case 'analyze': {
           const engine = await getEngine(engineSlots, msg.variant)
           if (!engine) {

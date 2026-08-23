@@ -1612,16 +1612,38 @@ function LocalApp() {
                   game.requestReview()
                 }}
                 onCancel={game.cancelReview}
-                onJumpToPosition={game.jumpToMove}
+                onJumpToNode={game.selectVariation}
               />
             )}
             {gameMode !== 'jieqi' && workspaceTab === 'variations' && (
               <VariationPanel
+                tree={game.variationTree}
+                currentNodeId={game.currentVariationNodeId}
                 children={game.variationChildren}
                 mainChildId={game.mainVariationChildId}
                 branchCount={game.variationBranchCount}
+                analysisThinking={game.nodeAnalysisThinking}
+                analysisProgress={game.nodeAnalysisProgress}
+                analysisStatus={game.nodeAnalysisStatus}
+                canAnalyzeNode={game.canRequestNodeAnalysis}
+                canAnalyzeBranch={game.canRequestBranchAnalysis}
+                onAnalyzeNode={game.requestCurrentNodeAnalysis}
+                onAnalyzeBranch={game.requestCurrentBranchAnalysis}
+                onStopAnalysis={game.cancelNodeAnalysisTask}
                 onSelect={game.selectVariation}
                 onSetMain={game.setMainVariationChild}
+                onDelete={(node) => {
+                  void requestProductDialog({
+                    title: '删除变招分支',
+                    description: `确定删除“${node.move?.notation || '未命名走法'}”及其全部后续节点吗？节点标注和分析也会一并删除。`,
+                    confirmLabel: '确认删除',
+                    dangerous: true,
+                  }).then((confirmed) => {
+                    if (!confirmed) return
+                    game.removeVariationBranch(node.id)
+                    showToast('变招分支已删除')
+                  })
+                }}
               />
             )}
             {gameMode === 'study' && workspaceTab === 'annotations' && (

@@ -1,4 +1,4 @@
-import { BoardAnnotation, MoveRecord, StudyPosition, VariationTree } from '../types'
+import { BoardAnnotation, MoveRecord, NodeAnalysis, StudyPosition, VariationTree } from '../types'
 import { MAX_NODE_ANNOTATIONS } from '../annotations/model'
 
 const STORAGE_KEY = 'xiangqi.study-positions.v1'
@@ -25,6 +25,35 @@ function isValidStudy(value: unknown): value is StudyPosition {
     Array.isArray(item.analysisPoints) &&
     (item.variationTree === undefined || isValidVariationTree(item.variationTree)) &&
     typeof item.createdAt === 'number' &&
+    typeof item.updatedAt === 'number'
+  )
+}
+
+function isValidSearchLimit(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  const item = value as Record<string, unknown>
+  return (
+    (item.searchMode === undefined || item.searchMode === 'depth' || item.searchMode === 'time') &&
+    (item.searchDepth === undefined || typeof item.searchDepth === 'number') &&
+    (item.searchTimeMs === undefined || typeof item.searchTimeMs === 'number')
+  )
+}
+
+function isValidNodeAnalysis(value: unknown): value is NodeAnalysis {
+  if (!value || typeof value !== 'object') return false
+  const item = value as Record<string, unknown>
+  return (
+    (item.complete === undefined || typeof item.complete === 'boolean') &&
+    typeof item.score === 'number' &&
+    typeof item.depth === 'number' &&
+    (item.bestMove === undefined || typeof item.bestMove === 'string') &&
+    (item.pv === undefined ||
+      (Array.isArray(item.pv) && item.pv.every((move) => typeof move === 'string'))) &&
+    (item.searchLimit === undefined || isValidSearchLimit(item.searchLimit)) &&
+    (item.engineThreads === undefined ||
+      item.engineThreads === 'auto' ||
+      typeof item.engineThreads === 'number') &&
+    (item.engineHashMb === undefined || typeof item.engineHashMb === 'number') &&
     typeof item.updatedAt === 'number'
   )
 }
@@ -64,6 +93,7 @@ function isValidVariationTree(value: unknown): value is VariationTree {
         (Array.isArray(node.annotations) &&
           node.annotations.length <= MAX_NODE_ANNOTATIONS &&
           node.annotations.every(isValidBoardAnnotation))) &&
+      (node.analysis === undefined || isValidNodeAnalysis(node.analysis)) &&
       typeof node.createdAt === 'number' &&
       typeof node.updatedAt === 'number'
     )
@@ -223,7 +253,7 @@ export function duplicateStudyPosition(id: string): StudyPosition[] {
 export function exportStudyPositionsJson(): string {
   return JSON.stringify(
     {
-      version: 3,
+      version: 4,
       exportedAt: new Date().toISOString(),
       studies: loadStudyPositions(),
     },

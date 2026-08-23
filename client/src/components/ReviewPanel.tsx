@@ -8,7 +8,7 @@ interface ReviewPanelProps {
   canRequest: boolean
   onRequest: () => void
   onCancel: () => void
-  onJumpToPosition: (moveIndex: number) => void
+  onJumpToNode: (nodeId: string) => void
 }
 
 const DISPLAY_CATEGORIES = new Set<MoveReviewCategory>(['inaccuracy', 'mistake', 'blunder'])
@@ -21,7 +21,7 @@ export default function ReviewPanel({
   canRequest,
   onRequest,
   onCancel,
-  onJumpToPosition,
+  onJumpToNode,
 }: ReviewPanelProps) {
   const issues = reviews.filter((review) => DISPLAY_CATEGORIES.has(review.category))
   const counts = reviews.reduce<Partial<Record<MoveReviewCategory, number>>>((result, review) => {
@@ -67,7 +67,7 @@ export default function ReviewPanel({
                 <button
                   key={review.moveIndex}
                   className={`review-item ${review.category}`}
-                  onClick={() => onJumpToPosition(review.moveIndex - 1)}
+                  onClick={() => onJumpToNode(review.nodeId)}
                 >
                   <span className="review-move-number">
                     {Math.floor(review.moveIndex / 2) + 1}.{review.mover === 'red' ? '红' : '黑'}

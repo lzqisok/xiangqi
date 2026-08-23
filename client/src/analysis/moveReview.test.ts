@@ -52,6 +52,8 @@ test('buildMoveReviews computes loss from each movers perspective', () => {
   const reviews = buildMoveReviews(INITIAL_FEN, records, positions)
   assert.equal(reviews[0].mover, 'red')
   assert.equal(reviews[0].nodeId, 'variation-root')
+  assert.equal(reviews[0].positionFen, INITIAL_FEN)
+  assert.equal(reviews[0].playedMove, 'h2e2')
   assert.equal(reviews[0].loss, 50)
   assert.equal(reviews[0].category, 'best')
   assert.equal(reviews[0].recommendedNotation, '炮二平五')

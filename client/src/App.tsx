@@ -13,6 +13,8 @@ import ReviewPanel from './components/ReviewPanel'
 import VariationPanel from './components/VariationPanel'
 import AnnotationPanel from './components/AnnotationPanel'
 import StudyLibrary from './components/StudyLibrary'
+import TrainingLibrary from './components/TrainingLibrary'
+import TrainingSessionPanel from './components/TrainingSessionPanel'
 import ProductDialog, { ProductDialogRequest } from './components/ProductDialog'
 import MobileStageBar from './components/MobileStageBar'
 import ProductState from './components/ProductState'
@@ -54,6 +56,7 @@ import {
 import { createReplayUrl, parseReplayStudyFromSearch } from './share/replayLink'
 import { buildCandidatePreview, getCandidatePreviewFrame } from './analysis/candidatePreview'
 import { buildMoveReviews } from './analysis/moveReview'
+import { moveToUci } from './engine/notation'
 import { createBoardAnnotation } from './annotations/model'
 import { createStudyContentSignature, createStudySaveInput } from './studies/autosave'
 import {
@@ -67,6 +70,20 @@ import {
 } from './games/api'
 import { clearGameUrl, createInitialPersistedState, gameUrl } from './games/state'
 import { GameSaveStatus, useGamePersistence } from './games/useGamePersistence'
+import {
+  deleteTrainingTasks,
+  exportTrainingTasksJson,
+  importTrainingTasksJson,
+  loadTrainingTasks,
+  updateTrainingTaskAttempt,
+  upsertTrainingTask,
+} from './training/storage'
+import {
+  buildTrainingTask,
+  evaluateTrainingAttempt,
+  trainingTaskDedupeKey,
+  TrainingEvaluation,
+} from './training/tasks'
 import {
   BoardAnnotationColor,
   BoardAnnotationType,
@@ -84,6 +101,8 @@ import {
   PersistedGameState,
   PlayerSide,
   StudyPosition,
+  TrainingTask,
+  TrainingTaskSource,
 } from './types'
 import LanApp from './lan/LanApp'
 
@@ -107,7 +126,8 @@ type CandidatePreviewState = {
   stepIndex: number
 }
 
-type WorkspaceTab = 'play' | 'history' | 'engine' | 'review' | 'variations' | 'annotations'
+type WorkspaceTab =
+  'play' | 'history' | 'engine' | 'review' | 'variations' | 'annotations' | 'training'
 type StartSection = 'play' | 'study'
 type LocalOpponent = 'human-vs-ai' | 'human-vs-human' | 'ai-vs-ai'
 type XiangqiRule = 'xiangqi' | 'jieqi'
@@ -263,6 +283,13 @@ function LocalApp() {
   const [favoriteEndgameIds, setFavoriteEndgameIds] = useState<string[]>([])
   const [recentFenPositions, setRecentFenPositions] = useState<RecentFenPosition[]>([])
   const [studies, setStudies] = useState<StudyPosition[]>([])
+  const [trainingTasks, setTrainingTasks] = useState<TrainingTask[]>([])
+  const [trainingLibraryOpen, setTrainingLibraryOpen] = useState(false)
+  const [selectedTrainingTask, setSelectedTrainingTask] = useState<TrainingTask | null>(null)
+  const [trainingTaskHintLevel, setTrainingTaskHintLevel] = useState(0)
+  const [trainingEvaluation, setTrainingEvaluation] = useState<TrainingEvaluation | null>(null)
+  const [trainingEvaluating, setTrainingEvaluating] = useState(false)
+  const [pendingSourceNodeId, setPendingSourceNodeId] = useState<string | null>(null)
   const [selectedStudy, setSelectedStudy] = useState<StudyPosition | null>(() =>
     initialReplay?.ok ? initialReplay.study : null,
   )
@@ -291,6 +318,7 @@ function LocalApp() {
   const dialogResolveRef = useRef<((values: Record<string, string> | null) => void) | null>(null)
   const toastTimerRef = useRef<number | null>(null)
   const jieqiOnboardingShownRef = useRef(false)
+  const trainingEvaluationRequestedRef = useRef<string | null>(null)
   const [editorDraft, setEditorDraft] = useState<EndgameDraft>({
     id: null,
     name: '',
@@ -317,6 +345,13 @@ function LocalApp() {
       engineHashMb: engineSettings.engineHashMb,
     }),
     [engineSettings.engineHashMb, engineSettings.engineThreads],
+  )
+  const effectiveSearchLimit = useMemo(
+    () =>
+      selectedTrainingTask
+        ? { searchMode: 'depth' as const, searchDepth: 12, searchTimeMs: undefined }
+        : searchLimit,
+    [searchLimit, selectedTrainingTask],
   )
 
   const requestProductDialog = useCallback(
@@ -350,6 +385,7 @@ function LocalApp() {
     setFavoriteEndgameIds(loadFavoriteEndgameIds())
     setRecentFenPositions(loadRecentFenPositions())
     setStudies(loadStudyPositions())
+    setTrainingTasks(loadTrainingTasks())
   }, [])
 
   const refreshSavedGames = useCallback(async () => {
@@ -436,7 +472,7 @@ function LocalApp() {
     aiBlackDifficulty,
     candidateCount: engineSettings.candidateCount,
     hintDifficulty: engineSettings.hintDifficulty,
-    searchLimit,
+    searchLimit: effectiveSearchLimit,
     engineRuntimeOptions,
     analysisEnabled: showAnalysis && gameMode !== 'jieqi',
     initialFen:
@@ -590,10 +626,48 @@ function LocalApp() {
     () => buildMoveReviews(game.initialFen, game.historyRecords, game.reviewPositions),
     [game.historyRecords, game.initialFen, game.reviewPositions],
   )
+  const currentTrainingSource = useMemo<TrainingTaskSource>(() => {
+    if (gameMode === 'study' && selectedStudy && !selectedTrainingTask) {
+      return studies.some((study) => study.id === selectedStudy.id)
+        ? { type: 'study', id: selectedStudy.id, name: selectedStudy.name, nodeId: '' }
+        : { type: 'snapshot', name: selectedStudy.name, nodeId: '' }
+    }
+    if (activeGame) {
+      return { type: 'game', id: activeGame.id, name: activeGame.name, nodeId: '' }
+    }
+    return { type: 'snapshot', name: '临时复盘', nodeId: '' }
+  }, [activeGame, gameMode, selectedStudy, selectedTrainingTask, studies])
+  const queuedReviewNodeIds = useMemo(
+    () =>
+      moveReviews
+        .filter((review) => {
+          const candidate = buildTrainingTask(
+            review,
+            currentTrainingSource,
+            0,
+            'training-candidate',
+          )
+          return (
+            candidate !== null &&
+            trainingTasks.some(
+              (task) => trainingTaskDedupeKey(task) === trainingTaskDedupeKey(candidate),
+            )
+          )
+        })
+        .map((review) => review.nodeId),
+    [currentTrainingSource, moveReviews, trainingTasks],
+  )
   const gameFinished = game.gameStatus !== 'playing'
-  const showReviewTab = gameFinished || moveReviews.length > 0 || game.reviewThinking
+  const showReviewTab =
+    !selectedTrainingTask &&
+    (gameFinished ||
+      moveReviews.length > 0 ||
+      game.reviewThinking ||
+      (gameMode === 'study' && game.historyRecords.length > 0))
   const showVariationsTab =
-    gameMode !== 'jieqi' && (gameMode === 'study' || gameFinished || game.variationBranchCount > 0)
+    !selectedTrainingTask &&
+    gameMode !== 'jieqi' &&
+    (gameMode === 'study' || gameFinished || game.variationBranchCount > 0)
   const studyContent = useMemo(
     () => ({
       initialFen: game.initialFen,
@@ -617,6 +691,16 @@ function LocalApp() {
   const selectedStudyIsPersisted = Boolean(
     selectedStudy && studies.some((study) => study.id === selectedStudy.id),
   )
+  const trainingAttemptRecord = selectedTrainingTask ? game.historyRecords[0] : undefined
+  const trainingAttemptMove = trainingAttemptRecord
+    ? moveToUci(trainingAttemptRecord.move.from, trainingAttemptRecord.move.to)
+    : ''
+  const trainingAttemptNotation = trainingAttemptRecord?.notation || ''
+  const nextTrainingTask = selectedTrainingTask
+    ? trainingTasks.find(
+        (task) => task.id !== selectedTrainingTask.id && task.status !== 'mastered',
+      ) || trainingTasks.find((task) => task.id !== selectedTrainingTask.id)
+    : undefined
   const lastSavedStudySignatureRef = useRef<string | null>(null)
   const canRequestTrainingHint =
     Boolean(selectedEndgame?.solution?.length) && game.gameStatus === 'playing'
@@ -625,6 +709,125 @@ function LocalApp() {
     if (tab !== 'annotations') setAnnotationTool(null)
     setMobileToolsOpen(true)
   }
+
+  const finishTrainingEvaluation = useCallback(
+    (evaluation: TrainingEvaluation) => {
+      if (!selectedTrainingTask) return
+      setTrainingEvaluation(evaluation)
+      setTrainingEvaluating(false)
+      const saved = updateTrainingTaskAttempt(selectedTrainingTask.id, evaluation)
+      setTrainingTasks(saved)
+      setSelectedTrainingTask(
+        saved.find((task) => task.id === selectedTrainingTask.id) || selectedTrainingTask,
+      )
+    },
+    [selectedTrainingTask],
+  )
+
+  const beginTrainingTask = useCallback((task: TrainingTask) => {
+    setSelectedTrainingTask(task)
+    setSelectedStudy(createTrainingSessionStudy(task))
+    setTrainingLibraryOpen(false)
+    setTrainingTaskHintLevel(0)
+    setTrainingEvaluation(null)
+    setTrainingEvaluating(false)
+    trainingEvaluationRequestedRef.current = null
+    setCandidatePreview(null)
+    setAnnotationTool(null)
+    setShowAnalysis(false)
+    setWorkspaceTab('training')
+    setMobileToolsOpen(true)
+    setGameMode('study')
+  }, [])
+
+  const retryTrainingTask = useCallback(() => {
+    if (!selectedTrainingTask) return
+    setSelectedStudy(createTrainingSessionStudy(selectedTrainingTask))
+    setTrainingTaskHintLevel(0)
+    setTrainingEvaluation(null)
+    setTrainingEvaluating(false)
+    trainingEvaluationRequestedRef.current = null
+    setWorkspaceTab('training')
+  }, [selectedTrainingTask])
+
+  const openTrainingSource = useCallback(
+    async (task: TrainingTask) => {
+      if (task.source.type === 'snapshot' || !task.source.id) return
+      setPendingSourceNodeId(task.source.nodeId)
+      setSelectedTrainingTask(null)
+      setTrainingEvaluation(null)
+      setTrainingEvaluating(false)
+      setTrainingLibraryOpen(false)
+      setWorkspaceTab('variations')
+      if (task.source.type === 'study') {
+        const study = studies.find((item) => item.id === task.source.id)
+        if (!study) {
+          setPendingSourceNodeId(null)
+          setTrainingLibraryOpen(true)
+          return
+        }
+        setActiveGame(null)
+        setInitialLiveState(null)
+        setSelectedStudy(study)
+        setGameMode('study')
+        return
+      }
+      try {
+        openGame(await loadGame(task.source.id))
+      } catch (error) {
+        setPendingSourceNodeId(null)
+        setGameStoreError(error instanceof Error ? error.message : '来源对局已不存在')
+        setTrainingLibraryOpen(true)
+      }
+    },
+    [openGame, studies],
+  )
+
+  useEffect(() => {
+    if (!pendingSourceNodeId || !gameMode) return
+    if (!game.variationTree.nodes[pendingSourceNodeId]) return
+    game.selectVariation(pendingSourceNodeId)
+    setWorkspaceTab('variations')
+    setPendingSourceNodeId(null)
+  }, [game, gameMode, pendingSourceNodeId])
+
+  useEffect(() => {
+    if (!selectedTrainingTask || !trainingAttemptMove || trainingEvaluation) return
+    const requestKey = `${selectedTrainingTask.id}:${trainingAttemptMove}`
+    if (trainingAttemptMove === selectedTrainingTask.recommendedMove) {
+      finishTrainingEvaluation(evaluateTrainingAttempt(selectedTrainingTask, trainingAttemptMove))
+      return
+    }
+
+    const nodeAnalysis = game.variationTree.nodes[game.currentVariationNodeId]?.analysis
+    if (nodeAnalysis?.complete) {
+      finishTrainingEvaluation(
+        evaluateTrainingAttempt(selectedTrainingTask, trainingAttemptMove, nodeAnalysis.score),
+      )
+      return
+    }
+
+    if (
+      game.engineAvailable === false ||
+      game.connectionState === 'disconnected' ||
+      /失败|未发送/.test(game.nodeAnalysisStatus)
+    ) {
+      finishTrainingEvaluation(evaluateTrainingAttempt(selectedTrainingTask, trainingAttemptMove))
+      return
+    }
+
+    setTrainingEvaluating(true)
+    if (trainingEvaluationRequestedRef.current !== requestKey && game.canRequestNodeAnalysis) {
+      trainingEvaluationRequestedRef.current = requestKey
+      game.requestCurrentNodeAnalysis()
+    }
+  }, [
+    finishTrainingEvaluation,
+    game,
+    selectedTrainingTask,
+    trainingAttemptMove,
+    trainingEvaluation,
+  ])
 
   useEffect(() => {
     if (gameMode !== 'jieqi') return
@@ -737,7 +940,7 @@ function LocalApp() {
   }, [candidateAutoPositionKey])
 
   useEffect(() => {
-    if (gameMode !== 'study' || !selectedStudy) {
+    if (selectedTrainingTask || gameMode !== 'study' || !selectedStudy) {
       lastSavedStudySignatureRef.current = null
       setStudySaveStatus(null)
       return
@@ -755,10 +958,11 @@ function LocalApp() {
       variationTree: selectedStudy.variationTree,
     })
     setStudySaveStatus('saved')
-  }, [gameMode, selectedStudy?.id, selectedStudyIsPersisted])
+  }, [gameMode, selectedStudy?.id, selectedStudyIsPersisted, selectedTrainingTask])
 
   useEffect(() => {
-    if (gameMode !== 'study' || !selectedStudy || !selectedStudyIsPersisted) return
+    if (selectedTrainingTask || gameMode !== 'study' || !selectedStudy || !selectedStudyIsPersisted)
+      return
     if (studyContentSignature === lastSavedStudySignatureRef.current) {
       setStudySaveStatus('saved')
       return
@@ -772,11 +976,35 @@ function LocalApp() {
       setStudySaveStatus('saved')
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [gameMode, selectedStudy, selectedStudyIsPersisted, studyContent, studyContentSignature])
+  }, [
+    gameMode,
+    selectedStudy,
+    selectedStudyIsPersisted,
+    selectedTrainingTask,
+    studyContent,
+    studyContentSignature,
+  ])
+
+  const returnToTrainingLibrary = () => {
+    setSelectedTrainingTask(null)
+    setSelectedStudy(null)
+    setTrainingEvaluation(null)
+    setTrainingEvaluating(false)
+    setTrainingTaskHintLevel(0)
+    trainingEvaluationRequestedRef.current = null
+    setMobileToolsOpen(false)
+    setWorkspaceTab('play')
+    setGameMode(null)
+    setTrainingLibraryOpen(true)
+  }
 
   const handleNewGame = async () => {
     setAiAutoPlaying(false)
     setStudyAutoPlaying(false)
+    if (selectedTrainingTask) {
+      returnToTrainingLibrary()
+      return
+    }
     if (activeGame) {
       const saved = await gamePersistence.flush(liveGameState)
       if (!saved) {
@@ -806,6 +1034,10 @@ function LocalApp() {
   const handleReturnToMenu = async () => {
     setAiAutoPlaying(false)
     setStudyAutoPlaying(false)
+    if (selectedTrainingTask) {
+      returnToTrainingLibrary()
+      return
+    }
     if (activeGame) {
       const saved = await gamePersistence.flush(liveGameState)
       if (!saved) {
@@ -833,6 +1065,25 @@ function LocalApp() {
     window.location.assign('?type=xiangqi')
   }
 
+  if (trainingLibraryOpen && !selectedTrainingTask) {
+    return (
+      <TrainingLibrary
+        tasks={trainingTasks}
+        onBack={() => setTrainingLibraryOpen(false)}
+        onStart={beginTrainingTask}
+        onOpenSource={(task) => void openTrainingSource(task)}
+        onDeleteMany={(ids) => setTrainingTasks(deleteTrainingTasks(ids))}
+        onExportJson={() => downloadJson('xiangqi-review-training.json', exportTrainingTasksJson())}
+        onImportJson={(file) => {
+          file
+            .text()
+            .then((text) => setTrainingTasks(importTrainingTasksJson(text)))
+            .catch(() => undefined)
+        }}
+      />
+    )
+  }
+
   if (!gameMode) {
     return (
       <>
@@ -842,6 +1093,7 @@ function LocalApp() {
           storeError={gameStoreError}
           starting={startingGame}
           onRetry={refreshSavedGames}
+          onOpenTraining={() => setTrainingLibraryOpen(true)}
           onOpen={async (id) => {
             try {
               openGame(await loadGame(id))
@@ -1172,10 +1424,14 @@ function LocalApp() {
             flipped={game.flipped}
             aiThinking={candidatePreview ? false : game.aiThinking}
             thinkingText={`${game.currentTurn === 'red' ? '红方' : '黑方'} AI 思考中...`}
-            interactionDisabled={Boolean(candidatePreview) || !game.canEditGame}
+            interactionDisabled={
+              Boolean(candidatePreview) ||
+              !game.canEditGame ||
+              Boolean(selectedTrainingTask && trainingAttemptRecord)
+            }
             annotations={candidatePreview ? [] : game.currentNodeAnnotations}
             annotationTool={
-              gameMode === 'study' && annotationTool
+              gameMode === 'study' && !selectedTrainingTask && annotationTool
                 ? { type: annotationTool, color: annotationColor }
                 : null
             }
@@ -1186,7 +1442,7 @@ function LocalApp() {
             onCellClick={game.handleCellClick}
             onCancelSelection={game.cancelSelection}
           />
-          {gameMode === 'study' && annotationTool && (
+          {gameMode === 'study' && !selectedTrainingTask && annotationTool && (
             <div className="board-annotation-mode" role="status">
               <span>
                 {annotationColor === 'red' ? '红色' : annotationColor === 'green' ? '绿色' : '蓝色'}
@@ -1232,20 +1488,30 @@ function LocalApp() {
         </div>
         <div className={`side-panel ${mobileToolsOpen ? 'mobile-tools-open' : ''}`}>
           <nav className="workspace-tabs" aria-label="棋局工具">
-            <button
-              className={workspaceTab === 'play' ? 'active' : ''}
-              onClick={() => selectWorkspaceTab('play')}
-            >
-              {gameFinished ? '结果' : '对局'}
-            </button>
-            <button
-              className={workspaceTab === 'history' ? 'active' : ''}
-              onClick={() => selectWorkspaceTab('history')}
-            >
-              棋谱
-              {game.historyRecords.length > 0 ? <span>{game.historyRecords.length}</span> : null}
-            </button>
-            {gameMode !== 'jieqi' && (
+            {selectedTrainingTask ? (
+              <button className="active" onClick={() => selectWorkspaceTab('training')}>
+                训练
+              </button>
+            ) : (
+              <>
+                <button
+                  className={workspaceTab === 'play' ? 'active' : ''}
+                  onClick={() => selectWorkspaceTab('play')}
+                >
+                  {gameFinished ? '结果' : '对局'}
+                </button>
+                <button
+                  className={workspaceTab === 'history' ? 'active' : ''}
+                  onClick={() => selectWorkspaceTab('history')}
+                >
+                  棋谱
+                  {game.historyRecords.length > 0 ? (
+                    <span>{game.historyRecords.length}</span>
+                  ) : null}
+                </button>
+              </>
+            )}
+            {!selectedTrainingTask && gameMode !== 'jieqi' && (
               <button
                 className={workspaceTab === 'engine' ? 'active' : ''}
                 onClick={() => selectWorkspaceTab('engine')}
@@ -1271,7 +1537,7 @@ function LocalApp() {
                 {game.variationBranchCount > 0 ? <span>{game.variationBranchCount}</span> : null}
               </button>
             )}
-            {gameMode === 'study' && (
+            {!selectedTrainingTask && gameMode === 'study' && (
               <button
                 className={workspaceTab === 'annotations' ? 'active' : ''}
                 onClick={() => selectWorkspaceTab('annotations')}
@@ -1301,6 +1567,27 @@ function LocalApp() {
                 onUpdateNote={game.updateMoveNote}
                 showOnlyAnnotated={showOnlyAnnotatedMoves}
                 onShowOnlyAnnotatedChange={setShowOnlyAnnotatedMoves}
+              />
+            )}
+            {workspaceTab === 'training' && selectedTrainingTask && (
+              <TrainingSessionPanel
+                task={selectedTrainingTask}
+                hintLevel={trainingTaskHintLevel}
+                attemptedNotation={trainingAttemptNotation}
+                evaluation={trainingEvaluation}
+                evaluating={trainingEvaluating}
+                hasNext={Boolean(nextTrainingTask)}
+                canOpenSource={
+                  selectedTrainingTask.source.type !== 'snapshot' &&
+                  Boolean(selectedTrainingTask.source.id)
+                }
+                onRevealHint={() => setTrainingTaskHintLevel((level) => Math.min(3, level + 1))}
+                onRetry={retryTrainingTask}
+                onNext={() => {
+                  if (nextTrainingTask) beginTrainingTask(nextTrainingTask)
+                }}
+                onBack={returnToTrainingLibrary}
+                onOpenSource={() => void openTrainingSource(selectedTrainingTask)}
               />
             )}
             {workspaceTab === 'play' && (
@@ -1613,6 +1900,13 @@ function LocalApp() {
                 }}
                 onCancel={game.cancelReview}
                 onJumpToNode={game.selectVariation}
+                queuedNodeIds={queuedReviewNodeIds}
+                onAddToTraining={(review) => {
+                  const task = buildTrainingTask(review, currentTrainingSource)
+                  if (!task) return
+                  setTrainingTasks(upsertTrainingTask(task))
+                  showToast('已加入错着训练')
+                }}
               />
             )}
             {gameMode !== 'jieqi' && workspaceTab === 'variations' && (
@@ -1665,29 +1959,33 @@ function LocalApp() {
         </div>
       </div>
       <MobileStageBar
-        items={[
-          { id: 'play', label: gameFinished ? '结果' : '对局' },
-          { id: 'history', label: '棋谱', badge: game.historyRecords.length },
-          { id: 'engine', label: '分析', available: gameMode !== 'jieqi' },
-          {
-            id: 'review',
-            label: '复盘',
-            badge: moveReviews.length,
-            available: showReviewTab,
-          },
-          {
-            id: 'variations',
-            label: '变招',
-            badge: game.variationBranchCount,
-            available: showVariationsTab,
-          },
-          {
-            id: 'annotations',
-            label: '标注',
-            badge: game.currentNodeAnnotations.length,
-            available: gameMode === 'study',
-          },
-        ]}
+        items={
+          selectedTrainingTask
+            ? [{ id: 'training', label: '训练' }]
+            : [
+                { id: 'play', label: gameFinished ? '结果' : '对局' },
+                { id: 'history', label: '棋谱', badge: game.historyRecords.length },
+                { id: 'engine', label: '分析', available: gameMode !== 'jieqi' },
+                {
+                  id: 'review',
+                  label: '复盘',
+                  badge: moveReviews.length,
+                  available: showReviewTab,
+                },
+                {
+                  id: 'variations',
+                  label: '变招',
+                  badge: game.variationBranchCount,
+                  available: showVariationsTab,
+                },
+                {
+                  id: 'annotations',
+                  label: '标注',
+                  badge: game.currentNodeAnnotations.length,
+                  available: gameMode === 'study',
+                },
+              ]
+        }
         active={workspaceTab}
         open={mobileToolsOpen}
         onSelect={selectWorkspaceTab}
@@ -1737,6 +2035,21 @@ function isLiveGameMode(mode: GameMode | null): mode is LiveGameMode {
   return (
     mode === 'human-vs-ai' || mode === 'human-vs-human' || mode === 'ai-vs-ai' || mode === 'jieqi'
   )
+}
+
+function createTrainingSessionStudy(task: TrainingTask): StudyPosition {
+  const now = Date.now()
+  return {
+    id: `training-session-${task.id}-${now}`,
+    name: `错着训练 · ${task.source.name}`,
+    description: `实战着 ${task.playedNotation}`,
+    initialFen: task.positionFen,
+    moves: [],
+    currentMoveIndex: -1,
+    analysisPoints: [],
+    createdAt: now,
+    updatedAt: now,
+  }
 }
 
 function toGameSummary(game: GameDocument): GameSummary {
@@ -1931,6 +2244,7 @@ function StartScreen({
   onDelete,
   onImport,
   onStart,
+  onOpenTraining,
 }: {
   games: GameSummary[]
   loading: boolean
@@ -1941,6 +2255,7 @@ function StartScreen({
   onRename: (game: GameSummary, name: string) => void
   onDelete: (game: GameSummary) => void
   onImport: (file: File) => void
+  onOpenTraining: () => void
   onStart: (
     mode: GameMode,
     difficulty: Difficulty,
@@ -1954,14 +2269,21 @@ function StartScreen({
   )
   const [opponent, setOpponent] = useState<LocalOpponent>('human-vs-ai')
   const [rule, setRule] = useState<XiangqiRule>('xiangqi')
-  const [studyMode, setStudyMode] = useState<'endgame' | 'study'>('endgame')
+  const [studyMode, setStudyMode] = useState<'endgame' | 'study' | 'training'>('endgame')
   const [diff, setDiff] = useState<Difficulty>('medium')
   const [side, setSide] = useState<PlayerSide>('red')
   const [redDiff, setRedDiff] = useState<Difficulty>('medium')
   const [blackDiff, setBlackDiff] = useState<Difficulty>('medium')
   const [editingGame, setEditingGame] = useState<GameSummary | null>(null)
   const [deletingGame, setDeletingGame] = useState<GameSummary | null>(null)
-  const mode: GameMode = section === 'study' ? studyMode : rule === 'jieqi' ? 'jieqi' : opponent
+  const mode: GameMode =
+    section === 'study'
+      ? studyMode === 'training'
+        ? 'study'
+        : studyMode
+      : rule === 'jieqi'
+        ? 'jieqi'
+        : opponent
 
   return (
     <div className="start-screen">
@@ -2077,6 +2399,13 @@ function StartScreen({
                 >
                   <strong>研究局面</strong>
                   <span>打开已保存研究、棋谱回放和变招树</span>
+                </button>
+                <button
+                  className={studyMode === 'training' ? 'active' : ''}
+                  onClick={() => setStudyMode('training')}
+                >
+                  <strong>错着训练</strong>
+                  <span>练习复盘加入的错着，跟踪未练、复习与掌握状态</span>
                 </button>
               </div>
             </div>
@@ -2204,14 +2533,20 @@ function StartScreen({
           <button
             className="start-btn"
             disabled={starting}
-            onClick={() => onStart(mode, diff, side, redDiff, blackDiff)}
+            onClick={() =>
+              section === 'study' && studyMode === 'training'
+                ? onOpenTraining()
+                : onStart(mode, diff, side, redDiff, blackDiff)
+            }
           >
             {starting
               ? '正在创建…'
               : section === 'study'
                 ? studyMode === 'endgame'
                   ? '选择残局'
-                  : '打开研究库'
+                  : studyMode === 'study'
+                    ? '打开研究库'
+                    : '打开训练队列'
                 : '开始游戏'}
           </button>
 

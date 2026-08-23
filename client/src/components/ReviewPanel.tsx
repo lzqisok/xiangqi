@@ -9,6 +9,8 @@ interface ReviewPanelProps {
   onRequest: () => void
   onCancel: () => void
   onJumpToNode: (nodeId: string) => void
+  queuedNodeIds: string[]
+  onAddToTraining: (review: MoveReview) => void
 }
 
 const DISPLAY_CATEGORIES = new Set<MoveReviewCategory>(['inaccuracy', 'mistake', 'blunder'])
@@ -22,6 +24,8 @@ export default function ReviewPanel({
   onRequest,
   onCancel,
   onJumpToNode,
+  queuedNodeIds,
+  onAddToTraining,
 }: ReviewPanelProps) {
   const issues = reviews.filter((review) => DISPLAY_CATEGORIES.has(review.category))
   const counts = reviews.reduce<Partial<Record<MoveReviewCategory, number>>>((result, review) => {
@@ -63,21 +67,35 @@ export default function ReviewPanel({
             <div className="review-empty">本局未发现明显失误。</div>
           ) : (
             <div className="review-issues">
-              {issues.map((review) => (
-                <button
-                  key={review.moveIndex}
-                  className={`review-item ${review.category}`}
-                  onClick={() => onJumpToNode(review.nodeId)}
-                >
-                  <span className="review-move-number">
-                    {Math.floor(review.moveIndex / 2) + 1}.{review.mover === 'red' ? '红' : '黑'}
-                  </span>
-                  <strong>{review.playedNotation}</strong>
-                  <span className="review-category">{MOVE_REVIEW_LABELS[review.category]}</span>
-                  <small>损失 {review.loss / 100} 子</small>
-                  <span className="review-recommendation">推荐：{review.recommendedNotation}</span>
-                </button>
-              ))}
+              {issues.map((review) => {
+                const trainable = review.category === 'mistake' || review.category === 'blunder'
+                const queued = queuedNodeIds.includes(review.nodeId)
+                return (
+                  <article key={review.moveIndex} className={`review-item ${review.category}`}>
+                    <button className="review-jump" onClick={() => onJumpToNode(review.nodeId)}>
+                      <span className="review-move-number">
+                        {Math.floor(review.moveIndex / 2) + 1}.
+                        {review.mover === 'red' ? '红' : '黑'}
+                      </span>
+                      <strong>{review.playedNotation}</strong>
+                      <span className="review-category">{MOVE_REVIEW_LABELS[review.category]}</span>
+                      <small>损失 {review.loss / 100} 子</small>
+                      <span className="review-recommendation">
+                        推荐：{review.recommendedNotation}
+                      </span>
+                    </button>
+                    {trainable && (
+                      <button
+                        className="review-training-action"
+                        disabled={queued}
+                        onClick={() => onAddToTraining(review)}
+                      >
+                        {queued ? '已加入训练' : '加入训练'}
+                      </button>
+                    )}
+                  </article>
+                )
+              })}
             </div>
           )}
         </>

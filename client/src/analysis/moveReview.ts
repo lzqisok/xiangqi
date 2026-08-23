@@ -9,6 +9,8 @@ export interface MoveReview {
   nodeId: string
   moveIndex: number
   mover: PieceColor
+  positionFen: string
+  playedMove: string
   playedNotation: string
   category: MoveReviewCategory
   loss: number
@@ -86,6 +88,8 @@ export function buildMoveReviews(
         nodeId: before.nodeId,
         moveIndex,
         mover,
+        positionFen,
+        playedMove,
         playedNotation: record.notation,
         category: classifyMoveLoss(loss, playedMove === before.bestMove),
         loss,

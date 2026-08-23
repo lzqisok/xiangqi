@@ -180,6 +180,37 @@ export interface StudyPosition {
   updatedAt: number
 }
 
+export type TrainingTaskStatus = 'unseen' | 'review' | 'mastered'
+export type TrainingAttemptResult = 'passed' | 'failed'
+
+export interface TrainingTaskSource {
+  type: 'game' | 'study' | 'snapshot'
+  id?: string
+  name: string
+  /** 走棋前局面在来源变招树中的稳定节点。 */
+  nodeId: string
+}
+
+export interface TrainingTask {
+  id: string
+  positionFen: string
+  mover: PieceColor
+  playedMove: string
+  playedNotation: string
+  recommendedMove: string
+  recommendedNotation: string
+  recommendedLine: string[]
+  beforeEvaluation: number
+  category: 'mistake' | 'blunder'
+  source: TrainingTaskSource
+  status: TrainingTaskStatus
+  attempts: number
+  lastResult?: TrainingAttemptResult
+  lastPracticedAt?: number
+  createdAt: number
+  updatedAt: number
+}
+
 export interface PersistedGameConfig {
   difficulty: Difficulty
   playerSide: PlayerSide

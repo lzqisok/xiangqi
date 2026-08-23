@@ -1162,20 +1162,45 @@ body {
 }
 
 .review-item {
+  overflow: hidden;
+  padding: 0;
+  cursor: default;
+}
+
+.review-jump {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) auto;
   gap: 4px 8px;
+  width: 100%;
   padding: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.025);
+  border: 0;
+  background: transparent;
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
 }
 
-.review-item:hover {
+.review-item:hover,
+.review-item:focus-within {
   border-color: rgba(214, 166, 75, 0.35);
+}
+
+.review-training-action {
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  border-top: 1px solid var(--panel-border);
+  background: rgba(214, 166, 75, 0.08);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.review-training-action:disabled {
+  color: var(--text-secondary);
+  cursor: default;
+  opacity: 0.7;
 }
 
 .review-move-number,
@@ -3141,6 +3166,148 @@ body {
 .study-library-card .study-card-actions button:first-child {
   background: #a44337;
   color: #fffaf1;
+}
+
+.training-task-list .training-task-card {
+  border-left: 4px solid #c7ab78;
+}
+
+.training-task-list .training-task-card.review {
+  border-left-color: #d47a45;
+}
+
+.training-task-list .training-task-card.mastered {
+  border-left-color: #477b62;
+}
+
+.training-task-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.training-task-title > span,
+.training-task-title > b {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(164, 67, 55, 0.08);
+  color: #914238;
+  font-size: 10px;
+}
+
+.training-task-title > b {
+  background: rgba(212, 122, 69, 0.1);
+  color: #a1572d;
+}
+
+.training-task-card.mastered .training-task-title > span {
+  background: rgba(71, 123, 98, 0.1);
+  color: #396b54;
+}
+
+.training-task-card .study-card-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.training-session-panel {
+  display: grid;
+  gap: 12px;
+  padding: 15px;
+  border: 1px solid var(--panel-border);
+  border-radius: 9px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.training-session-panel > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.training-session-panel h3 {
+  margin: 3px 0 0;
+  color: var(--accent);
+  font:
+    800 15px 'Noto Serif SC',
+    serif;
+}
+
+.training-session-panel header small,
+.training-session-panel header > span,
+.training-session-prompt p,
+.training-attempt-result span,
+.training-attempt-result small {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.training-session-prompt,
+.training-session-hint,
+.training-attempt-result {
+  padding: 11px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.training-session-prompt p,
+.training-attempt-result p {
+  margin: 5px 0 0;
+  line-height: 1.55;
+}
+
+.training-session-hint {
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.training-attempt-result {
+  display: grid;
+  gap: 5px;
+}
+
+.training-attempt-result.passed {
+  border-color: rgba(71, 123, 98, 0.34);
+  background: rgba(71, 123, 98, 0.08);
+}
+
+.training-attempt-result.failed {
+  border-color: rgba(212, 122, 69, 0.34);
+  background: rgba(212, 122, 69, 0.08);
+}
+
+.training-hint-action,
+.training-session-actions button {
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--btn-bg);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.training-hint-action {
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.training-hint-action:disabled,
+.training-session-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.training-session-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
 }
 
 .study-empty-state {
@@ -5690,6 +5857,9 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+.study-choice-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
 .rule-choice-grid button,
 .study-choice-grid button {
   min-height: 76px;
@@ -5761,6 +5931,15 @@ body {
   }
   .opponent-btn-group button {
     min-width: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .review-training-action,
+  .training-hint-action,
+  .training-session-actions button,
+  .training-library-card .study-card-actions button {
+    min-height: 44px;
   }
 }
 

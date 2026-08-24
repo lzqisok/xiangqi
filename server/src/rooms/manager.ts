@@ -9,6 +9,7 @@ import {
   rebuildRoomBoard,
 } from './core.js'
 import { executeGomokuMove, rebuildGomokuRoom, RebuiltGomokuRoom } from './gomokuCore.js'
+import { buildJieqiRoomProjection } from './jieqiRecord.js'
 import { RoomRepository } from './repository.js'
 import { RoomColor, RoomRole, RoomSnapshot, RoomSummary, StoredRoom } from './types.js'
 
@@ -978,6 +979,14 @@ export class RoomManager {
       [...runtime.sockets].some((socket) => this.connections.get(socket)?.role === color)
     const roleColor =
       connection.role === 'red' || connection.role === 'black' ? connection.role : null
+    let jieqiRecord: RoomSnapshot['jieqiRecord']
+    if (room.variant === 'jieqi' && room.phase === 'finished') {
+      try {
+        jieqiRecord = buildJieqiRoomProjection(room, roleColor || 'public')
+      } catch {
+        // A corrupted persisted referee state must not break the room or leak a fallback record.
+      }
+    }
     return {
       id: room.id,
       name: room.name,
@@ -1061,6 +1070,7 @@ export class RoomManager {
       disconnect: runtime.disconnect
         ? { color: runtime.disconnect.color, deadline: runtime.disconnect.deadline }
         : undefined,
+      jieqiRecord,
     }
   }
 

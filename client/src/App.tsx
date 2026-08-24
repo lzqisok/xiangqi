@@ -15,6 +15,8 @@ import AnnotationPanel from './components/AnnotationPanel'
 import StudyLibrary from './components/StudyLibrary'
 import TrainingLibrary from './components/TrainingLibrary'
 import TrainingSessionPanel from './components/TrainingSessionPanel'
+import JieqiRecordLibrary from './components/JieqiRecordLibrary'
+import JieqiRecordReplay from './components/JieqiRecordReplay'
 import ProductDialog, { ProductDialogRequest } from './components/ProductDialog'
 import MobileStageBar from './components/MobileStageBar'
 import ProductState from './components/ProductState'
@@ -70,6 +72,7 @@ import {
 } from './games/api'
 import { clearGameUrl, createInitialPersistedState, gameUrl } from './games/state'
 import { GameSaveStatus, useGamePersistence } from './games/useGamePersistence'
+import { exportIccsPgn, importIccsPgn } from './games/iccsPgn'
 import {
   deleteTrainingTasks,
   exportTrainingTasksJson,
@@ -84,6 +87,19 @@ import {
   trainingTaskDedupeKey,
   TrainingEvaluation,
 } from './training/tasks'
+import { buildJieqiRecord } from './jieqi-record/builder'
+import { projectJieqiRecord } from './jieqi-record/projection'
+import {
+  JIEQI_PUBLIC_RECORD_FILE_EXTENSION,
+  JIEQI_SEAT_BACKUP_FILE_EXTENSION,
+  deleteJieqiSeatRecords,
+  exportJieqiPublicRecordJson,
+  exportJieqiSeatBackupJson,
+  importJieqiSeatBackupJson,
+  loadJieqiSeatRecords,
+  upsertJieqiSeatRecord,
+} from './jieqi-record/storage'
+import type { JieqiSeatProjection } from './jieqi-record/types'
 import {
   BoardAnnotationColor,
   BoardAnnotationType,
@@ -148,10 +164,66 @@ export default function App() {
     )
   if (search.has('gomoku') || search.get('type') === 'gomoku')
     return <GameModeScreen game="gomoku" />
+  if (search.has('jieqi-records')) return <JieqiRecordApp />
   if (search.has('lan') || search.has('room')) return <LanApp />
   if (search.has('local') || search.has('game') || search.has('replay')) return <LocalApp />
   if (search.get('type') === 'xiangqi') return <GameModeScreen game="xiangqi" />
   return <HomeScreen />
+}
+
+function JieqiRecordApp() {
+  const [records, setRecords] = useState<JieqiSeatProjection[]>(() => loadJieqiSeatRecords())
+  const [selectedRecord, setSelectedRecord] = useState<JieqiSeatProjection | null>(null)
+  const [error, setError] = useState('')
+
+  if (selectedRecord) {
+    return <JieqiRecordReplay record={selectedRecord} onBack={() => setSelectedRecord(null)} />
+  }
+
+  return (
+    <>
+      <JieqiRecordLibrary
+        records={records}
+        onBack={() => window.location.assign('?local=1&intent=study')}
+        onOpen={setSelectedRecord}
+        onDelete={(recordId) => setRecords(deleteJieqiSeatRecords([recordId]))}
+        onExportPublic={(record) =>
+          downloadJson(
+            `${record.recordId}${JIEQI_PUBLIC_RECORD_FILE_EXTENSION}`,
+            exportJieqiPublicRecordJson(record),
+          )
+        }
+        onBackupPrivate={(record) =>
+          downloadJson(
+            `${record.recordId}${JIEQI_SEAT_BACKUP_FILE_EXTENSION}`,
+            exportJieqiSeatBackupJson([record]),
+            'application/vnd.xiangqi.jieqi-seat+json;charset=utf-8',
+          )
+        }
+        onImportPrivate={(file) => {
+          file
+            .text()
+            .then((text) => {
+              setRecords(importJieqiSeatBackupJson(text))
+              setError('')
+            })
+            .catch((cause) =>
+              setError(cause instanceof Error ? cause.message : '揭棋私有备份导入失败'),
+            )
+        }}
+      />
+      {error && (
+        <ProductDialog
+          title="无法导入揭棋私有备份"
+          description={error}
+          confirmLabel="知道了"
+          cancelLabel={null}
+          onCancel={() => setError('')}
+          onConfirm={() => setError('')}
+        />
+      )}
+    </>
+  )
 }
 
 function HomeScreen() {
@@ -318,6 +390,7 @@ function LocalApp() {
   const dialogResolveRef = useRef<((values: Record<string, string> | null) => void) | null>(null)
   const toastTimerRef = useRef<number | null>(null)
   const jieqiOnboardingShownRef = useRef(false)
+  const savedJieqiRecordRef = useRef<string | null>(null)
   const trainingEvaluationRequestedRef = useRef<string | null>(null)
   const [editorDraft, setEditorDraft] = useState<EndgameDraft>({
     id: null,
@@ -658,6 +731,42 @@ function LocalApp() {
     [currentTrainingSource, moveReviews, trainingTasks],
   )
   const gameFinished = game.gameStatus !== 'playing'
+  useEffect(() => {
+    if (
+      gameMode !== 'jieqi' ||
+      !activeGame ||
+      !gameFinished ||
+      gamePersistence.status !== 'saved' ||
+      !game.initialJieqiBoard ||
+      game.moveRecords.length === 0
+    ) {
+      return
+    }
+    const saveKey = `${activeGame.id}:${activeGame.config.playerSide}:${game.gameStatus}:${game.moveRecords.length}`
+    if (savedJieqiRecordRef.current === saveKey) return
+    try {
+      const record = buildJieqiRecord({
+        id: activeGame.id,
+        name: activeGame.name,
+        createdAt: activeGame.createdAt,
+        updatedAt: activeGame.updatedAt,
+        initialBoard: game.initialJieqiBoard,
+        records: game.moveRecords,
+      })
+      upsertJieqiSeatRecord(projectJieqiRecord(record, activeGame.config.playerSide))
+      savedJieqiRecordRef.current = saveKey
+    } catch (error) {
+      console.error('Failed to build safe Jieqi seat record:', error)
+    }
+  }, [
+    activeGame,
+    game.gameStatus,
+    game.initialJieqiBoard,
+    game.moveRecords,
+    gameFinished,
+    gameMode,
+    gamePersistence.status,
+  ])
   const showReviewTab =
     !selectedTrainingTask &&
     (gameFinished ||
@@ -1094,6 +1203,7 @@ function LocalApp() {
           starting={startingGame}
           onRetry={refreshSavedGames}
           onOpenTraining={() => setTrainingLibraryOpen(true)}
+          onOpenJieqiRecords={() => window.location.assign('?jieqi-records=1')}
           onOpen={async (id) => {
             try {
               openGame(await loadGame(id))
@@ -1126,6 +1236,38 @@ function LocalApp() {
               await refreshSavedGames()
             } catch (error) {
               setGameStoreError(error instanceof Error ? error.message : '导入失败')
+            }
+          }}
+          onImportPgn={async (file) => {
+            try {
+              const imported = importIccsPgn(await file.text())
+              await createGame({
+                name: imported.name,
+                mode: 'human-vs-human',
+                config: {
+                  difficulty: 'medium',
+                  playerSide: 'red',
+                  aiRedDifficulty: 'medium',
+                  aiBlackDifficulty: 'medium',
+                },
+                state: imported.state,
+              })
+              await refreshSavedGames()
+              showToast('ICCS PGN 已导入')
+            } catch (error) {
+              setGameStoreError(error instanceof Error ? error.message : 'PGN 导入失败')
+            }
+          }}
+          onExportPgn={async (summary) => {
+            try {
+              const game = await loadGame(summary.id)
+              downloadJson(
+                `${safeDownloadName(game.name)}.pgn`,
+                exportIccsPgn(game),
+                'application/x-chinese-chess-pgn;charset=utf-8',
+              )
+            } catch (error) {
+              setGameStoreError(error instanceof Error ? error.message : 'PGN 导出失败')
             }
           }}
           onStart={async (mode, diff, side, redDiff, blackDiff) => {
@@ -1645,6 +1787,7 @@ function LocalApp() {
                 onExportFen={() => setShowFenDialog('export')}
                 onImportFen={() => setShowFenDialog('import')}
                 onCopyMoveText={() => {
+                  if (gameMode === 'jieqi') return
                   void navigator.clipboard
                     .writeText(formatMoveRecords(game.moveRecords))
                     .then(() => showToast('棋谱已复制'))
@@ -2121,14 +2264,27 @@ function findNextMarkedIndex(records: MoveRecord[], currentIndex: number): numbe
   return null
 }
 
-function downloadJson(filename: string, content: string) {
-  const blob = new Blob([content], { type: 'application/json;charset=utf-8' })
+function downloadJson(
+  filename: string,
+  content: string,
+  mimeType = 'application/json;charset=utf-8',
+) {
+  const blob = new Blob([content], { type: mimeType })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
   link.download = filename
   link.click()
   URL.revokeObjectURL(url)
+}
+
+function safeDownloadName(value: string): string {
+  return (
+    value
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+      .trim()
+      .slice(0, 80) || 'xiangqi-game'
+  )
 }
 
 function downloadDataUrl(filename: string, dataUrl: string) {
@@ -2243,8 +2399,11 @@ function StartScreen({
   onRename,
   onDelete,
   onImport,
+  onImportPgn,
+  onExportPgn,
   onStart,
   onOpenTraining,
+  onOpenJieqiRecords,
 }: {
   games: GameSummary[]
   loading: boolean
@@ -2255,7 +2414,10 @@ function StartScreen({
   onRename: (game: GameSummary, name: string) => void
   onDelete: (game: GameSummary) => void
   onImport: (file: File) => void
+  onImportPgn: (file: File) => void
+  onExportPgn: (game: GameSummary) => void
   onOpenTraining: () => void
+  onOpenJieqiRecords: () => void
   onStart: (
     mode: GameMode,
     difficulty: Difficulty,
@@ -2269,7 +2431,9 @@ function StartScreen({
   )
   const [opponent, setOpponent] = useState<LocalOpponent>('human-vs-ai')
   const [rule, setRule] = useState<XiangqiRule>('xiangqi')
-  const [studyMode, setStudyMode] = useState<'endgame' | 'study' | 'training'>('endgame')
+  const [studyMode, setStudyMode] = useState<'endgame' | 'study' | 'training' | 'jieqi-records'>(
+    'endgame',
+  )
   const [diff, setDiff] = useState<Difficulty>('medium')
   const [side, setSide] = useState<PlayerSide>('red')
   const [redDiff, setRedDiff] = useState<Difficulty>('medium')
@@ -2280,7 +2444,9 @@ function StartScreen({
     section === 'study'
       ? studyMode === 'training'
         ? 'study'
-        : studyMode
+        : studyMode === 'jieqi-records'
+          ? 'study'
+          : studyMode
       : rule === 'jieqi'
         ? 'jieqi'
         : opponent
@@ -2406,6 +2572,13 @@ function StartScreen({
                 >
                   <strong>错着训练</strong>
                   <span>练习复盘加入的错着，跟踪未练、复习与掌握状态</span>
+                </button>
+                <button
+                  className={studyMode === 'jieqi-records' ? 'active' : ''}
+                  onClick={() => setStudyMode('jieqi-records')}
+                >
+                  <strong>揭棋记录</strong>
+                  <span>按本人红方或黑方视角，安全回放已完成的本机揭棋</span>
                 </button>
               </div>
             </div>
@@ -2536,7 +2709,9 @@ function StartScreen({
             onClick={() =>
               section === 'study' && studyMode === 'training'
                 ? onOpenTraining()
-                : onStart(mode, diff, side, redDiff, blackDiff)
+                : section === 'study' && studyMode === 'jieqi-records'
+                  ? onOpenJieqiRecords()
+                  : onStart(mode, diff, side, redDiff, blackDiff)
             }
           >
             {starting
@@ -2546,7 +2721,9 @@ function StartScreen({
                   ? '选择残局'
                   : studyMode === 'study'
                     ? '打开研究库'
-                    : '打开训练队列'
+                    : studyMode === 'training'
+                      ? '打开训练队列'
+                      : '打开揭棋记录'
                 : '开始游戏'}
           </button>
 
@@ -2555,16 +2732,28 @@ function StartScreen({
               <span>最近对局</span>
               <div>
                 <a href={gameExportUrl()} download="xiangqi-games.json">
-                  导出全部
+                  导出普通对局
                 </a>
                 <label className="saved-games-import">
-                  导入
+                  导入 JSON
                   <input
                     type="file"
                     accept="application/json,.json"
                     onChange={(event) => {
                       const file = event.target.files?.[0]
                       if (file) onImport(file)
+                      event.target.value = ''
+                    }}
+                  />
+                </label>
+                <label className="saved-games-import">
+                  导入 ICCS PGN
+                  <input
+                    type="file"
+                    accept=".pgn,text/plain,application/x-chinese-chess-pgn"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      if (file) onImportPgn(file)
                       event.target.value = ''
                     }}
                   />
@@ -2597,6 +2786,11 @@ function StartScreen({
                     <button title="重命名" onClick={() => setEditingGame(item)}>
                       改名
                     </button>
+                    {item.mode !== 'jieqi' && (
+                      <button title="导出 ICCS PGN" onClick={() => onExportPgn(item)}>
+                        PGN
+                      </button>
+                    )}
                     <button title="删除" onClick={() => setDeletingGame(item)}>
                       删除
                     </button>

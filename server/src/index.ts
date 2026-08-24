@@ -15,7 +15,7 @@ import { createRoomRouter } from './rooms/routes.js'
 import { StoredRoom, RoomColor } from './rooms/types.js'
 import { RapfiEngine } from './gomoku/rapfiEngine.js'
 import { registerRapfiWebSocketServer, type RapfiWebSocket } from './gomoku/websocket.js'
-import { listLanIPv4 } from './network.js'
+import { isLocalGameLibraryRequest, listLanIPv4 } from './network.js'
 
 const app = express()
 const server = createServer(app)
@@ -66,11 +66,17 @@ app.get('/api/network-info', (_req, res) => {
 app.use(
   '/api/games',
   (req, res, next) => {
-    if (!LAN_MODE) return next()
     const address = req.socket.remoteAddress || ''
-    if (address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1')
+    if (
+      isLocalGameLibraryRequest(
+        address,
+        req.get('host') || '',
+        req.get('x-xiangqi-proxy-client-address'),
+      )
+    ) {
       return next()
-    res.status(403).json({ error: '局域网访客不能访问本机对局库' })
+    }
+    res.status(403).json({ error: '本机对局库只允许从回环地址访问' })
   },
   createGameRouter(gameRepository, gameLeases),
 )

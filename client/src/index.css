@@ -28,6 +28,644 @@
   --panel-surface: rgba(91, 75, 55, 0.055);
 }
 
+/* Jieqi records: an isolated, seat-scoped replay surface. */
+.jieqi-record-library,
+.jieqi-record-replay {
+  min-height: 100vh;
+  padding: 30px;
+  background: radial-gradient(circle at 12% 0%, rgba(164, 67, 55, 0.1), transparent 34%), #ece6dc;
+  color: #342f29;
+}
+
+.jieqi-record-library-card {
+  width: min(100%, 1040px);
+  margin: 0 auto;
+  padding: 34px 38px 38px;
+  border: 1px solid rgba(74, 61, 45, 0.12);
+  border-radius: 18px;
+  background: rgba(251, 248, 241, 0.96);
+  box-shadow: 0 20px 55px rgba(72, 58, 41, 0.14);
+}
+
+.jieqi-record-library-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px 16px;
+}
+
+.jieqi-record-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: start;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid rgba(74, 61, 45, 0.14);
+  border-radius: 9px;
+  background: rgba(255, 250, 241, 0.78);
+  color: #62594f;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.jieqi-record-back:hover {
+  border-color: rgba(164, 67, 55, 0.28);
+  color: #9e3d32;
+}
+
+.jieqi-record-library-heading {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid rgba(74, 61, 45, 0.12);
+}
+
+.jieqi-record-library-heading small,
+.jieqi-record-replay-title small,
+.jieqi-record-current-move small {
+  color: #9a6a42;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 2.2px;
+}
+
+.jieqi-record-library-heading h1,
+.jieqi-record-replay-title h1 {
+  margin: 5px 0 7px;
+  color: #342b22;
+  font-family: 'Noto Serif SC', serif;
+}
+
+.jieqi-record-library-heading h1 {
+  font-size: 36px;
+  letter-spacing: 5px;
+}
+
+.jieqi-record-library-heading p {
+  max-width: 610px;
+  margin: 0;
+  color: #71665a;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.jieqi-record-library-count,
+.jieqi-record-view-badge {
+  flex: none;
+  padding: 6px 10px;
+  border: 1px solid rgba(164, 67, 55, 0.16);
+  border-radius: 999px;
+  background: rgba(164, 67, 55, 0.07);
+  color: #963d33;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.jieqi-record-view-badge.black {
+  border-color: rgba(61, 61, 57, 0.2);
+  background: rgba(61, 61, 57, 0.08);
+  color: #45423d;
+}
+
+.jieqi-record-library-actions {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.jieqi-record-private-import {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid rgba(132, 92, 44, 0.22);
+  border-radius: 9px;
+  background: #efe5d5;
+  color: #695039;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.jieqi-record-private-import input {
+  display: none;
+}
+
+.jieqi-record-privacy-note {
+  display: flex;
+  gap: 12px;
+  margin: 20px 0 16px;
+  padding: 13px 15px;
+  border: 1px solid rgba(154, 106, 66, 0.2);
+  border-radius: 11px;
+  background: #fff6e9;
+  color: #6f5b46;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.jieqi-record-privacy-note strong {
+  flex: none;
+  color: #9c4c3f;
+}
+
+.jieqi-record-hidden-warning {
+  margin: 0 0 14px;
+  color: #9c4c3f;
+  font-size: 12px;
+}
+
+.jieqi-record-list {
+  display: grid;
+  gap: 11px;
+}
+
+.jieqi-record-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 16px 18px;
+  border: 1px solid rgba(74, 61, 45, 0.12);
+  border-left: 4px solid #a44337;
+  border-radius: 12px;
+  background: #fffdf8;
+}
+
+.jieqi-record-item-main {
+  min-width: 0;
+}
+
+.jieqi-record-item-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.jieqi-record-item-title h2 {
+  margin: 0;
+  overflow: hidden;
+  color: #3d352d;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jieqi-record-item-main p,
+.jieqi-record-item-main small {
+  display: block;
+  margin: 7px 0 0;
+  color: #756a5e;
+  font-size: 12px;
+}
+
+.jieqi-record-item-main small {
+  color: #9a8e80;
+}
+
+.jieqi-record-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.jieqi-record-item-actions button,
+.jieqi-record-empty-state button,
+.jieqi-record-replay-controls button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid rgba(74, 61, 45, 0.14);
+  border-radius: 8px;
+  background: #f1eadf;
+  color: #51483f;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.jieqi-record-item-actions button:first-child {
+  border-color: #a44337;
+  background: #a44337;
+  color: #fffaf1;
+}
+
+.jieqi-record-item-actions .jieqi-record-private-action {
+  border-color: rgba(151, 104, 52, 0.26);
+  background: #fff2dd;
+  color: #795733;
+}
+
+.jieqi-record-item-actions .jieqi-record-delete-action {
+  color: #a44337;
+}
+
+.jieqi-record-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 330px;
+  padding: 40px 22px;
+  border: 1px dashed rgba(74, 61, 45, 0.18);
+  border-radius: 14px;
+  color: #756a5e;
+  text-align: center;
+}
+
+.jieqi-record-empty-state > span {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid rgba(164, 67, 55, 0.2);
+  border-radius: 50%;
+  background: rgba(164, 67, 55, 0.06);
+  color: #a44337;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 29px;
+  font-weight: 900;
+}
+
+.jieqi-record-empty-state h2 {
+  margin: 16px 0 7px;
+  color: #443b32;
+}
+
+.jieqi-record-empty-state p {
+  margin: 0 0 18px;
+}
+
+.jieqi-record-replay-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: center;
+  width: min(100%, 1240px);
+  margin: 0 auto 20px;
+}
+
+.jieqi-record-replay-title {
+  min-width: 0;
+}
+
+.jieqi-record-replay-title h1 {
+  overflow: hidden;
+  font-size: 25px;
+  letter-spacing: 2px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jieqi-record-view-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 13px;
+  border: 1px solid rgba(164, 67, 55, 0.2);
+  border-radius: 10px;
+  background: #fff4e9;
+  color: #934438;
+}
+
+.jieqi-record-view-banner.black {
+  border-color: rgba(61, 61, 57, 0.2);
+  background: #e7e3dc;
+  color: #3e3b36;
+}
+
+.jieqi-record-view-banner.public {
+  border-color: rgba(52, 95, 119, 0.2);
+  background: #eaf3f6;
+  color: #315d72;
+}
+
+.jieqi-record-view-banner strong {
+  font-size: 13px;
+}
+
+.jieqi-record-view-banner span {
+  color: inherit;
+  font-size: 10px;
+  opacity: 0.78;
+}
+
+.jieqi-record-replay-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 592px) minmax(300px, 390px);
+  gap: 20px;
+  justify-content: center;
+  align-items: start;
+  width: min(100%, 1240px);
+  margin: 0 auto;
+}
+
+.jieqi-record-board-stage,
+.jieqi-record-replay-panel {
+  min-width: 0;
+  border: 1px solid rgba(74, 61, 45, 0.13);
+  border-radius: 15px;
+  background: rgba(251, 248, 241, 0.96);
+  box-shadow: 0 14px 40px rgba(72, 58, 41, 0.13);
+}
+
+.jieqi-record-board-stage {
+  padding: 10px;
+}
+
+.jieqi-record-board-stage .board-wrapper,
+.jieqi-record-board-stage .board-canvas {
+  width: 100%;
+}
+
+.jieqi-record-frame-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 4px 11px;
+  color: #70665c;
+  font-size: 12px;
+}
+
+.jieqi-record-frame-status strong {
+  color: #a44337;
+}
+
+.jieqi-record-replay-controls {
+  display: grid;
+  grid-template-columns: auto auto minmax(100px, 1fr) auto auto;
+  gap: 7px;
+  align-items: center;
+  padding-top: 10px;
+}
+
+.jieqi-record-replay-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.jieqi-record-replay-controls input {
+  width: 100%;
+  accent-color: #a44337;
+}
+
+.jieqi-record-replay-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.jieqi-record-current-move,
+.jieqi-record-captures,
+.jieqi-record-move-list {
+  padding: 14px;
+  border: 1px solid rgba(74, 61, 45, 0.11);
+  border-radius: 11px;
+  background: #fffdf8;
+}
+
+.jieqi-record-current-move strong,
+.jieqi-record-current-move span {
+  display: block;
+}
+
+.jieqi-record-current-move strong {
+  margin: 7px 0;
+  color: #41372e;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 15px;
+}
+
+.jieqi-record-current-move span,
+.jieqi-record-captures header small {
+  color: #8a7f73;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.jieqi-record-captures header,
+.jieqi-record-move-list header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.jieqi-record-captures h2,
+.jieqi-record-move-list h2 {
+  margin: 0;
+  color: #493f36;
+  font-size: 14px;
+}
+
+.jieqi-record-capture-side {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 38px;
+  padding: 6px 0;
+  color: #73685d;
+  font-size: 11px;
+}
+
+.jieqi-record-capture-side.red > strong {
+  color: #a44337;
+}
+
+.jieqi-record-capture-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.jieqi-record-capture-piece {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  border: 1px solid rgba(93, 69, 39, 0.3);
+  border-radius: 50%;
+  background: #ead39d;
+  color: #2f2b26;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.jieqi-record-capture-piece.red {
+  color: #ad4237;
+}
+
+.jieqi-record-capture-piece.identity-hidden {
+  border-color: rgba(74, 61, 45, 0.2);
+  background: #484139;
+  color: #eee2d0;
+  font-size: 12px;
+}
+
+.jieqi-record-move-list ol {
+  max-height: 310px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.jieqi-record-move-list li button {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 7px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #6e645a;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.jieqi-record-move-list li button:hover,
+.jieqi-record-move-list li.active button {
+  background: rgba(164, 67, 55, 0.08);
+  color: #923c32;
+}
+
+.jieqi-record-move-list li button span {
+  color: #a19384;
+  font-size: 11px;
+}
+
+.jieqi-record-move-list li button strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.jieqi-record-replay-invalid {
+  display: grid;
+  place-items: center;
+}
+
+.jieqi-record-replay-invalid > .jieqi-record-back {
+  position: fixed;
+  top: 24px;
+  left: 24px;
+}
+
+.jieqi-record-replay-invalid section {
+  max-width: 520px;
+  padding: 34px;
+  border: 1px solid rgba(164, 67, 55, 0.2);
+  border-radius: 16px;
+  background: #fffaf1;
+  color: #6f554d;
+  text-align: center;
+}
+
+@media (max-width: 1000px) {
+  .jieqi-record-replay-layout {
+    grid-template-columns: minmax(0, 592px);
+  }
+  .jieqi-record-replay-panel {
+    grid-template-columns: 1fr 1fr;
+  }
+  .jieqi-record-move-list {
+    grid-column: 1 / -1;
+  }
+  .jieqi-record-move-list ol {
+    max-height: 260px;
+  }
+}
+
+@media (max-width: 720px) {
+  .jieqi-record-library,
+  .jieqi-record-replay {
+    padding: 18px 12px 26px;
+  }
+  .jieqi-record-library-card {
+    padding: 24px 18px 26px;
+  }
+  .jieqi-record-library-heading {
+    align-items: flex-start;
+  }
+  .jieqi-record-item {
+    grid-template-columns: 1fr;
+  }
+  .jieqi-record-item-actions {
+    justify-content: flex-start;
+  }
+  .jieqi-record-replay-header {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .jieqi-record-view-banner {
+    justify-self: stretch;
+  }
+  .jieqi-record-replay-panel {
+    grid-template-columns: 1fr;
+  }
+  .jieqi-record-move-list {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .jieqi-record-library-header {
+    grid-template-columns: 1fr;
+    gap: 13px;
+  }
+  .jieqi-record-library-heading,
+  .jieqi-record-library-actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .jieqi-record-library-heading {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .jieqi-record-library-heading h1 {
+    font-size: 30px;
+    letter-spacing: 4px;
+  }
+  .jieqi-record-privacy-note {
+    flex-direction: column;
+    gap: 4px;
+  }
+  .jieqi-record-item-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .jieqi-record-item-actions button,
+  .jieqi-record-private-import,
+  .jieqi-record-empty-state button,
+  .jieqi-record-replay-controls button {
+    min-height: 44px;
+  }
+  .jieqi-record-replay-controls {
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+  }
+  .jieqi-record-replay-controls input {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+  .jieqi-record-capture-side {
+    grid-template-columns: 62px minmax(0, 1fr);
+  }
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -4606,6 +5244,13 @@ body {
   opacity: 0.5;
   cursor: not-allowed;
 }
+.lan-room-playing > button {
+  min-height: 44px;
+}
+.lan-jieqi-record-saved {
+  color: #3f6b58;
+  text-align: center;
+}
 .lan-panel .lan-danger-button {
   border-color: #a44a42;
   color: #8b241c;
@@ -5858,7 +6503,7 @@ body {
   gap: 8px;
 }
 .study-choice-grid {
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
 }
 .rule-choice-grid button,
 .study-choice-grid button {

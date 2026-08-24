@@ -389,7 +389,7 @@ export default function GamePanel({
           {!isJieqi && <button onClick={onSaveRecentFen}>保存局面</button>}
           {!isJieqi && <button onClick={onSaveStudy}>保存研究</button>}
           <button onClick={onExportImage}>导出图片</button>
-          <button onClick={onCopyMoveText}>复制棋谱</button>
+          {!isJieqi && <button onClick={onCopyMoveText}>复制棋谱</button>}
           {!isJieqi && <button onClick={onCopyReplayLink}>复制回放链接</button>}
           {!isJieqi && <button onClick={onSaveAsEndgame}>另存残局</button>}
         </div>

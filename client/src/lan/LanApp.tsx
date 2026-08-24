@@ -1,5 +1,6 @@
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react'
 import Board from '../components/Board'
+import JieqiRecordReplay from '../components/JieqiRecordReplay'
 import ProductDialog from '../components/ProductDialog'
 import MobileChatDock from '../components/MobileChatDock'
 import ProductState from '../components/ProductState'
@@ -7,6 +8,7 @@ import { LanQuickMatch, LanReadySeat, LanRoomCard } from './LanProduct'
 import { getLegalMoves, isInCheck } from '../engine/rules'
 import { uciToMove } from '../engine/notation'
 import { Move, PieceColor, Position } from '../types'
+import { upsertJieqiSeatRecord } from '../jieqi-record/storage'
 import { createLanRoom, listLanRoomHistory, listLanRooms, quickMatchLanRoom } from './api'
 import { copyLanText } from './browser'
 import { resolveLanShareUrl } from './network'
@@ -19,6 +21,7 @@ import {
 import { LanChatMessage, LanRoomSummary } from './types'
 import { getLanRecentRooms, getLanToken, saveLanToken, useLanRoom } from './useLanRoom'
 import { quickMatchKey, quickMatchRoomUrl } from './quickMatch'
+import { authorizeLanJieqiRecord } from './jieqiRecord'
 
 const NICKNAME_KEY = 'xiangqi-lan-nickname'
 function storageGet(key: string) {
@@ -377,6 +380,8 @@ function LanRoom({
   const [dangerAction, setDangerAction] = useState<'dissolve' | 'resign' | null>(null)
   const [returnAction, setReturnAction] = useState<'leave-seat' | 'disconnect' | null>(null)
   const [returnAfterLeaving, setReturnAfterLeaving] = useState(false)
+  const [jieqiReplayOpen, setJieqiReplayOpen] = useState(false)
+  const savedJieqiRecordRef = useRef('')
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 250)
@@ -396,6 +401,26 @@ function LanRoom({
     () => (selected && room ? getLegalMoves(room.board, selected, room.variant) : []),
     [room, selected],
   )
+  const authorizedJieqiRecord = useMemo(() => {
+    if (!room || room.variant !== 'jieqi' || room.phase !== 'finished') return null
+    return authorizeLanJieqiRecord(room.jieqiRecord, room.role)
+  }, [room])
+  useEffect(() => {
+    if (
+      !authorizedJieqiRecord ||
+      (authorizedJieqiRecord.audience !== 'red' && authorizedJieqiRecord.audience !== 'black')
+    ) {
+      return
+    }
+    const key = `${authorizedJieqiRecord.recordId}:${authorizedJieqiRecord.updatedAt}`
+    if (savedJieqiRecordRef.current === key) return
+    try {
+      upsertJieqiSeatRecord(authorizedJieqiRecord)
+      savedJieqiRecordRef.current = key
+    } catch {
+      // Keep the result page available if local private storage rejects the projection.
+    }
+  }, [authorizedJieqiRecord])
   if (!room)
     return (
       <div className="lan-shell lan-room-shell">
@@ -406,6 +431,16 @@ function LanRoom({
         />
       </div>
     )
+  if (jieqiReplayOpen && authorizedJieqiRecord) {
+    return (
+      <JieqiRecordReplay
+        record={authorizedJieqiRecord}
+        initialPly={authorizedJieqiRecord.events.length}
+        backLabel="返回对局结果"
+        onBack={() => setJieqiReplayOpen(false)}
+      />
+    )
+  }
   const color = room.role === 'red' || room.role === 'black' ? room.role : null
   const requestReturn = (event: MouseEvent<HTMLAnchorElement>) => {
     if (room.phase === 'waiting' && room.isOwner) {
@@ -993,6 +1028,22 @@ function LanRoom({
                 {creatingRematch ? '正在创建…' : '创建再来一局'}
               </button>
             )}
+            {room.phase === 'finished' &&
+              room.variant === 'jieqi' &&
+              (authorizedJieqiRecord ? (
+                <>
+                  <button onClick={() => setJieqiReplayOpen(true)}>
+                    {authorizedJieqiRecord.audience === 'public'
+                      ? '打开公开回放'
+                      : '打开本人视角回放'}
+                  </button>
+                  {authorizedJieqiRecord.audience !== 'public' && (
+                    <small className="lan-jieqi-record-saved">已保存到揭棋记录</small>
+                  )}
+                </>
+              ) : (
+                <p className="lan-warning">安全回放不可用，未读取普通棋谱作为替代。</p>
+              ))}
             <h3>走棋记录</h3>
             <div className="lan-moves">
               {room.moves.map((move, index) => (

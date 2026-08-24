@@ -632,6 +632,8 @@ test('room manager authorizes two seats and redacts hidden captures per recipien
     expectedRevision: snapshot(blackMessages).revision,
     commandId: 'seat-black',
   })
+  const blackSeatToken = String(message(blackMessages, 'room-seat-token')?.token)
+  assert.ok(blackSeatToken)
   await manager.handle(red, {
     type: 'room-ready',
     roomId: created.room.id,
@@ -680,6 +682,7 @@ test('room manager authorizes two seats and redacts hidden captures per recipien
   await play(red, redMessages, 'a4a5', 'm3')
   await play(black, blackMessages, 'c5c4', 'm4')
   await play(red, redMessages, 'a5a6', 'm5')
+  await play(black, blackMessages, 'c4c3', 'm6')
   await manager.handle(spectator, {
     type: 'room-subscribe',
     roomId: created.room.id,
@@ -698,9 +701,63 @@ test('room manager authorizes two seats and redacts hidden captures per recipien
     false,
   )
 
-  manager.disconnect(red)
-  manager.disconnect(black)
-  manager.disconnect(spectator)
+  await manager.handle(red, {
+    type: 'room-draw-offer',
+    roomId: created.room.id,
+    expectedRevision: snapshot(redMessages).revision,
+    commandId: 'finish-draw-offer',
+  })
+  await manager.handle(black, {
+    type: 'room-draw-response',
+    roomId: created.room.id,
+    accept: true,
+    expectedRevision: snapshot(blackMessages).revision,
+    commandId: 'finish-draw-accept',
+  })
+
+  const redRecord = snapshot(redMessages).jieqiRecord
+  const blackRecord = snapshot(blackMessages).jieqiRecord
+  const publicRecord = snapshot(spectatorMessages).jieqiRecord
+  assert.equal(redRecord?.audience, 'red')
+  assert.equal(blackRecord?.audience, 'black')
+  assert.equal(publicRecord?.audience, 'public')
+  assert.equal(redRecord?.audience === 'red' ? redRecord.privateEvents[0]?.ply : null, 5)
+  assert.equal(blackRecord?.audience === 'black' ? blackRecord.privateEvents[0]?.ply : null, 6)
+  assert.equal(JSON.stringify(publicRecord).includes('privateEvents'), false)
+  assert.equal(JSON.stringify(publicRecord).includes(stored.initialLayout!), false)
+
+  await manager.flush()
+  manager.dispose()
+
+  const restoredRepository = new RoomRepository(directory)
+  await restoredRepository.init()
+  const restoredManager = new RoomManager(restoredRepository, async () => null)
+  const restoredRedMessages: unknown[] = [],
+    restoredBlackMessages: unknown[] = [],
+    restoredSpectatorMessages: unknown[] = []
+  const restoredRed = socket(restoredRedMessages),
+    restoredBlack = socket(restoredBlackMessages),
+    restoredSpectator = socket(restoredSpectatorMessages)
+  await restoredManager.handle(restoredRed, {
+    type: 'room-subscribe',
+    roomId: created.room.id,
+    token: created.ownerToken,
+  })
+  await restoredManager.handle(restoredBlack, {
+    type: 'room-subscribe',
+    roomId: created.room.id,
+    token: blackSeatToken,
+  })
+  await restoredManager.handle(restoredSpectator, {
+    type: 'room-subscribe',
+    roomId: created.room.id,
+    token: 'invalid-token',
+  })
+  assert.deepEqual(snapshot(restoredRedMessages).jieqiRecord, redRecord)
+  assert.deepEqual(snapshot(restoredBlackMessages).jieqiRecord, blackRecord)
+  assert.deepEqual(snapshot(restoredSpectatorMessages).jieqiRecord, publicRecord)
+  assert.equal(snapshot(restoredSpectatorMessages).role, 'spectator')
+  restoredManager.dispose()
 })
 
 test('room actions enforce hint quota, negotiated undo, draw, and disconnect loss', async (t) => {

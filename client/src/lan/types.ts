@@ -1,4 +1,5 @@
 import { Board, GameStatus, PieceColor, PieceType } from '../types'
+import type { JieqiPublicProjection, JieqiSeatProjection } from '../jieqi-record/types'
 
 export type LanRole = 'owner' | PieceColor | 'spectator'
 export type LanPhase = 'waiting' | 'playing' | 'finished'
@@ -84,6 +85,7 @@ export type LanRoomSnapshot = {
   ownerDisconnectDeadline?: number
   seatDisconnectDeadlines?: Partial<Record<PieceColor, number>>
   disconnect?: { color: PieceColor | 'both'; deadline: number }
+  jieqiRecord?: JieqiPublicProjection | JieqiSeatProjection
 }
 export type GomokuLanRoomSnapshot = Omit<
   LanRoomSnapshot,

@@ -120,6 +120,44 @@ export type PublicCapturedPiece = {
   capturedBy: RoomColor
 }
 
+export type JieqiRecordPublicPiece =
+  | { state: 'covered'; color: RoomColor; movementType: RoomPiece['type'] }
+  | { state: 'revealed'; color: RoomColor; type: RoomPiece['type'] }
+export type JieqiRecordPublicEvent = {
+  kind: 'move'
+  ply: number
+  color: RoomColor
+  from: { row: number; col: number }
+  to: { row: number; col: number }
+  revealed?: RoomPiece['type']
+  capture?:
+    | { state: 'covered'; color: RoomColor }
+    | { state: 'revealed'; color: RoomColor; type: RoomPiece['type'] }
+}
+export type JieqiRecordPrivateEvent = {
+  kind: 'hidden-capture'
+  ply: number
+  capturedBy: RoomColor
+  capturedColor: RoomColor
+  capturedType: RoomPiece['type']
+}
+type JieqiRoomProjectionBase = {
+  kind: 'jieqi-record-projection'
+  schemaVersion: 1
+  recordId: string
+  name: string
+  createdAt: number
+  updatedAt: number
+  startingTurn: 'red'
+  initialBoard: (JieqiRecordPublicPiece | null)[][]
+  events: JieqiRecordPublicEvent[]
+}
+export type JieqiRoomPublicProjection = JieqiRoomProjectionBase & { audience: 'public' }
+export type JieqiRoomSeatProjection = JieqiRoomProjectionBase & {
+  audience: RoomColor
+  privateEvents: JieqiRecordPrivateEvent[]
+}
+
 export type RoomSnapshot = {
   id: string
   name: string
@@ -160,4 +198,6 @@ export type RoomSnapshot = {
   ownerDisconnectDeadline?: number
   seatDisconnectDeadlines?: Partial<Record<RoomColor, number>>
   disconnect?: { color: RoomColor | 'both'; deadline: number }
+  /** Finished Jieqi only; selected independently for this socket's authenticated role. */
+  jieqiRecord?: JieqiRoomPublicProjection | JieqiRoomSeatProjection
 }

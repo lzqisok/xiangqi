@@ -183,7 +183,16 @@ export class JsonGameRepository {
     const selected = ids
       ? ids.map((id) => this.get(id))
       : [...this.games.values()].map((game) => structuredClone(game))
-    return { exportVersion: 2, exportedAt: Date.now(), games: selected }
+    if (ids && selected.some((game) => game.mode === 'jieqi')) {
+      throw new InvalidGameDataError('普通对局导出不支持揭棋裁判数据')
+    }
+    // 揭棋服务端存档包含完整的初始暗子身份，只能留在裁判态存储中。
+    // 普通棋谱导出不得复用这份数据；揭棋回放使用独立的席位/公开投影格式。
+    return {
+      exportVersion: 2,
+      exportedAt: Date.now(),
+      games: selected.filter((game) => game.mode !== 'jieqi'),
+    }
   }
 
   async import(
@@ -200,6 +209,9 @@ export class JsonGameRepository {
         !raw.games.every(isGameDocument)
       ) {
         throw new InvalidGameDataError('Invalid game export')
+      }
+      if ((raw.games as GameDocument[]).some((game) => game.mode === 'jieqi')) {
+        throw new InvalidGameDataError('普通对局导入不支持揭棋裁判数据')
       }
       if (this.games.size + raw.games.length > MAX_STORED_GAMES)
         throw new InvalidGameDataError('Game store limit exceeded')

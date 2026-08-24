@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { NetworkInterfaceInfo } from 'node:os'
-import { listLanIPv4 } from './network.js'
+import {
+  isLocalGameLibraryRequest,
+  isLoopbackAddress,
+  isLoopbackHost,
+  listLanIPv4,
+} from './network.js'
 
 function address(
   value: string,
@@ -34,4 +39,23 @@ test('listLanIPv4 removes duplicate addresses', () => {
   assert.deepEqual(listLanIPv4({ en0: [address('192.168.1.8')], en1: [address('192.168.1.8')] }), [
     '192.168.1.8',
   ])
+})
+
+test('local game library checks both socket address and original host', () => {
+  assert.equal(isLoopbackAddress('127.0.0.1'), true)
+  assert.equal(isLoopbackAddress('::ffff:127.0.0.1'), true)
+  assert.equal(isLoopbackAddress('::1'), true)
+  assert.equal(isLoopbackAddress('192.168.1.8'), false)
+  assert.equal(isLoopbackHost('localhost:5173'), true)
+  assert.equal(isLoopbackHost('127.0.0.2:3001'), true)
+  assert.equal(isLoopbackHost('[::1]:3001'), true)
+  assert.equal(isLoopbackHost('192.168.1.8:5173'), false)
+  assert.equal(isLoopbackHost('[::1].example.com'), false)
+  assert.equal(isLoopbackHost('localhost.example.com:5173'), false)
+
+  assert.equal(isLocalGameLibraryRequest('127.0.0.1', 'localhost:5173'), true)
+  assert.equal(isLocalGameLibraryRequest('127.0.0.1', 'localhost:5173', '127.0.0.1'), true)
+  assert.equal(isLocalGameLibraryRequest('127.0.0.1', 'localhost:5173', '192.168.1.8'), false)
+  assert.equal(isLocalGameLibraryRequest('127.0.0.1', '192.168.1.8:5173'), false)
+  assert.equal(isLocalGameLibraryRequest('192.168.1.8', 'localhost:3001'), false)
 })

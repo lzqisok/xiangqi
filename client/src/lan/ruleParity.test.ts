@@ -3,7 +3,14 @@ import test from 'node:test'
 import { Board, PieceType } from '../types'
 import { INITIAL_FEN, parseFen } from '../engine/board'
 import { getLegalMoves } from '../engine/rules'
-import { legalRoomMoves, parseRoomFen, roomUci } from '../../../server/src/rooms/core'
+import { analyzeRepetitionCase } from '../engine/repetitionAdjudication'
+import { buildMoveRecordsFromUci } from '../share/replayLink'
+import {
+  adjudicateRoomRepetition,
+  legalRoomMoves,
+  parseRoomFen,
+  roomUci,
+} from '../../../server/src/rooms/core'
 
 const LAYOUT = 'rraabbnnccppppprraabbnnccppppp'
 
@@ -72,4 +79,38 @@ test('local and authoritative room rules expose the same covered Jieqi moves', (
     }),
   )
   assert.deepEqual(clientMoves(clientJieqiBoard(), 'jieqi'), serverMoves(covered, 'jieqi'))
+})
+
+test('local and authoritative room repetition classifiers agree on fixed CXA corpora', () => {
+  const corpora = [
+    {
+      fen: '4k4/4R4/9/9/9/9/9/9/9/3K5 b - - 0 1',
+      moves: ['e9f9', 'e8f8', 'f9e9', 'f8e8', 'e9f9', 'e8f8', 'f9e9', 'f8e8'],
+    },
+    {
+      fen: '5k3/9/9/9/1r7/9/9/9/9/R2K5 w - - 0 1',
+      moves: ['a0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0'],
+    },
+    {
+      fen: '4k4/4r4/3P5/9/3C5/9/9/9/9/3K5 w - - 0 1',
+      moves: ['d5e5', 'e8d8', 'e5d5', 'd8e8', 'd5e5', 'e8d8', 'e5d5', 'd8e8'],
+    },
+  ]
+
+  for (const corpus of corpora) {
+    const records = buildMoveRecordsFromUci(corpus.fen, corpus.moves)
+    const local = analyzeRepetitionCase(corpus.fen, records)
+    const room = adjudicateRoomRepetition(
+      corpus.fen,
+      corpus.moves.map((uci, index) => ({
+        uci,
+        color: records[index].move.piece.color,
+      })),
+    )
+    assert.equal(local.kind, 'adjudicated')
+    if (local.kind !== 'adjudicated') continue
+    assert.equal(room?.status, local.outcome)
+    assert.equal(room?.liableSide, local.liableSide)
+    assert.equal(room?.violation, local.violation)
+  }
 })

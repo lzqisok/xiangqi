@@ -56,6 +56,7 @@ import {
   TrainingHintHistoryEntry,
 } from './training/hints'
 import { createReplayUrl, parseReplayStudyFromSearch } from './share/replayLink'
+import { identifyOpening } from './openings/catalog'
 import { buildCandidatePreview, getCandidatePreviewFrame } from './analysis/candidatePreview'
 import { buildMoveReviews } from './analysis/moveReview'
 import { moveToUci } from './engine/notation'
@@ -683,6 +684,10 @@ function LocalApp() {
   const naturalLimitReminder = gameMode === 'jieqi' ? '' : getNaturalLimitReminder(game.moveRecords)
   const repetitionReminder =
     gameMode === 'jieqi' ? '' : getRepetitionReminder(game.initialFen, game.moveRecords)
+  const openingMatch = useMemo(
+    () => (gameMode === 'jieqi' ? null : identifyOpening(game.initialFen, game.historyRecords)),
+    [game.historyRecords, game.initialFen, gameMode],
+  )
   const candidateAutoPositionKey = game.moveRecords[game.currentMoveIndex]?.fen || game.initialFen
   const candidatePreviewFrame = useMemo(
     () =>
@@ -1752,6 +1757,7 @@ function LocalApp() {
                       ? (selectedStudy?.name ?? null)
                       : null
                 }
+                openingName={openingMatch?.name || null}
                 studySaveStatus={gameMode === 'study' ? studySaveStatus : null}
                 trainingFeedback={trainingFeedback}
                 trainingHint={trainingHint}
@@ -1801,24 +1807,40 @@ function LocalApp() {
                     )
                 }}
                 onCopyReplayLink={() => {
-                  void navigator.clipboard
-                    .writeText(
-                      createReplayUrl(
-                        window.location.href,
-                        game.initialFen,
-                        game.historyRecords,
-                        game.currentMoveIndex,
-                      ),
+                  try {
+                    const replayUrl = createReplayUrl(
+                      window.location.href,
+                      game.initialFen,
+                      game.historyRecords,
+                      game.currentMoveIndex,
+                      {
+                        variationTree: game.variationTree,
+                        name:
+                          selectedStudy?.name ||
+                          openingMatch?.name ||
+                          scenarioNameFromState(gameMode, selectedEndgame),
+                        description: selectedStudy?.description,
+                      },
                     )
-                    .then(() => showToast('回放链接已复制'))
-                    .catch(() =>
-                      requestProductDialog({
-                        title: '复制失败',
-                        description: '浏览器没有授予剪贴板权限，请稍后重试。',
-                        confirmLabel: '知道了',
-                        cancelLabel: null,
-                      }),
-                    )
+                    void navigator.clipboard
+                      .writeText(replayUrl)
+                      .then(() => showToast('完整变招回放链接已复制'))
+                      .catch(() =>
+                        requestProductDialog({
+                          title: '复制失败',
+                          description: '浏览器没有授予剪贴板权限，请稍后重试。',
+                          confirmLabel: '知道了',
+                          cancelLabel: null,
+                        }),
+                      )
+                  } catch (error) {
+                    void requestProductDialog({
+                      title: '无法生成回放链接',
+                      description: error instanceof Error ? error.message : '回放内容无法编码。',
+                      confirmLabel: '知道了',
+                      cancelLabel: null,
+                    })
+                  }
                 }}
                 onSaveRecentFen={() => {
                   setRecentFenPositions(saveRecentFenPosition(game.getCurrentFen(), '手动保存'))
@@ -1844,6 +1866,7 @@ function LocalApp() {
                 onSaveStudy={async () => {
                   const defaultName =
                     selectedStudy?.name ||
+                    openingMatch?.name ||
                     scenarioNameFromState(gameMode, selectedEndgame).replace('-副本', '') ||
                     '研究局面'
                   const values = await requestProductDialog({

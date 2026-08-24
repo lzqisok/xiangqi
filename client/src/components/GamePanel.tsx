@@ -21,6 +21,7 @@ interface Props {
   flipped: boolean
   showAnalysis: boolean
   scenarioName: string | null
+  openingName: string | null
   studySaveStatus: 'saved' | 'unsaved' | 'shared' | null
   trainingFeedback: string
   trainingHint: string
@@ -144,6 +145,7 @@ export default function GamePanel({
   gameStatusReason,
   showAnalysis,
   scenarioName,
+  openingName,
   studySaveStatus,
   trainingFeedback,
   trainingHint,
@@ -245,6 +247,7 @@ export default function GamePanel({
             红: {formatPlayerConfig(redPlayerConfig)} / 黑: {formatPlayerConfig(blackPlayerConfig)}
           </span>
         )}
+        {openingName && <span className="info-chip">开局 · {openingName}</span>}
       </div>
       {scenarioName && (
         <div className="scenario-name">
@@ -387,10 +390,12 @@ export default function GamePanel({
           {!isJieqi && <button onClick={onExportFen}>导出 FEN</button>}
           {!isJieqi && <button onClick={onImportFen}>导入 FEN</button>}
           {!isJieqi && <button onClick={onSaveRecentFen}>保存局面</button>}
-          {!isJieqi && <button onClick={onSaveStudy}>保存研究</button>}
+          {!isJieqi && (
+            <button onClick={onSaveStudy}>{openingName ? '保存开局研究' : '保存研究'}</button>
+          )}
           <button onClick={onExportImage}>导出图片</button>
           {!isJieqi && <button onClick={onCopyMoveText}>复制棋谱</button>}
-          {!isJieqi && <button onClick={onCopyReplayLink}>复制回放链接</button>}
+          {!isJieqi && <button onClick={onCopyReplayLink}>复制完整回放</button>}
           {!isJieqi && <button onClick={onSaveAsEndgame}>另存残局</button>}
         </div>
       </details>

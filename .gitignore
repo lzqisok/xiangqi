@@ -13,6 +13,7 @@ engine/model*.bin
 engine/mix*.bin.lz4
 .DS_Store
 .cursor/
+.workbuddy/
 client/dist/
 server/dist/
 *.tsbuildinfo

@@ -25,7 +25,7 @@ import { parseFen, boardToFen, applyMove, INITIAL_FEN, findKing } from '../engin
 import { getLegalMoves, isInCheck, getGameStatusDetail } from '../engine/rules'
 import { moveToNotation, moveToUci, uciToMove } from '../engine/notation'
 import { validateFenPosition } from '../engine/validation'
-import { getAutomaticDrawReason } from '../engine/drawRules'
+import { getAutomaticGameStatus } from '../engine/drawRules'
 import {
   JIEQI_INITIAL_FEN,
   applyJieqiMove,
@@ -198,8 +198,7 @@ function getResolvedGameStatus(
   const appliesAutomaticDraw =
     gameMode === 'human-vs-ai' || gameMode === 'human-vs-human' || gameMode === 'ai-vs-ai'
   if (!appliesAutomaticDraw || variant === 'jieqi') return terminal
-  const reason = getAutomaticDrawReason(initialFen, records)
-  return reason ? { status: 'draw' as const, reason } : terminal
+  return getAutomaticGameStatus(initialFen, records) || terminal
 }
 
 export function useGame({

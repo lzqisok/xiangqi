@@ -378,7 +378,18 @@ function repetitionOccurrences(moves: RoomMove[], target: string) {
 
 type RoomRepetitionViolation = 'perpetual-check' | 'perpetual-chase' | 'check-and-chase'
 type RoomRepetitionMoveKind = 'check' | 'chase' | 'idle'
+type RoomRepetitionChaseMode = 'single' | 'joint'
 type RoomPieceIds = (string | null)[][]
+type RoomChaseEvidence = {
+  attackers: Set<string>
+  jointAttackers: Set<string>
+  mode: RoomRepetitionChaseMode
+  targetType: RoomPiece['type']
+}
+type ClassifiedRoomMove = {
+  kind: RoomRepetitionMoveKind
+  targets: Map<string, RoomChaseEvidence>
+}
 
 export interface RoomRepetitionResult {
   status: RoomStatus
@@ -391,6 +402,8 @@ export interface RoomRepetitionResult {
       moveKinds: RoomRepetitionMoveKind[]
       violation?: RoomRepetitionViolation
       chasedPieceIds: string[]
+      chasedPieceTypes: RoomPiece['type'][]
+      chaseMode?: RoomRepetitionChaseMode
     }
   >
   cycleStartPly: number
@@ -431,78 +444,206 @@ function applyRoomMoveToIds(
   return next
 }
 
-function protectedRoomCapture(
+function bestRoomExchangeGain(
   board: RoomBoard,
-  attackerFrom: { row: number; col: number },
-  victimAt: { row: number; col: number },
-) {
-  const attacker = board[attackerFrom.row][attackerFrom.col]
-  const victim = board[victimAt.row][victimAt.col]
-  if (
-    !attacker ||
-    !victim ||
-    REPETITION_PIECE_VALUE[victim.type] > REPETITION_PIECE_VALUE[attacker.type]
-  )
-    return false
-  const next = apply(board, attackerFrom, victimAt).board
-  for (let row = 0; row < 10; row++)
-    for (let col = 0; col < 9; col++)
-      if (
-        next[row][col]?.color === victim.color &&
-        legalRoomMoves(next, { row, col }, 'xiangqi').some(
-          (move) => move.row === victimAt.row && move.col === victimAt.col,
-        )
-      )
-        return true
-  return false
-}
+  target: { row: number; col: number },
+  attacker: RoomColor,
+): number {
+  const victim = board[target.row][target.col]
+  if (!victim || victim.color === attacker || victim.type === 'k') return 0
 
-function roomChasablePieceIds(board: RoomBoard, ids: RoomPieceIds, attacker: RoomColor) {
-  const targets = new Set<string>()
+  let best = 0
   for (let row = 0; row < 10; row++)
     for (let col = 0; col < 9; col++) {
       const piece = board[row][col]
-      if (!piece || piece.color !== attacker || piece.type === 'k' || piece.type === 'p') continue
+      if (!piece || piece.color !== attacker) continue
       const from = { row, col }
-      for (const to of legalRoomMoves(board, from, 'xiangqi')) {
-        const victim = board[to.row][to.col]
-        const id = ids[to.row][to.col]
-        const uncrossedPawn =
-          victim?.type === 'p' && (victim.color === 'red' ? to.row >= 5 : to.row <= 4)
-        if (
-          victim &&
-          victim.color !== attacker &&
-          victim.type !== 'k' &&
-          id &&
-          !uncrossedPawn &&
-          !protectedRoomCapture(board, from, to)
+      if (
+        !legalRoomMoves(board, from, 'xiangqi').some(
+          (move) => move.row === target.row && move.col === target.col,
         )
-          targets.add(id)
-      }
+      )
+        continue
+      const next = apply(board, from, target).board
+      const gain =
+        REPETITION_PIECE_VALUE[victim.type] -
+        bestRoomExchangeGain(next, target, attacker === 'red' ? 'black' : 'red')
+      best = Math.max(best, gain)
+    }
+  return best
+}
+
+function roomCaptureGain(
+  board: RoomBoard,
+  from: { row: number; col: number },
+  target: { row: number; col: number },
+  attacker: RoomColor,
+) {
+  const victim = board[target.row][target.col]
+  if (!victim || victim.color === attacker || victim.type === 'k') return 0
+  const next = apply(board, from, target).board
+  return (
+    REPETITION_PIECE_VALUE[victim.type] -
+    bestRoomExchangeGain(next, target, attacker === 'red' ? 'black' : 'red')
+  )
+}
+
+function roomLiesBetween(
+  candidate: { row: number; col: number },
+  from: { row: number; col: number },
+  target: { row: number; col: number },
+) {
+  if (from.row === target.row && candidate.row === from.row)
+    return (
+      candidate.col > Math.min(from.col, target.col) &&
+      candidate.col < Math.max(from.col, target.col)
+    )
+  if (from.col === target.col && candidate.col === from.col)
+    return (
+      candidate.row > Math.min(from.row, target.row) &&
+      candidate.row < Math.max(from.row, target.row)
+    )
+  return false
+}
+
+function roomCaptureNeedsJointSupport(
+  board: RoomBoard,
+  from: { row: number; col: number },
+  target: { row: number; col: number },
+  attacker: RoomColor,
+) {
+  for (let row = 0; row < 10; row++)
+    for (let col = 0; col < 9; col++) {
+      if (row === from.row && col === from.col) continue
+      const helper = board[row][col]
+      if (!helper || helper.color !== attacker || helper.type === 'k') continue
+      const helperAt = { row, col }
+      const participates =
+        roomLiesBetween(helperAt, from, target) ||
+        legalRoomMoves(board, helperAt, 'xiangqi').some(
+          (move) => move.row === target.row && move.col === target.col,
+        )
+      if (!participates) continue
+      const withoutHelper = board.map((boardRow) => [...boardRow])
+      withoutHelper[row][col] = null
+      const captureStillLegal = legalRoomMoves(withoutHelper, from, 'xiangqi').some(
+        (move) => move.row === target.row && move.col === target.col,
+      )
+      if (!captureStillLegal || roomCaptureGain(withoutHelper, from, target, attacker) <= 0)
+        return true
+    }
+  return false
+}
+
+function roomWinningThreats(
+  board: RoomBoard,
+  ids: RoomPieceIds,
+  attacker: RoomColor,
+): Map<string, Omit<RoomChaseEvidence, 'mode'>> {
+  const targets = new Map<string, Omit<RoomChaseEvidence, 'mode'>>()
+  for (let row = 0; row < 10; row++)
+    for (let col = 0; col < 9; col++) {
+      const victim = board[row][col]
+      const targetId = ids[row][col]
+      const uncrossedPawn = victim?.type === 'p' && (victim.color === 'red' ? row >= 5 : row <= 4)
+      if (!victim || victim.color === attacker || victim.type === 'k' || !targetId || uncrossedPawn)
+        continue
+
+      const attackers = new Set<string>()
+      const jointAttackers = new Set<string>()
+      for (let attackerRow = 0; attackerRow < 10; attackerRow++)
+        for (let attackerCol = 0; attackerCol < 9; attackerCol++) {
+          const piece = board[attackerRow][attackerCol]
+          const attackerId = ids[attackerRow][attackerCol]
+          const from = { row: attackerRow, col: attackerCol }
+          if (
+            !piece ||
+            piece.color !== attacker ||
+            !attackerId ||
+            !legalRoomMoves(board, from, 'xiangqi').some(
+              (move) => move.row === row && move.col === col,
+            )
+          )
+            continue
+          const target = { row, col }
+          const gain = roomCaptureGain(board, from, target, attacker)
+          if (gain > 0) {
+            attackers.add(attackerId)
+            if (roomCaptureNeedsJointSupport(board, from, target, attacker))
+              jointAttackers.add(attackerId)
+          }
+        }
+      if (attackers.size)
+        targets.set(targetId, { attackers, jointAttackers, targetType: victim.type })
     }
   return targets
 }
 
-function classifyRoomRepetitionSide(
-  moves: Array<{ kind: RoomRepetitionMoveKind; targets: Set<string> }>,
+function sameRoomSet(left: Set<string>, right: Set<string>) {
+  return left.size === right.size && [...left].every((item) => right.has(item))
+}
+
+function findRoomPiecePosition(ids: RoomPieceIds, targetId: string) {
+  for (let row = 0; row < ids.length; row++)
+    for (let col = 0; col < ids[row].length; col++)
+      if (ids[row][col] === targetId) return { row, col }
+  return undefined
+}
+
+function isRoomEqualExchangeInvitation(
+  board: RoomBoard,
+  ids: RoomPieceIds,
+  moverId: string | null,
+  targetId: string,
+  evidence: Omit<RoomChaseEvidence, 'mode'>,
 ) {
+  if (!moverId || evidence.attackers.size !== 1 || !evidence.attackers.has(moverId)) return false
+  const moverAt = findRoomPiecePosition(ids, moverId)
+  const targetAt = findRoomPiecePosition(ids, targetId)
+  if (!moverAt || !targetAt) return false
+  const mover = board[moverAt.row][moverAt.col]
+  const target = board[targetAt.row][targetAt.col]
+  if (!mover || !target || mover.type !== target.type) return false
+  if (
+    !legalRoomMoves(board, targetAt, 'xiangqi').some(
+      (move) => move.row === moverAt.row && move.col === moverAt.col,
+    )
+  )
+    return false
+  const next = apply(board, targetAt, moverAt).board
+  const defenderGain =
+    REPETITION_PIECE_VALUE[mover.type] - bestRoomExchangeGain(next, moverAt, mover.color)
+  return defenderGain >= 0
+}
+
+function classifyRoomRepetitionSide(moves: ClassifiedRoomMove[]) {
   const moveKinds = moves.map((move) => move.kind)
   const hasCheck = moveKinds.includes('check')
   const hasChase = moveKinds.includes('chase')
   const hasIdle = moveKinds.includes('idle')
   const chaseMoves = moves.filter((move) => move.kind === 'chase')
-  const chased = chaseMoves.reduce<Set<string>>(
-    (current, move, index) =>
-      index === 0
-        ? new Set(move.targets)
-        : new Set([...current].filter((target) => move.targets.has(target))),
-    new Set(),
-  )
+  const chasedIds = new Set<string>()
+  const evidence: RoomChaseEvidence[] = []
+  for (const move of chaseMoves)
+    for (const [targetId, targetEvidence] of move.targets) {
+      chasedIds.add(targetId)
+      evidence.push(targetEvidence)
+    }
   let violation: RoomRepetitionViolation | undefined
   if (!hasIdle && hasCheck && !hasChase) violation = 'perpetual-check'
-  else if (!hasIdle && hasChase && chased.size > 0)
-    violation = hasCheck ? 'check-and-chase' : 'perpetual-chase'
-  return { moveKinds, violation, chasedPieceIds: [...chased].sort() }
+  else if (!hasIdle && hasChase) violation = hasCheck ? 'check-and-chase' : 'perpetual-chase'
+  return {
+    moveKinds,
+    violation,
+    chasedPieceIds: [...chasedIds].sort(),
+    chasedPieceTypes: [...new Set(evidence.map((item) => item.targetType))].sort(),
+    chaseMode:
+      hasChase && evidence.length
+        ? evidence.every((item) => item.mode === 'joint')
+          ? ('joint' as const)
+          : ('single' as const)
+        : undefined,
+  }
 }
 
 /** Authoritative room counterpart of the local CXA 2020 repetition classifier. */
@@ -532,21 +673,46 @@ export function adjudicateRoomRepetition(
   if (occurrences.length < 3) return undefined
   const cycleStartPly = occurrences[occurrences.length - 3]
   const cycleEndPly = occurrences[occurrences.length - 1]
-  const classified: Record<
-    RoomColor,
-    Array<{ kind: RoomRepetitionMoveKind; targets: Set<string> }>
-  > = { red: [], black: [] }
+  const classified: Record<RoomColor, ClassifiedRoomMove[]> = { red: [], black: [] }
   for (let ply = cycleStartPly; ply < cycleEndPly; ply++) {
     const mover = moves[ply].color
     const defender: RoomColor = mover === 'red' ? 'black' : 'red'
     if (inCheck(boards[ply + 1], defender, 'xiangqi')) {
-      classified[mover].push({ kind: 'check', targets: new Set() })
+      classified[mover].push({ kind: 'check', targets: new Map() })
       continue
     }
-    const threatened = roomChasablePieceIds(boards[ply + 1], ids[ply + 1], mover)
+    const beforeMove = roomWinningThreats(boards[ply], ids[ply], mover)
+    const threatened = roomWinningThreats(boards[ply + 1], ids[ply + 1], mover)
     const replyPosition = ply + 2 <= cycleEndPly ? ply + 2 : cycleStartPly + 1
-    const afterReply = roomChasablePieceIds(boards[replyPosition], ids[replyPosition], mover)
-    const resolved = new Set([...threatened].filter((target) => !afterReply.has(target)))
+    const afterReply = roomWinningThreats(boards[replyPosition], ids[replyPosition], mover)
+    const from = pos(moves[ply].uci.slice(0, 2))
+    const movedPiece = boards[ply][from.row][from.col]
+    const moverId = ids[ply][from.row][from.col]
+    const kingRespondedToCheck = movedPiece?.type === 'k' && inCheck(boards[ply], mover, 'xiangqi')
+    const resolved = new Map<string, RoomChaseEvidence>()
+    for (const [targetId, evidence] of threatened) {
+      const replyEvidence = afterReply.get(targetId)
+      const originalThreatRemains =
+        replyEvidence && [...evidence.attackers].some((id) => replyEvidence.attackers.has(id))
+      if (originalThreatRemains || kingRespondedToCheck) continue
+      const previous = beforeMove.get(targetId)
+      const createdByMove =
+        !previous ||
+        !sameRoomSet(previous.attackers, evidence.attackers) ||
+        Boolean(moverId && evidence.attackers.has(moverId))
+      if (!createdByMove) continue
+      const ownKingOrPawnOnly =
+        (movedPiece?.type === 'k' || movedPiece?.type === 'p') &&
+        evidence.attackers.size === 1 &&
+        Boolean(moverId && evidence.attackers.has(moverId))
+      if (ownKingOrPawnOnly) continue
+      if (isRoomEqualExchangeInvitation(boards[ply + 1], ids[ply + 1], moverId, targetId, evidence))
+        continue
+      resolved.set(targetId, {
+        ...evidence,
+        mode: evidence.jointAttackers.size === evidence.attackers.size ? 'joint' : 'single',
+      })
+    }
     classified[mover].push({ kind: resolved.size ? 'chase' : 'idle', targets: resolved })
   }
   const sides = {
@@ -574,6 +740,25 @@ export function adjudicateRoomRepetition(
       reason: 'repetition' as const,
       liableSide,
       violation: sides[liableSide].violation,
+      sides,
+      cycleStartPly,
+      cycleEndPly,
+    }
+  }
+  if (
+    sides.red.violation === 'perpetual-chase' &&
+    sides.black.violation === 'perpetual-chase' &&
+    sides.red.chaseMode !== sides.black.chaseMode &&
+    ((sides.red.chasedPieceTypes.includes('r') && sides.black.chasedPieceTypes.includes('r')) ||
+      (sides.red.chasedPieceTypes.some((type) => type !== 'r') &&
+        sides.black.chasedPieceTypes.some((type) => type !== 'r')))
+  ) {
+    const liableSide: RoomColor = sides.red.chaseMode === 'single' ? 'red' : 'black'
+    return {
+      status: liableSide === 'red' ? 'black-wins' : 'red-wins',
+      reason: 'repetition',
+      liableSide,
+      violation: 'perpetual-chase',
       sides,
       cycleStartPly,
       cycleEndPly,
@@ -640,8 +825,13 @@ export function executeRoomMoveFromState(
   if (detail.status === 'playing' && variant === 'xiangqi') {
     const key = boardFen(result.board, turn).split(/\s+/).slice(0, 2).join(' ')
     const occurrences = repetitionOccurrences(nextMoves, key)
-    if (occurrences >= 3) detail = { status: 'draw', reason: 'repetition' }
-    else if (
+    if (occurrences >= 3) {
+      const adjudication = adjudicateRoomRepetition(ROOM_INITIAL_FEN, nextMoves)
+      detail = {
+        status: adjudication?.status || 'draw',
+        reason: 'repetition',
+      }
+    } else if (
       nextMoves.slice(-120).length === 120 &&
       nextMoves.slice(-120).every((item) => !item.captured)
     )

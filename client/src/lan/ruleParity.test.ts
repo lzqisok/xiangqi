@@ -88,12 +88,44 @@ test('local and authoritative room repetition classifiers agree on fixed CXA cor
       moves: ['e9f9', 'e8f8', 'f9e9', 'f8e8', 'e9f9', 'e8f8', 'f9e9', 'f8e8'],
     },
     {
+      fen: '5k3/9/9/9/1r7/9/1PP6/9/9/C2K5 w - - 0 1',
+      moves: ['a0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0'],
+    },
+    {
       fen: '5k3/9/9/9/1r7/9/9/9/9/R2K5 w - - 0 1',
+      moves: ['a0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0'],
+    },
+    {
+      fen: '5k3/9/9/9/1r7/9/1PP6/9/3K5/C3A3c w - - 0 1',
       moves: ['a0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0'],
     },
     {
       fen: '4k4/4r4/3P5/9/3C5/9/9/9/9/3K5 w - - 0 1',
       moves: ['d5e5', 'e8d8', 'e5d5', 'd8e8', 'd5e5', 'e8d8', 'e5d5', 'd8e8'],
+    },
+    {
+      fen: '5k3/9/9/2r6/1P7/9/9/9/9/3K5 w - - 0 1',
+      moves: ['b5c5', 'c6b6', 'c5b5', 'b6c6', 'b5c5', 'c6b6', 'c5b5', 'b6c6'],
+    },
+    {
+      fen: '4k4/9/9/9/4p4/9/9/9/R8/R3Kc3 w - - 0 1',
+      moves: ['e0e1', 'f0f1', 'e1e0', 'f1f0', 'e0e1', 'f0f1', 'e1e0', 'f1f0'],
+    },
+    {
+      fen: '4k4/9/9/9/4p4/9/9/9/R8/R3Kr3 w - - 0 1',
+      moves: ['e0e1', 'f0f1', 'e1e0', 'f1f0', 'e0e1', 'f0f1', 'e1e0', 'f1f0'],
+    },
+    {
+      fen: '5k3/9/9/9/1c1r5/9/9/9/9/R3K4 w - - 0 1',
+      moves: ['a0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0'],
+    },
+    {
+      fen: '3k5/9/9/9/1c1r5/9/9/9/9/R2R1K3 w - - 0 1',
+      moves: ['a0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0'],
+    },
+    {
+      fen: 'cc2k4/9/9/9/nn7/9/1p7/9/9/C2K5 w - - 0 1',
+      moves: ['a0b0', 'b3a3', 'b0a0', 'a3b3', 'a0b0', 'b3a3', 'b0a0', 'a3b3'],
     },
   ]
 

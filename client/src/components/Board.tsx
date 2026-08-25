@@ -80,7 +80,7 @@ function formatGameOverText(
     'illegal-position': '非法局面',
     manual: '手动结束',
     resignation: '认输',
-    repetition: '重复局面',
+    repetition: '长将或长捉违规',
     'natural-limit': '自然限着',
     'move-limit': '回合上限',
   }

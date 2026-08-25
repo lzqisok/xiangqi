@@ -31,8 +31,8 @@ test('executable corpus makes the only perpetual-checking side lose', () => {
   assert.deepEqual(analysis.sides.red.moveKinds, ['check', 'check', 'check', 'check'])
 })
 
-test('executable corpus classifies a rook repeatedly chasing the same rook', () => {
-  const fen = '5k3/9/9/9/1r7/9/9/9/9/R2K5 w - - 0 1'
+test('executable corpus classifies a cannon repeatedly chasing the same rook', () => {
+  const fen = '5k3/9/9/9/1r7/9/1PP6/9/9/C2K5 w - - 0 1'
   const analysis = adjudicate(fen, [
     'a0b0',
     'b5c5',
@@ -51,6 +51,42 @@ test('executable corpus classifies a rook repeatedly chasing the same rook', () 
   assert.equal(analysis.sides.red.chasedPieceIds.length, 1)
 })
 
+test('same-piece contact that offers an equal exchange stays idle', () => {
+  const fen = '5k3/9/9/9/1r7/9/9/9/9/R2K5 w - - 0 1'
+  const analysis = adjudicate(fen, [
+    'a0b0',
+    'b5c5',
+    'b0c0',
+    'c5b5',
+    'c0b0',
+    'b5c5',
+    'b0c0',
+    'c5b5',
+    'c0b0',
+  ])
+
+  assert.equal(analysis.outcome, 'draw')
+  assert.deepEqual(analysis.sides.red.moveKinds, ['idle', 'idle', 'idle', 'idle'])
+})
+
+test('an offered attacker that also creates a material-winning chase is still a chase', () => {
+  const fen = '5k3/9/9/9/1r7/9/1PP6/9/3K5/C3A3c w - - 0 1'
+  const analysis = adjudicate(fen, [
+    'a0b0',
+    'b5c5',
+    'b0c0',
+    'c5b5',
+    'c0b0',
+    'b5c5',
+    'b0c0',
+    'c5b5',
+    'c0b0',
+  ])
+
+  assert.equal(analysis.outcome, 'black-wins')
+  assert.equal(analysis.sides.red.violation, 'perpetual-chase')
+})
+
 test('king-only perpetual chase is an allowed repetition under the CXA exception', () => {
   const fen = '5k3/9/9/9/9/9/9/9/4c4/3K5 w - - 0 1'
   const analysis = adjudicate(fen, [
@@ -67,6 +103,114 @@ test('king-only perpetual chase is an allowed repetition under the CXA exception
   assert.equal(analysis.outcome, 'draw')
   assert.equal(analysis.sides.red.violation, undefined)
   assert.deepEqual(analysis.sides.red.moveKinds, ['idle', 'idle', 'idle', 'idle'])
+})
+
+test('pawn-only perpetual chase is an allowed repetition under the CXA exception', () => {
+  const fen = '5k3/9/9/2r6/1P7/9/9/9/9/3K5 w - - 0 1'
+  const analysis = adjudicate(fen, [
+    'b5c5',
+    'c6b6',
+    'c5b5',
+    'b6c6',
+    'b5c5',
+    'c6b6',
+    'c5b5',
+    'b6c6',
+  ])
+
+  assert.equal(analysis.outcome, 'draw')
+  assert.deepEqual(analysis.sides.red.moveKinds, ['idle', 'idle', 'idle', 'idle'])
+})
+
+test('a king move that creates a new chase by another piece remains a chase', () => {
+  const fen = '4k4/9/9/9/4p4/9/9/9/R8/R3Kc3 w - - 0 1'
+  const analysis = adjudicate(fen, [
+    'e0e1',
+    'f0f1',
+    'e1e0',
+    'f1f0',
+    'e0e1',
+    'f0f1',
+    'e1e0',
+    'f1f0',
+  ])
+
+  assert.equal(analysis.outcome, 'draw')
+  assert.equal(analysis.sides.red.violation, 'perpetual-chase')
+  assert.equal(analysis.sides.red.chaseMode, 'single')
+  assert.deepEqual(analysis.sides.red.moveKinds, ['chase', 'chase', 'chase', 'chase'])
+})
+
+test('a king response to check that incidentally creates a chase stays idle', () => {
+  const fen = '4k4/9/9/9/4p4/9/9/9/R8/R3Kr3 w - - 0 1'
+  const analysis = adjudicate(fen, [
+    'e0e1',
+    'f0f1',
+    'e1e0',
+    'f1f0',
+    'e0e1',
+    'f0f1',
+    'e1e0',
+    'f1f0',
+  ])
+
+  assert.equal(analysis.outcome, 'red-wins')
+  assert.deepEqual(analysis.sides.red.moveKinds, ['idle', 'idle', 'idle', 'idle'])
+})
+
+test('a legal root makes an equal or losing exchange idle', () => {
+  const fen = '5k3/9/9/9/1c1r5/9/9/9/9/R3K4 w - - 0 1'
+  const analysis = adjudicate(fen, [
+    'a0b0',
+    'b5c5',
+    'b0c0',
+    'c5b5',
+    'c0b0',
+    'b5c5',
+    'b0c0',
+    'c5b5',
+    'c0b0',
+  ])
+
+  assert.equal(analysis.outcome, 'draw')
+  assert.deepEqual(analysis.sides.red.moveKinds, ['idle', 'idle', 'idle', 'idle'])
+})
+
+test('a pinned fake root is ignored and the material-winning chase is forbidden', () => {
+  const fen = '3k5/9/9/9/1c1r5/9/9/9/9/R2R1K3 w - - 0 1'
+  const analysis = adjudicate(fen, [
+    'a0b0',
+    'b5c5',
+    'b0c0',
+    'c5b5',
+    'c0b0',
+    'b5c5',
+    'b0c0',
+    'c5b5',
+    'c0b0',
+  ])
+
+  assert.equal(analysis.outcome, 'black-wins')
+  assert.equal(analysis.sides.red.violation, 'perpetual-chase')
+})
+
+test('single chase must change against an otherwise equivalent joint chase', () => {
+  const fen = 'cc2k4/9/9/9/nn7/9/1p7/9/9/C2K5 w - - 0 1'
+  const analysis = adjudicate(fen, [
+    'a0b0',
+    'b3a3',
+    'b0a0',
+    'a3b3',
+    'a0b0',
+    'b3a3',
+    'b0a0',
+    'a3b3',
+  ])
+
+  assert.equal(analysis.outcome, 'black-wins')
+  assert.equal(analysis.liableSide, 'red')
+  assert.equal(analysis.sides.red.chaseMode, 'single')
+  assert.equal(analysis.sides.black.chaseMode, 'joint')
 })
 
 test('alternate check and chase is attributed to the responsible side', () => {

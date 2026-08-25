@@ -1384,7 +1384,7 @@ function findKing(board: import('../types').Board, color: PieceColor) {
 }
 function formatResult(status: string, reason?: string) {
   if (status === 'draw') return reason === 'abandoned' ? '和棋（双方离线）' : '和棋'
-  return `${status === 'red-wins' ? '红方胜' : '黑方胜'}${reason === 'disconnect' ? '（对方断线）' : reason === 'resignation' ? '（对方认输）' : ''}`
+  return `${status === 'red-wins' ? '红方胜' : '黑方胜'}${reason === 'disconnect' ? '（对方断线）' : reason === 'resignation' ? '（对方认输）' : reason === 'repetition' ? '（对方长将或长捉违规）' : ''}`
 }
 function pieceName(type: string, color: PieceColor) {
   const names =

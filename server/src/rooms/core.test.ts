@@ -60,3 +60,18 @@ test('authoritative room adjudication makes a one-sided perpetual checker lose',
   assert.equal(result?.liableSide, 'red')
   assert.equal(result?.violation, 'perpetual-check')
 })
+
+test('authoritative room adjudication distinguishes equal exchange and fake-root chase', () => {
+  const line = ['a0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0', 'b5c5', 'b0c0', 'c5b5', 'c0b0']
+  const moves = line.map((uci, index) => ({
+    uci,
+    color: index % 2 === 0 ? ('red' as const) : ('black' as const),
+  }))
+
+  const exchange = adjudicateRoomRepetition('5k3/9/9/9/1r7/9/9/9/9/R2K5 w - - 0 1', moves)
+  const fakeRoot = adjudicateRoomRepetition('3k5/9/9/9/1c1r5/9/9/9/9/R2R1K3 w - - 0 1', moves)
+
+  assert.equal(exchange?.status, 'draw')
+  assert.equal(fakeRoot?.status, 'black-wins')
+  assert.equal(fakeRoot?.liableSide, 'red')
+})

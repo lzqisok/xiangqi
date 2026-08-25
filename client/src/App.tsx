@@ -122,6 +122,7 @@ import {
   TrainingTaskSource,
 } from './types'
 import LanApp from './lan/LanApp'
+import AccountEntry from './auth/AccountEntry'
 
 const GomokuApp = lazy(() => import('./gomoku/GomokuApp'))
 const GomokuLanApp = lazy(() => import('./gomoku/lan/GomokuLanApp'))
@@ -253,6 +254,7 @@ function HomeScreen() {
             <p>开始对局、和朋友下，或继续你的研究</p>
           </div>
         </div>
+        <AccountEntry />
         {latestGame && (
           <a className="home-continue" href={gameUrl(latestGame.id)}>
             <span>继续上次象棋对局</span>

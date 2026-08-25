@@ -2,7 +2,7 @@
 
 ## 状态
 
-- 阶段：第零批设计门禁。
+- 阶段：第二批账号、会话和统一 ActorContext 核心已实现；公网对局身份接入留到第三批。
 - 决策：首版采用自建邮箱密码账号和 MySQL 服务端会话。
 - 适用范围：公网在线入口和云端用户数据。
 - 不影响范围：本地模式、现有局域网房间 token、局域网邀请和席位恢复链接。
@@ -86,7 +86,7 @@
 ### 会话 token
 
 - 登录成功后生成至少 256 bit 的高熵随机 token。
-- 浏览器只通过名为 `__Host-qj_session` 的 Cookie 持有原始 token。
+- 浏览器只通过名为 `__Host-xiangqi_session` 的 Cookie 持有原始 token；本地非 HTTPS 开发使用不带 `__Host-` 前缀的 `xiangqi_session`。
 - Cookie 属性固定为 `Secure; HttpOnly; SameSite=Lax; Path=/`，不设置 `Domain`。
 - MySQL 只保存 token 的 SHA-256 摘要；随机 token 的摘要用于查找，不承担密码哈希职责。
 - 不把 session token、JWT 或 refresh token 写入 `localStorage`、`sessionStorage`、URL、日志或分析事件。
@@ -224,6 +224,12 @@
 - 登录、验证和恢复接口不通过状态码、文案或明显时间差泄露账号存在性。
 - 认证凭据不出现在 localStorage、URL、日志、监控标签、错误响应或导出中。
 - LAN 邀请、席位恢复和本地模式行为保持不变。
+
+## 运行配置
+
+- `AUTH_ALLOWED_ORIGINS`：以逗号分隔的额外可信 Origin；生产同源请求仍必须使用 HTTPS。
+- `AUTH_DEV_EXPOSE_TOKENS=true`：仅供本地开发显示验证/恢复 token，生产环境强制忽略。
+- 服务端通过 `AuthTokenDelivery` 适配器投递验证与恢复 token。当前默认启动器使用空实现，公网部署前必须接入邮件服务；投递失败不会回滚待验证账号，重发会撤销同用途的旧 token。
 
 ## 参考
 

@@ -19,6 +19,7 @@ type PublicActor =
       userId: string
       sessionId: string
       authEpoch: number
+      expiresAt: Date
       status: 'pending_verification' | 'active' | 'restricted'
       capabilities: readonly string[]
     }

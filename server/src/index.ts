@@ -20,22 +20,51 @@ import { isLocalGameLibraryRequest, listLanIPv4 } from './network.js'
 import { loadDatabaseConfig } from './db/config.js'
 import { Database } from './db/database.js'
 import { assertSchemaReady } from './db/migrations.js'
+import { createAuthRuntime } from './auth/http.js'
+import type { UserActor } from './auth/types.js'
 
 const app = express()
 const server = createServer(app)
 const LAN_MODE = process.env.LAN_MODE === '1'
 const databaseConfig = loadDatabaseConfig()
 const database = databaseConfig.enabled ? new Database(databaseConfig) : null
+const authRuntime = database
+  ? createAuthRuntime(
+      database,
+      { deliver: async () => undefined },
+      {
+        production: databaseConfig.environment === 'production',
+        exposeDevelopmentTokens:
+          databaseConfig.environment !== 'production' &&
+          process.env.AUTH_DEV_EXPOSE_TOKENS === 'true',
+        allowedOrigins: process.env.AUTH_ALLOWED_ORIGINS?.split(',')
+          .map((item) => item.trim())
+          .filter(Boolean),
+      },
+    )
+  : null
+const socketActors = new WeakMap<object, UserActor>()
 const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 })
 const gomokuWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 })
 server.on('upgrade', (request, socket, head) => {
-  const pathname = new URL(request.url || '/', 'http://localhost').pathname
-  const target = pathname === '/ws' ? wss : pathname === '/gomoku-ws' ? gomokuWss : null
-  if (!target) {
-    socket.destroy()
-    return
-  }
-  target.handleUpgrade(request, socket, head, (ws) => target.emit('connection', ws, request))
+  void (async () => {
+    const pathname = new URL(request.url || '/', 'http://localhost').pathname
+    const target = pathname === '/ws' ? wss : pathname === '/gomoku-ws' ? gomokuWss : null
+    if (!target) {
+      socket.destroy()
+      return
+    }
+    if (authRuntime && !LAN_MODE) {
+      const actor = await authRuntime.authenticateUpgrade(request).catch(() => null)
+      if (!actor) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+        socket.destroy()
+        return
+      }
+      socketActors.set(request, actor)
+    }
+    target.handleUpgrade(request, socket, head, (ws) => target.emit('connection', ws, request))
+  })()
 })
 type LiveWebSocket = WebSocket & { isAlive?: boolean }
 const heartbeatTimer = setInterval(() => {
@@ -66,6 +95,12 @@ await roomRepository
   .init()
   .catch((error) => console.error('Room store initialization failed:', error))
 app.use(express.json({ limit: '10mb' }))
+if (authRuntime) {
+  app.use(authRuntime.actorMiddleware)
+  app.use('/api/auth', authRuntime.router)
+  app.use('/api/account', authRuntime.accountRouter)
+  app.use('/api/me', authRuntime.meRouter)
+}
 app.get('/health/live', (_req, res) => res.json({ status: 'live' }))
 app.get('/health/ready', async (_req, res) => {
   try {
@@ -249,11 +284,18 @@ const roomCleanupTimer = setInterval(
 )
 roomCleanupTimer.unref()
 app.use('/api/rooms', createRoomRouter(roomManager))
+if (authRuntime) app.use(authRuntime.errorMiddleware)
 
 const liveRapfiEngines = new Set<RapfiEngine>()
 registerRapfiWebSocketServer(gomokuWss, { lanMode: LAN_MODE, liveEngines: liveRapfiEngines })
+gomokuWss.on('connection', (ws, request) => {
+  const actor = socketActors.get(request)
+  if (actor && authRuntime) authRuntime.bindSocket(actor, ws)
+})
 
 wss.on('connection', async (ws, request) => {
+  const actor = socketActors.get(request)
+  if (actor && authRuntime) authRuntime.bindSocket(actor, ws)
   if (LAN_MODE && request.headers.origin) {
     try {
       if (new URL(request.headers.origin).host !== request.headers.host)

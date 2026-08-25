@@ -32,6 +32,7 @@ export type SessionEntity = {
   id: string
   userId: string
   tokenHash: Buffer
+  csrfSecretHash: Buffer
   authEpoch: number
   createdAt: Date
   lastSeenAt: Date

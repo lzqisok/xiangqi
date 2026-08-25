@@ -1,7 +1,9 @@
 import '../env.js'
 import assert from 'node:assert/strict'
 import { randomBytes, randomUUID } from 'node:crypto'
+import { createServer } from 'node:http'
 import test from 'node:test'
+import express from 'express'
 import mysql from 'mysql2/promise'
 import { loadDatabaseConfig } from './config.js'
 import { Database } from './database.js'
@@ -12,6 +14,10 @@ import {
   MySqlMatchRepository,
   MySqlSessionRepository,
 } from '../repositories/mysql.js'
+import { MySqlAuthRepository } from '../auth/repository.js'
+import { AuthService } from '../auth/service.js'
+import type { DeliveredAccountToken } from '../auth/types.js'
+import { createAuthRuntime, CSRF_COOKIE, DEVELOPMENT_SESSION_COOKIE } from '../auth/http.js'
 
 function validTestConnectionString(raw: string | undefined): string | undefined {
   if (!raw) return undefined
@@ -191,6 +197,256 @@ test(
         await reconnected.close()
       }
       await assert.rejects(database.ping(), DatabaseUnavailableError)
+    })
+  },
+)
+
+test(
+  'account authentication lifecycle uses hashed credentials and revocable sessions',
+  integration,
+  async () => {
+    await withTestDatabase(async (database) => {
+      await migrate(database)
+      const delivered: DeliveredAccountToken[] = []
+      const auth = new AuthService(
+        new MySqlAccountRepository(database),
+        new MySqlAuthRepository(database),
+        { deliver: async (token) => void delivered.push(token) },
+      )
+
+      const registration = await auth.register({
+        email: 'Player@Example.com',
+        password: 'correct horse battery',
+        displayName: '云端棋手',
+        ipKey: '127.0.0.1',
+      })
+      assert.equal(registration.accepted, true)
+      assert.equal(delivered.length, 1)
+      await auth.register({
+        email: 'player@example.com',
+        password: 'another safe password',
+        displayName: '重复注册',
+        ipKey: '127.0.0.2',
+      })
+      assert.equal(delivered.length, 1)
+
+      const firstLogin = await auth.login({
+        email: 'PLAYER@example.com',
+        password: 'correct horse battery',
+        ipKey: '127.0.0.1',
+        deviceKey: 'browser-one',
+      })
+      const pending = await auth.authenticate(firstLogin.sessionToken, 'request-1', '127.0.0.1')
+      assert.equal(pending.actor.kind === 'user' && pending.actor.status, 'pending_verification')
+      assert.equal(auth.csrfValid(firstLogin.session, firstLogin.csrfToken), true)
+
+      assert.equal(await auth.verifyEmail(delivered[0].token), true)
+      assert.equal(await auth.verifyEmail(delivered[0].token), false)
+      const active = await auth.authenticate(firstLogin.sessionToken, 'request-2', '127.0.0.1')
+      assert.equal(active.actor.kind === 'user' && active.actor.status, 'active')
+      if (active.actor.kind !== 'user') throw new Error('expected authenticated actor')
+      assert.equal((await auth.updateProfile(active.actor, '已验证棋手')).displayName, '已验证棋手')
+
+      await auth.changePassword(active.actor, 'correct horse battery', 'new correct horse battery')
+      assert.equal(
+        (await auth.authenticate(firstLogin.sessionToken, 'request-3', '127.0.0.1')).actor.kind,
+        'user',
+      )
+      await auth.logout(active.actor)
+      assert.equal(
+        (await auth.authenticate(firstLogin.sessionToken, 'request-4', '127.0.0.1')).actor.kind,
+        'anonymous',
+      )
+
+      const resetToken = await auth.requestPasswordReset('player@example.com')
+      assert.ok(resetToken)
+      assert.equal(await auth.resetPassword(resetToken, 'reset correct horse battery'), true)
+      await assert.rejects(
+        auth.login({
+          email: 'player@example.com',
+          password: 'new correct horse battery',
+          ipKey: '127.0.0.3',
+          deviceKey: 'browser-two',
+        }),
+        { code: 'invalid_credentials' },
+      )
+      const recoveredLogin = await auth.login({
+        email: 'player@example.com',
+        password: 'reset correct horse battery',
+        ipKey: '127.0.0.3',
+        deviceKey: 'browser-two',
+      })
+      const recoveredActor = await auth.authenticate(
+        recoveredLogin.sessionToken,
+        'request-5',
+        '127.0.0.3',
+      )
+      if (recoveredActor.actor.kind !== 'user') throw new Error('expected authenticated actor')
+      const deletionToken = await auth.beginDeletion(
+        recoveredActor.actor,
+        'reset correct horse battery',
+      )
+      assert.equal(
+        (await auth.authenticate(recoveredLogin.sessionToken, 'request-6', '127.0.0.3')).actor.kind,
+        'anonymous',
+      )
+      assert.equal(await auth.recoverDeletion(deletionToken), true)
+      const afterRecovery = await auth.login({
+        email: 'player@example.com',
+        password: 'reset correct horse battery',
+        ipKey: '127.0.0.4',
+        deviceKey: 'browser-three',
+      })
+      assert.equal(
+        (await auth.authenticate(afterRecovery.sessionToken, 'request-7', '127.0.0.4')).actor.kind,
+        'user',
+      )
+    })
+  },
+)
+
+test(
+  'account HTTP flow enforces Origin, Cookie, CSRF, expiry, and logout',
+  integration,
+  async () => {
+    await withTestDatabase(async (database) => {
+      await migrate(database)
+      const delivered: DeliveredAccountToken[] = []
+      const app = express()
+      const runtime = createAuthRuntime(
+        database,
+        { deliver: async (token) => void delivered.push(token) },
+        {
+          production: false,
+          exposeDevelopmentTokens: true,
+          allowedOrigins: ['http://app.test'],
+        },
+      )
+      app.use(express.json())
+      app.use(runtime.actorMiddleware)
+      app.use('/api/auth', runtime.router)
+      app.use('/api/me', runtime.meRouter)
+      app.use(runtime.errorMiddleware)
+      const server = createServer(app)
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+      try {
+        const address = server.address()
+        if (!address || typeof address === 'string') throw new Error('expected TCP test server')
+        const base = `http://127.0.0.1:${address.port}`
+        const send = (path: string, init: RequestInit = {}) =>
+          fetch(`${base}${path}`, {
+            ...init,
+            headers: { Origin: 'http://app.test', ...(init.headers || {}) },
+          })
+        const badOrigin = await fetch(`${base}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Origin: 'http://evil.test' },
+          body: JSON.stringify({
+            email: 'http@example.com',
+            password: 'correct horse battery',
+            displayName: '网页棋手',
+          }),
+        })
+        assert.equal(badOrigin.status, 403)
+
+        const registration = await send('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: 'http@example.com',
+            password: 'correct horse battery',
+            displayName: '网页棋手',
+          }),
+        })
+        assert.equal(registration.status, 202)
+        assert.equal(await runtime.service.verifyEmail(delivered[0].token), true)
+        await database.query('UPDATE password_credentials SET hash_version = 2')
+
+        const login = await send('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: 'http@example.com', password: 'correct horse battery' }),
+        })
+        assert.equal(login.status, 200)
+        assert.equal(
+          Number(
+            (
+              await database.query<{ hash_version: number }>(
+                'SELECT hash_version FROM password_credentials',
+              )
+            ).rows[0].hash_version,
+          ),
+          1,
+        )
+        const loginBody = (await login.json()) as { csrfToken: string }
+        const setCookies = login.headers.getSetCookie()
+        const sessionCookie = setCookies.find((value) =>
+          value.startsWith(`${DEVELOPMENT_SESSION_COOKIE}=`),
+        )
+        const csrfCookie = setCookies.find((value) => value.startsWith(`${CSRF_COOKIE}=`))
+        assert.match(sessionCookie || '', /HttpOnly/)
+        assert.match(sessionCookie || '', /SameSite=Lax/)
+        assert.doesNotMatch(sessionCookie || '', /Secure/)
+        assert.doesNotMatch(csrfCookie || '', /HttpOnly/)
+        const cookie = setCookies.map((value) => value.split(';', 1)[0]).join('; ')
+
+        assert.equal((await send('/api/auth/session', { headers: { Cookie: cookie } })).status, 200)
+        const rejected = await send('/api/me/profile', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Cookie: cookie },
+          body: JSON.stringify({ displayName: '改名棋手', userId: randomUUID() }),
+        })
+        assert.equal(rejected.status, 403)
+        const updated = await send('/api/me/profile', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: cookie,
+            'X-CSRF-Token': loginBody.csrfToken,
+          },
+          body: JSON.stringify({ displayName: '改名棋手', userId: randomUUID() }),
+        })
+        assert.equal(updated.status, 200)
+        assert.equal(
+          ((await updated.json()) as { user: { displayName: string } }).user.displayName,
+          '改名棋手',
+        )
+
+        const expiringLogin = await send('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: 'http@example.com',
+            password: 'correct horse battery',
+            deviceLabel: 'expiry-test',
+          }),
+        })
+        const expiringCookie = expiringLogin.headers
+          .getSetCookie()
+          .map((value) => value.split(';', 1)[0])
+          .join('; ')
+        await database.query(
+          "UPDATE sessions SET idle_expires_at = DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL 1 SECOND) WHERE device_label = 'expiry-test'",
+        )
+        const expired = await send('/api/auth/session', { headers: { Cookie: expiringCookie } })
+        assert.deepEqual(await expired.json(), { authenticated: false })
+
+        const logout = await send('/api/auth/logout', {
+          method: 'POST',
+          headers: { Cookie: cookie, 'X-CSRF-Token': loginBody.csrfToken },
+        })
+        assert.equal(logout.status, 204)
+        const afterLogout = await send('/api/auth/session', { headers: { Cookie: cookie } })
+        assert.deepEqual(await afterLogout.json(), { authenticated: false })
+        const events = await database.query<{ metadata: string }>(
+          'SELECT metadata FROM security_events',
+        )
+        assert.equal(JSON.stringify(events.rows).includes(delivered[0].token), false)
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        )
+      }
     })
   },
 )

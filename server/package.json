@@ -5,11 +5,17 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "db:migrate": "tsx src/db/migrate-cli.ts migrate",
+    "db:status": "tsx src/db/migrate-cli.ts status",
+    "db:check": "tsx src/db/migrate-cli.ts check",
+    "db:backup": "bash scripts/backup-mysql.sh",
+    "db:restore:verify": "bash scripts/verify-mysql-restore.sh",
     "start": "node dist/index.js",
     "test": "tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "express": "^4.21.2",
+    "mysql2": "^3.24.2",
     "ws": "^8.18.0"
   },
   "devDependencies": {

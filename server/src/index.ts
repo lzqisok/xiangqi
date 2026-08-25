@@ -1,3 +1,4 @@
+import './env.js'
 import express from 'express'
 import { createServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
@@ -16,10 +17,15 @@ import { StoredRoom, RoomColor } from './rooms/types.js'
 import { RapfiEngine } from './gomoku/rapfiEngine.js'
 import { registerRapfiWebSocketServer, type RapfiWebSocket } from './gomoku/websocket.js'
 import { isLocalGameLibraryRequest, listLanIPv4 } from './network.js'
+import { loadDatabaseConfig } from './db/config.js'
+import { Database } from './db/database.js'
+import { assertSchemaReady } from './db/migrations.js'
 
 const app = express()
 const server = createServer(app)
 const LAN_MODE = process.env.LAN_MODE === '1'
+const databaseConfig = loadDatabaseConfig()
+const database = databaseConfig.enabled ? new Database(databaseConfig) : null
 const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 })
 const gomokuWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 })
 server.on('upgrade', (request, socket, head) => {
@@ -60,6 +66,18 @@ await roomRepository
   .init()
   .catch((error) => console.error('Room store initialization failed:', error))
 app.use(express.json({ limit: '10mb' }))
+app.get('/health/live', (_req, res) => res.json({ status: 'live' }))
+app.get('/health/ready', async (_req, res) => {
+  try {
+    if (database) {
+      await database.ping()
+      await assertSchemaReady(database)
+    }
+    res.json({ status: 'ready' })
+  } catch {
+    res.status(503).json({ status: 'unavailable' })
+  }
+})
 app.get('/api/network-info', (_req, res) => {
   res.json({ addresses: listLanIPv4(os.networkInterfaces()) })
 })
@@ -760,13 +778,16 @@ function shutdown() {
   gomokuWss.close()
   roomManager.dispose()
   const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()))
-  Promise.allSettled([gameRepository.flush(), roomManager.flush(), serverClosed]).then(
-    (results) => {
-      const failed = results.some((result) => result.status === 'rejected')
-      if (failed) console.error('Shutdown completed with errors:', results)
-      process.exit(failed ? 1 : 0)
-    },
-  )
+  Promise.allSettled([
+    gameRepository.flush(),
+    roomManager.flush(),
+    database?.close(),
+    serverClosed,
+  ]).then((results) => {
+    const failed = results.some((result) => result.status === 'rejected')
+    if (failed) console.error('Shutdown completed with errors:', results)
+    process.exit(failed ? 1 : 0)
+  })
   const forcedExit = setTimeout(() => {
     console.error('Shutdown timed out')
     process.exit(1)

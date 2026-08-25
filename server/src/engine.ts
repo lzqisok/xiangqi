@@ -4,6 +4,7 @@ import os from 'os'
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
+import { metrics, structuredLog } from './platform/observability.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -165,22 +166,17 @@ export class PikafishEngine extends EventEmitter {
     }
 
     if (!enginePath) {
-      console.error(
-        `${this.variant === 'jieqi' ? 'Pikafish Jieqi' : 'Pikafish'} engine binary not found in engine/ directory`,
-      )
-      console.error('Looked in:', engineDir)
-      console.error('Please download from https://github.com/official-pikafish/Pikafish/releases')
+      structuredLog('warn', 'engine_binary_missing', { kind: this.variant })
       return false
     }
 
     const nnuePath = path.join(engineDir, 'pikafish.nnue')
     if (!fs.existsSync(nnuePath)) {
-      console.error('NNUE file not found:', nnuePath)
+      structuredLog('warn', 'engine_weights_missing', { kind: this.variant })
       return false
     }
 
-    console.log(`Starting ${this.variant} engine:`, enginePath)
-    console.log('Engine dir:', engineDir)
+    structuredLog('info', 'engine_starting', { kind: this.variant })
 
     try {
       this.runtimeOptions = normalizeEngineRuntimeOptions(options || this.runtimeOptions)
@@ -201,13 +197,17 @@ export class PikafishEngine extends EventEmitter {
       })
 
       child.stderr!.on('data', (data: Buffer) => {
-        console.error('[pikafish stderr]', data.toString())
+        if (data.toString().trim())
+          metrics.increment('xiangqi_engine_stderr', { kind: this.variant })
       })
 
       child.on('exit', (code) => {
         if (this.process !== child) return
         this.process = null
-        console.log(`Pikafish process exited with code ${code}`)
+        structuredLog(code === 0 ? 'info' : 'warn', 'engine_exited', {
+          kind: this.variant,
+          exitCode: code ?? -1,
+        })
         this.ready = false
         this.searching = false
         this.emit('exit', code)
@@ -221,10 +221,13 @@ export class PikafishEngine extends EventEmitter {
       this.send('isready')
       await this.waitFor('readyok', 10000)
       this.ready = true
-      console.log('Pikafish engine initialized successfully')
+      structuredLog('info', 'engine_ready', { kind: this.variant })
       return true
     } catch (err) {
-      console.error('Failed to start Pikafish:', err)
+      structuredLog('error', 'engine_start_failed', {
+        kind: this.variant,
+        errorCode: err instanceof Error ? err.name : 'unknown',
+      })
       return false
     }
   }
@@ -279,7 +282,7 @@ export class PikafishEngine extends EventEmitter {
     limit?: EngineSearchLimit,
   ): Promise<EngineMoveResult> {
     if (!this.ready || !this.process) {
-      console.error('Engine not ready, attempting reinit...')
+      structuredLog('warn', 'engine_reinitializing', { kind: this.variant })
       const ok = await this.init(this.runtimeOptions)
       if (!ok) return { move: null, searchCapped: false }
     }
@@ -309,7 +312,10 @@ export class PikafishEngine extends EventEmitter {
         }
       }
     } catch (err) {
-      console.error('getBestMove error:', err)
+      structuredLog('error', 'engine_bestmove_failed', {
+        kind: this.variant,
+        errorCode: err instanceof Error ? err.name : 'unknown',
+      })
       this.terminateProcess()
       throw err
     }
@@ -368,7 +374,10 @@ export class PikafishEngine extends EventEmitter {
         .map(([, candidate]) => candidate)
         .slice(0, candidateCount)
     } catch (err) {
-      console.error('getCandidates error:', err)
+      structuredLog('error', 'engine_candidates_failed', {
+        kind: this.variant,
+        errorCode: err instanceof Error ? err.name : 'unknown',
+      })
       this.terminateProcess()
       throw err
     } finally {

@@ -188,6 +188,13 @@ export type OnlineCommandCommit = {
     | { action: 'resolve'; id: string; status: 'accepted' | 'rejected' | 'withdrawn' }
 }
 
+export class ActiveMatchQuotaError extends Error {
+  constructor() {
+    super('active_match_quota_exceeded')
+    this.name = 'ActiveMatchQuotaError'
+  }
+}
+
 export class MySqlOnlineMatchRepository {
   constructor(private readonly database: Database) {}
 
@@ -201,12 +208,20 @@ export class MySqlOnlineMatchRepository {
     previousMatchId?: string
     competitionMode?: MatchEntity['competitionMode']
     clockPreset?: MatchEntity['clockPreset']
+    maxActiveMatches?: number
   }): Promise<OnlineMatchRecord> {
     const state = createOnlineRefereeState(input.variant, input.name)
     return this.database.transaction(async (client) => {
-      const profile = await this.requireActiveProfile(client, input.userId)
+      const profile = await this.requireActiveProfile(client, input.userId, true)
+      if (input.maxActiveMatches !== undefined) {
+        await this.assertActiveMatchCapacity(client, input.userId, input.maxActiveMatches)
+      }
       if (input.previousMatchId) {
-        const previous = await this.requireAccessibleMatch(client, input.previousMatchId, input.userId)
+        const previous = await this.requireAccessibleMatch(
+          client,
+          input.previousMatchId,
+          input.userId,
+        )
         if (previous.phase !== 'finished') throw new Error('只能从已结束对局发起再来一局')
       }
       const id = randomUUID()
@@ -219,7 +234,7 @@ export class MySqlOnlineMatchRepository {
         [
           id,
           input.variant,
-          input.variant === 'gomoku' ? input.gomokuRule ?? 'freestyle' : null,
+          input.variant === 'gomoku' ? (input.gomokuRule ?? 'freestyle') : null,
           input.competitionMode ?? 'casual',
           input.clockPreset ?? 'none',
           input.visibility,
@@ -241,6 +256,7 @@ export class MySqlOnlineMatchRepository {
     competitionMode: MatchEntity['competitionMode']
     clockPreset: MatchEntity['clockPreset']
     requestKey: string
+    maxActiveMatches?: number
   }): Promise<{ record: OnlineMatchRecord; created: boolean }> {
     return this.database.transaction(async (client) => {
       const profile = await this.requireActiveProfile(client, input.userId, true)
@@ -255,7 +271,7 @@ export class MySqlOnlineMatchRepository {
           created: false,
         }
       }
-      const partitionKey = `${input.variant}:${input.variant === 'gomoku' ? input.gomokuRule ?? 'freestyle' : '-'}:${input.competitionMode}:${input.clockPreset}`
+      const partitionKey = `${input.variant}:${input.variant === 'gomoku' ? (input.gomokuRule ?? 'freestyle') : '-'}:${input.competitionMode}:${input.clockPreset}`
       await client.query(
         `INSERT INTO matchmaking_partitions (partition_key) VALUES (?)
          ON DUPLICATE KEY UPDATE updated_at = updated_at`,
@@ -280,7 +296,13 @@ export class MySqlOnlineMatchRepository {
            VALUES (?, ?, ?)`,
           [input.userId, input.requestKey, existing.rows[0].match_id],
         )
-        return { record: await this.requireRecord(client, existing.rows[0].match_id), created: true }
+        return {
+          record: await this.requireRecord(client, existing.rows[0].match_id),
+          created: true,
+        }
+      }
+      if (input.maxActiveMatches !== undefined) {
+        await this.assertActiveMatchCapacity(client, input.userId, input.maxActiveMatches)
       }
       const candidate = await client.query<{ user_id: string; match_id: string }>(
         `SELECT user_id, match_id FROM matchmaking_entries
@@ -290,7 +312,7 @@ export class MySqlOnlineMatchRepository {
         [
           input.userId,
           input.variant,
-          input.variant === 'gomoku' ? input.gomokuRule ?? 'freestyle' : null,
+          input.variant === 'gomoku' ? (input.gomokuRule ?? 'freestyle') : null,
           input.competitionMode,
           input.clockPreset,
         ],
@@ -342,7 +364,7 @@ export class MySqlOnlineMatchRepository {
         [
           id,
           input.variant,
-          input.variant === 'gomoku' ? input.gomokuRule ?? 'freestyle' : null,
+          input.variant === 'gomoku' ? (input.gomokuRule ?? 'freestyle') : null,
           input.competitionMode,
           input.clockPreset,
           input.userId,
@@ -360,7 +382,7 @@ export class MySqlOnlineMatchRepository {
           input.userId,
           id,
           input.variant,
-          input.variant === 'gomoku' ? input.gomokuRule ?? 'freestyle' : null,
+          input.variant === 'gomoku' ? (input.gomokuRule ?? 'freestyle') : null,
           input.competitionMode,
           input.clockPreset,
           input.requestKey,
@@ -386,7 +408,7 @@ export class MySqlOnlineMatchRepository {
       if (!entry.rows[0]) return { cancelled: false }
       const match = await this.requireMatch(client, entry.rows[0].match_id, true)
       if (match.phase === 'waiting') {
-        await client.query('DELETE FROM matches WHERE id = ? AND phase = \'waiting\'', [match.id])
+        await client.query("DELETE FROM matches WHERE id = ? AND phase = 'waiting'", [match.id])
         return { cancelled: true, matchId: match.id }
       }
       await client.query('DELETE FROM matchmaking_entries WHERE user_id = ?', [userId])
@@ -421,7 +443,9 @@ export class MySqlOnlineMatchRepository {
     })
   }
 
-  async previewInvite(token: string): Promise<{ record: OnlineMatchRecord; allowedSide: RoomColor | null }> {
+  async previewInvite(
+    token: string,
+  ): Promise<{ record: OnlineMatchRecord; allowedSide: RoomColor | null }> {
     return this.database.connection(async (client) => {
       const invite = await client.query<{ match_id: string; allowed_side: RoomColor | null }>(
         `SELECT match_id, allowed_side FROM match_invites
@@ -437,7 +461,12 @@ export class MySqlOnlineMatchRepository {
     })
   }
 
-  async joinInvite(userId: string, token: string, requestedSide?: RoomColor): Promise<OnlineMatchRecord> {
+  async joinInvite(
+    userId: string,
+    token: string,
+    requestedSide?: RoomColor,
+    maxActiveMatches?: number,
+  ): Promise<OnlineMatchRecord> {
     return this.database.transaction(async (client) => {
       const profile = await this.requireActiveProfile(client, userId, true)
       const invite = await client.query<{
@@ -463,9 +492,14 @@ export class MySqlOnlineMatchRepository {
         )
         return this.requireRecord(client, match.id)
       }
+      if (maxActiveMatches !== undefined) {
+        await this.assertActiveMatchCapacity(client, userId, maxActiveMatches)
+      }
       const allowed = invite.rows[0].allowed_side
-      const side = allowed ?? requestedSide ?? (current.some((item) => item.side === 'red') ? 'black' : 'red')
-      if (allowed && requestedSide && requestedSide !== allowed) throw new Error('邀请仅允许加入指定席位')
+      const side =
+        allowed ?? requestedSide ?? (current.some((item) => item.side === 'red') ? 'black' : 'red')
+      if (allowed && requestedSide && requestedSide !== allowed)
+        throw new Error('邀请仅允许加入指定席位')
       if (current.some((item) => item.side === side)) throw new Error('目标席位已被占用')
       await this.insertParticipant(client, match.id, userId, side, false, profile)
       const used = await client.query(
@@ -478,7 +512,12 @@ export class MySqlOnlineMatchRepository {
     })
   }
 
-  async joinPublic(userId: string, matchId: string, requestedSide?: RoomColor): Promise<OnlineMatchRecord> {
+  async joinPublic(
+    userId: string,
+    matchId: string,
+    requestedSide?: RoomColor,
+    maxActiveMatches?: number,
+  ): Promise<OnlineMatchRecord> {
     return this.database.transaction(async (client) => {
       const profile = await this.requireActiveProfile(client, userId, true)
       const match = await this.requireMatch(client, matchId, true)
@@ -488,6 +527,9 @@ export class MySqlOnlineMatchRepository {
       const current = await this.participants(client, match.id, true)
       const existing = current.find((item) => item.userId === userId)
       if (existing) return this.requireRecord(client, match.id)
+      if (maxActiveMatches !== undefined) {
+        await this.assertActiveMatchCapacity(client, userId, maxActiveMatches)
+      }
       const side = requestedSide ?? (current.some((item) => item.side === 'red') ? 'black' : 'red')
       if (current.some((item) => item.side === side)) throw new Error('目标席位已被占用')
       await this.insertParticipant(client, match.id, userId, side, false, profile)
@@ -505,10 +547,12 @@ export class MySqlOnlineMatchRepository {
     })
   }
 
-  async listLobby(input: {
-    variant?: MatchVariant
-    limit?: number
-  } = {}): Promise<OnlineLobbyMatch[]> {
+  async listLobby(
+    input: {
+      variant?: MatchVariant
+      limit?: number
+    } = {},
+  ): Promise<OnlineLobbyMatch[]> {
     const limit = Math.min(50, Math.max(1, input.limit ?? 20))
     return this.database.connection(async (client) => {
       const result = await client.query<{ id: string }>(
@@ -560,7 +604,9 @@ export class MySqlOnlineMatchRepository {
       )
       const page = result.rows.slice(0, limit)
       return {
-        matches: await Promise.all(page.map(async (row) => summary(await this.requireRecord(client, row.id)))),
+        matches: await Promise.all(
+          page.map(async (row) => summary(await this.requireRecord(client, row.id))),
+        ),
         ...(result.rows.length > limit && page.at(-1)
           ? { nextCursor: page.at(-1)!.updated_at.toISOString() }
           : {}),
@@ -597,7 +643,10 @@ export class MySqlOnlineMatchRepository {
       }
       if (input.requireOwner && !actor.isOwner) throw new Error('只有房主可以执行此操作')
       const currentState = await this.state(client, match)
-      if (JSON.stringify(currentState) !== JSON.stringify(input.commit.state) && match.phase === 'finished') {
+      if (
+        JSON.stringify(currentState) !== JSON.stringify(input.commit.state) &&
+        match.phase === 'finished'
+      ) {
         throw new Error('已结束对局只读')
       }
       if (input.commit.participantReady !== undefined) {
@@ -616,8 +665,8 @@ export class MySqlOnlineMatchRepository {
           'UPDATE match_participants SET side = NULL, ready = false WHERE id IN (?, ?)',
           [red.id, black.id],
         )
-        await client.query('UPDATE match_participants SET side = \'black\' WHERE id = ?', [red.id])
-        await client.query('UPDATE match_participants SET side = \'red\' WHERE id = ?', [black.id])
+        await client.query("UPDATE match_participants SET side = 'black' WHERE id = ?", [red.id])
+        await client.query("UPDATE match_participants SET side = 'red' WHERE id = ?", [black.id])
       }
       if (input.commit.proposal?.action === 'create') {
         await client.query(
@@ -643,12 +692,7 @@ export class MySqlOnlineMatchRepository {
              resolved_at = CURRENT_TIMESTAMP(6)
            WHERE id = ? AND match_id = ? AND status = 'pending'
              AND deadline > CURRENT_TIMESTAMP(6)`,
-          [
-            input.commit.proposal.status,
-            input.userId,
-            input.commit.proposal.id,
-            input.matchId,
-          ],
+          [input.commit.proposal.status, input.userId, input.commit.proposal.id, input.matchId],
         )
         if (resolved.rowCount !== 1) throw new Error('申请已过期或被处理')
       }
@@ -663,7 +707,7 @@ export class MySqlOnlineMatchRepository {
           input.commit.status,
           input.commit.statusReason ?? null,
           input.commit.startedAt ?? null,
-          input.commit.phase === 'finished' ? input.commit.finishedAt ?? new Date() : null,
+          input.commit.phase === 'finished' ? (input.commit.finishedAt ?? new Date()) : null,
           input.matchId,
           match.revision,
         ],
@@ -780,12 +824,16 @@ export class MySqlOnlineMatchRepository {
       if (match.phase === 'finished') throw new Error('已结束对局的聊天只读')
       const profile = await this.requireActiveProfile(client, input.userId)
       const actor = await this.findParticipant(client, input.matchId, input.userId, true)
-      const settings = await client.query<{ everyone_muted: number | boolean; next_sequence: string }>(
+      const settings = await client.query<{
+        everyone_muted: number | boolean
+        next_sequence: string
+      }>(
         `SELECT everyone_muted, next_sequence FROM match_chat_settings
          WHERE match_id = ? FOR UPDATE`,
         [input.matchId],
       )
-      if (Boolean(settings.rows[0]?.everyone_muted) && !actor?.isOwner) throw new Error('当前对局已全员禁言')
+      if (Boolean(settings.rows[0]?.everyone_muted) && !actor?.isOwner)
+        throw new Error('当前对局已全员禁言')
       const muted = await client.query<{ present: number }>(
         `SELECT EXISTS(SELECT 1 FROM match_chat_mutes WHERE match_id = ? AND user_id = ?) AS present`,
         [input.matchId, input.userId],
@@ -832,7 +880,8 @@ export class MySqlOnlineMatchRepository {
         [messageId, matchId],
       )
       if (!message.rows[0]) throw new RepositoryNotFoundError()
-      if (!actor?.isOwner && message.rows[0].author_user_id !== userId) throw new RepositoryNotFoundError()
+      if (!actor?.isOwner && message.rows[0].author_user_id !== userId)
+        throw new RepositoryNotFoundError()
       await client.query(
         `UPDATE match_chat_messages SET content = NULL, moderation_state = 'deleted',
            deleted_at = CURRENT_TIMESTAMP(6), deletion_reason = ? WHERE id = ?`,
@@ -841,7 +890,12 @@ export class MySqlOnlineMatchRepository {
     })
   }
 
-  async setMute(matchId: string, ownerUserId: string, targetUserId: string, muted: boolean): Promise<void> {
+  async setMute(
+    matchId: string,
+    ownerUserId: string,
+    targetUserId: string,
+    muted: boolean,
+  ): Promise<void> {
     await this.database.transaction(async (client) => {
       const owner = await this.requireParticipant(client, matchId, ownerUserId)
       if (!owner.isOwner) throw new Error('只有房主可以管理禁言')
@@ -871,19 +925,24 @@ export class MySqlOnlineMatchRepository {
       const result = await client.query(
         `UPDATE match_participants SET disconnected_at = ?, disconnect_deadline = ?
          WHERE match_id = ? AND user_id = ? AND left_at IS NULL AND side IS NOT NULL`,
-        [connected ? null : new Date(), connected ? null : deadline ?? null, matchId, userId],
+        [connected ? null : new Date(), connected ? null : (deadline ?? null), matchId, userId],
       )
       return result.rowCount === 1
     })
   }
 
-  async adjudicateDisconnect(matchId: string, userId: string, deadline: Date): Promise<OnlineMatchRecord | null> {
+  async adjudicateDisconnect(
+    matchId: string,
+    userId: string,
+    deadline: Date,
+  ): Promise<OnlineMatchRecord | null> {
     return this.database.transaction(async (client) => {
       const match = await this.requireMatch(client, matchId, true)
       if (match.phase !== 'playing') return null
       const players = await this.participants(client, matchId, true)
       const disconnected = players.find(
-        (item) => item.userId === userId && item.disconnectDeadline?.getTime() === deadline.getTime(),
+        (item) =>
+          item.userId === userId && item.disconnectDeadline?.getTime() === deadline.getTime(),
       )
       if (!disconnected?.side || deadline.getTime() > Date.now()) return null
       const bothOffline = players
@@ -946,7 +1005,11 @@ export class MySqlOnlineMatchRepository {
     )
   }
 
-  private async requireActiveProfile(client: Queryable, userId: string, lock = false): Promise<string> {
+  private async requireActiveProfile(
+    client: Queryable,
+    userId: string,
+    lock = false,
+  ): Promise<string> {
     const result = await client.query<{ display_name: string }>(
       `SELECT p.display_name FROM users u JOIN user_profiles p ON p.user_id = u.id
        WHERE u.id = ? AND u.status = 'active'${lock ? ' FOR UPDATE' : ''}`,
@@ -956,8 +1019,25 @@ export class MySqlOnlineMatchRepository {
     return result.rows[0].display_name
   }
 
+  private async assertActiveMatchCapacity(client: Queryable, userId: string, maximum: number) {
+    const result = await client.query<{ active_count: string | number }>(
+      `SELECT COUNT(*) AS active_count
+       FROM match_participants p
+       JOIN matches m ON m.id = p.match_id
+       WHERE p.user_id = ? AND p.left_at IS NULL AND p.side IS NOT NULL
+         AND m.phase IN ('waiting', 'playing')`,
+      [userId],
+    )
+    if (Number(result.rows[0]?.active_count) >= maximum) {
+      throw new ActiveMatchQuotaError()
+    }
+  }
+
   private async findMatch(client: Queryable, id: string): Promise<MatchEntity | null> {
-    const result = await client.query<MatchRow>(`SELECT ${MATCH_COLUMNS} FROM matches WHERE id = ?`, [id])
+    const result = await client.query<MatchRow>(
+      `SELECT ${MATCH_COLUMNS} FROM matches WHERE id = ?`,
+      [id],
+    )
     return result.rows[0] ? matchEntity(result.rows[0]) : null
   }
 
@@ -970,7 +1050,11 @@ export class MySqlOnlineMatchRepository {
     return matchEntity(result.rows[0])
   }
 
-  private async participants(client: Queryable, id: string, lock = false): Promise<OnlineParticipant[]> {
+  private async participants(
+    client: Queryable,
+    id: string,
+    lock = false,
+  ): Promise<OnlineParticipant[]> {
     const result = await client.query<ParticipantRow>(
       `SELECT id, user_id, side, is_owner, display_name_snapshot, ready, hints_used, joined_at,
               disconnected_at, disconnect_deadline
@@ -1017,7 +1101,11 @@ export class MySqlOnlineMatchRepository {
     if (!result.rows[0] || Number(result.rows[0].revision) !== match.revision) {
       throw new Error('公网对局状态 revision 不一致')
     }
-    return readOnlineRefereeState(json(result.rows[0].referee_state), match.variant, match.gomokuRule)
+    return readOnlineRefereeState(
+      json(result.rows[0].referee_state),
+      match.variant,
+      match.gomokuRule,
+    )
   }
 
   private async pendingProposal(client: Queryable, id: string): Promise<OnlineProposal | null> {

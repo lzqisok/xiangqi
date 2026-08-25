@@ -1,15 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import type { MatchEntity, MatchVariant } from '../repositories/contracts.js'
 import { RepositoryNotFoundError, RepositoryRevisionConflictError } from '../db/errors.js'
-import {
-  executeRoomMoveFromState,
-  projectBoard,
-  rebuildRoomBoard,
-} from '../rooms/core.js'
+import { executeRoomMoveFromState, projectBoard, rebuildRoomBoard } from '../rooms/core.js'
 import { executeGomokuMove, rebuildGomokuRoom } from '../rooms/gomokuCore.js'
 import { buildJieqiRoomProjection } from '../rooms/jieqiRecord.js'
 import type { RoomColor, RoomStatusReason, StoredRoom } from '../rooms/types.js'
 import {
+  ActiveMatchQuotaError,
   MySqlOnlineMatchRepository,
   onlineMatchSummary,
   type OnlineCommandCommit,
@@ -22,6 +19,12 @@ import type {
   OnlineMatchRecord,
   OnlineMatchSnapshot,
 } from './types.js'
+import {
+  chatRateRules,
+  MySqlRateLimitStore,
+  RateLimitExceededError,
+} from '../platform/rateLimit.js'
+import { metrics } from '../platform/observability.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -30,6 +33,7 @@ export class OnlineMatchError extends Error {
     readonly code: string,
     readonly status = 400,
     message = code,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message)
     this.name = 'OnlineMatchError'
@@ -53,7 +57,8 @@ function gomokuRule(value: unknown, selectedVariant: MatchVariant) {
 
 function side(value: unknown, fallback?: RoomColor): RoomColor {
   if (value === undefined && fallback) return fallback
-  if (value !== 'red' && value !== 'black') throw new OnlineMatchError('invalid_side', 400, '席位无效')
+  if (value !== 'red' && value !== 'black')
+    throw new OnlineMatchError('invalid_side', 400, '席位无效')
   return value
 }
 
@@ -103,7 +108,9 @@ function requirePlayer(record: OnlineMatchRecord, userId: string) {
   return participant as typeof participant & { side: RoomColor }
 }
 
-function commandBase(record: OnlineMatchRecord): Pick<
+function commandBase(
+  record: OnlineMatchRecord,
+): Pick<
   OnlineCommandCommit,
   'state' | 'phase' | 'status' | 'statusReason' | 'startedAt' | 'finishedAt'
 > {
@@ -120,7 +127,9 @@ function commandBase(record: OnlineMatchRecord): Pick<
 }
 
 function normalizeChat(value: unknown): string {
-  const content = String(value ?? '').replace(/\r\n?/g, '\n').trim()
+  const content = String(value ?? '')
+    .replace(/\r\n?/g, '\n')
+    .trim()
   if (!content) throw new OnlineMatchError('chat_empty', 400, '消息不能为空')
   if (Array.from(content).length > 200 || content.split('\n').length > 4) {
     throw new OnlineMatchError('chat_too_long', 400, '消息最多 200 字且不超过四行')
@@ -133,12 +142,23 @@ type Rate = { startedAt: number; count: number }
 export class OnlineMatchService {
   private readonly chatRates = new Map<string, Rate>()
 
-  constructor(readonly repository: MySqlOnlineMatchRepository) {}
+  constructor(
+    readonly repository: MySqlOnlineMatchRepository,
+    private readonly options: {
+      rateLimitStore?: MySqlRateLimitStore
+      maxActiveMatchesPerUser?: number
+    } = {},
+  ) {}
 
   async create(actor: OnlineActor, input: Record<string, unknown>): Promise<OnlineMatchRecord> {
     requirePlay(actor)
     const selectedVariant = variant(input.variant)
-    const visibility = input.visibility === 'private' ? 'private' : input.visibility === 'public' ? 'public' : 'invite'
+    const visibility =
+      input.visibility === 'private'
+        ? 'private'
+        : input.visibility === 'public'
+          ? 'public'
+          : 'invite'
     return this.repository.create({
       userId: actor.userId,
       name: String(input.name ?? ''),
@@ -147,7 +167,13 @@ export class OnlineMatchService {
       visibility,
       side: side(input.side, 'red'),
       competitionMode: 'casual',
-      clockPreset: input.clockPreset === '10m' || input.clockPreset === '15m-10s' || input.clockPreset === '30m' ? input.clockPreset : 'none',
+      clockPreset:
+        input.clockPreset === '10m' ||
+        input.clockPreset === '15m-10s' ||
+        input.clockPreset === '30m'
+          ? input.clockPreset
+          : 'none',
+      maxActiveMatches: this.options.maxActiveMatchesPerUser,
     })
   }
 
@@ -157,17 +183,32 @@ export class OnlineMatchService {
     if (input.competitionMode === 'rated') {
       throw new OnlineMatchError('rated_not_available', 400, '排位匹配将在棋钟与等级分批次开放')
     }
-    return this.repository.quickMatch({
+    const result = await this.repository.quickMatch({
       userId: actor.userId,
       variant: selectedVariant,
       gomokuRule: gomokuRule(input.gomokuRule, selectedVariant),
       competitionMode: 'casual',
       clockPreset:
-        input.clockPreset === '10m' || input.clockPreset === '15m-10s' || input.clockPreset === '30m'
+        input.clockPreset === '10m' ||
+        input.clockPreset === '15m-10s' ||
+        input.clockPreset === '30m'
           ? input.clockPreset
           : 'none',
       requestKey: commandId(input.requestKey),
+      maxActiveMatches: this.options.maxActiveMatchesPerUser,
     })
+    metrics.increment('xiangqi_matchmaking_requests', {
+      result: result.record.match.phase === 'playing' ? 'matched' : 'waiting',
+      variant: selectedVariant,
+    })
+    if (result.record.match.startedAt) {
+      metrics.observe(
+        'xiangqi_matchmaking_wait',
+        result.record.match.startedAt.getTime() - result.record.match.createdAt.getTime(),
+        { variant: selectedVariant },
+      )
+    }
+    return result
   }
 
   cancelMatchmaking(actor: OnlineActor) {
@@ -196,6 +237,7 @@ export class OnlineMatchService {
       actor.userId,
       token,
       requestedSide === undefined ? undefined : side(requestedSide),
+      this.options.maxActiveMatchesPerUser,
     )
   }
 
@@ -205,6 +247,7 @@ export class OnlineMatchService {
       actor.userId,
       matchId,
       requestedSide === undefined ? undefined : side(requestedSide),
+      this.options.maxActiveMatchesPerUser,
     )
   }
 
@@ -215,7 +258,10 @@ export class OnlineMatchService {
     return record
   }
 
-  lobby(actor: OnlineActor, input: { variant?: unknown; limit?: unknown }): Promise<OnlineLobbyMatch[]> {
+  lobby(
+    actor: OnlineActor,
+    input: { variant?: unknown; limit?: unknown },
+  ): Promise<OnlineLobbyMatch[]> {
     requireWatch(actor)
     return this.repository.listLobby({
       ...(input.variant ? { variant: variant(input.variant) } : {}),
@@ -273,6 +319,7 @@ export class OnlineMatchService {
       previousMatchId: previous.match.id,
       competitionMode: previous.match.competitionMode,
       clockPreset: previous.match.clockPreset,
+      maxActiveMatches: this.options.maxActiveMatchesPerUser,
     })
   }
 
@@ -390,7 +437,8 @@ export class OnlineMatchService {
     const revision = currentRevision(record, input.expectedRevision)
     const player = requirePlayer(record, actor.userId)
     const kind = input.kind
-    if (kind !== 'undo' && kind !== 'draw' && kind !== 'swap') throw new OnlineMatchError('invalid_proposal')
+    if (kind !== 'undo' && kind !== 'draw' && kind !== 'swap')
+      throw new OnlineMatchError('invalid_proposal')
     if (record.proposal) throw new OnlineMatchError('proposal_pending', 409, '已有待处理协商')
     if (kind === 'swap' ? record.match.phase !== 'waiting' : record.match.phase !== 'playing') {
       throw new OnlineMatchError('proposal_not_allowed')
@@ -420,8 +468,10 @@ export class OnlineMatchService {
     const revision = currentRevision(record, input.expectedRevision)
     const player = requirePlayer(record, actor.userId)
     const active = record.proposal
-    if (!active || active.id !== input.proposalId) throw new OnlineMatchError('proposal_not_found', 404)
-    if (active.proposedByUserId === actor.userId) throw new OnlineMatchError('proposal_self_response')
+    if (!active || active.id !== input.proposalId)
+      throw new OnlineMatchError('proposal_not_found', 404)
+    if (active.proposedByUserId === actor.userId)
+      throw new OnlineMatchError('proposal_self_response')
     const accept = input.accept === true
     const commit: OnlineCommandCommit = {
       ...commandBase(record),
@@ -461,7 +511,11 @@ export class OnlineMatchService {
     const record = await this.get(actor, matchId)
     const revision = currentRevision(record, input.expectedRevision)
     const player = requirePlayer(record, actor.userId)
-    if (!record.proposal || record.proposal.id !== input.proposalId || record.proposal.proposedByUserId !== actor.userId) {
+    if (
+      !record.proposal ||
+      record.proposal.id !== input.proposalId ||
+      record.proposal.proposedByUserId !== actor.userId
+    ) {
       throw new OnlineMatchError('proposal_not_found', 404)
     }
     return this.repository.commitCommand({
@@ -486,6 +540,23 @@ export class OnlineMatchService {
   ): Promise<OnlineChatMessage> {
     requireWatch(actor)
     this.consumeChatRate(actor, matchId)
+    if (this.options.rateLimitStore) {
+      try {
+        await this.options.rateLimitStore.consume(
+          chatRateRules({ ip: actor.ipKey, userId: actor.userId, matchId }),
+        )
+      } catch (error) {
+        if (error instanceof RateLimitExceededError) {
+          throw new OnlineMatchError(
+            'chat_rate_limited',
+            429,
+            '发送过于频繁，请稍后再试',
+            error.retryAfterSeconds,
+          )
+        }
+        throw error
+      }
+    }
     return this.repository.appendChat({
       matchId,
       userId: actor.userId,
@@ -509,7 +580,11 @@ export class OnlineMatchService {
     return this.repository.setMute(matchId, actor.userId, targetUserId, muted)
   }
 
-  snapshot(record: OnlineMatchRecord, userId: string, onlineUsers: ReadonlySet<string>): OnlineMatchSnapshot {
+  snapshot(
+    record: OnlineMatchRecord,
+    userId: string,
+    onlineUsers: ReadonlySet<string>,
+  ): OnlineMatchSnapshot {
     const viewer = record.participants.find((item) => item.userId === userId)
     const role = viewer?.side ?? (viewer?.isOwner ? 'owner' : 'spectator')
     const audience = viewer?.side ?? 'public'
@@ -532,14 +607,26 @@ export class OnlineMatchService {
           seats: Object.fromEntries(
             record.participants.flatMap((item) =>
               item.side
-                ? [[item.side, { nickname: item.displayNameSnapshot, credentialHash: '0'.repeat(64), ready: item.ready, hintsUsed: item.hintsUsed }]]
+                ? [
+                    [
+                      item.side,
+                      {
+                        nickname: item.displayNameSnapshot,
+                        credentialHash: '0'.repeat(64),
+                        ready: item.ready,
+                        hintsUsed: item.hintsUsed,
+                      },
+                    ],
+                  ]
                 : [],
             ),
           ),
           initialLayout: record.state.initialLayout,
           moves: record.state.moves,
           status: record.match.status,
-          ...(record.match.statusReason ? { statusReason: record.match.statusReason as RoomStatusReason } : {}),
+          ...(record.match.statusReason
+            ? { statusReason: record.match.statusReason as RoomStatusReason }
+            : {}),
           createdAt: record.match.createdAt.getTime(),
           updatedAt: record.match.updatedAt.getTime(),
           startedAt: record.match.startedAt?.getTime(),
@@ -565,12 +652,19 @@ export class OnlineMatchService {
       seats: Object.fromEntries(
         record.participants.flatMap((item) =>
           item.side
-            ? [[item.side, {
-                nickname: item.displayNameSnapshot,
-                ready: item.ready,
-                online: Boolean(item.userId && onlineUsers.has(item.userId)),
-                ...(item.disconnectDeadline ? { disconnectDeadline: item.disconnectDeadline.toISOString() } : {}),
-              }]]
+            ? [
+                [
+                  item.side,
+                  {
+                    nickname: item.displayNameSnapshot,
+                    ready: item.ready,
+                    online: Boolean(item.userId && onlineUsers.has(item.userId)),
+                    ...(item.disconnectDeadline
+                      ? { disconnectDeadline: item.disconnectDeadline.toISOString() }
+                      : {}),
+                  },
+                ],
+              ]
             : [],
         ),
       ),
@@ -588,12 +682,15 @@ export class OnlineMatchService {
       })),
       captured: record.state.moves.flatMap((move) =>
         move.capturedColor
-          ? [{
-              color: move.capturedColor,
-              type: !move.capturedHidden || audience === move.color ? move.captured ?? null : null,
-              hidden: Boolean(move.capturedHidden),
-              capturedBy: move.color,
-            }]
+          ? [
+              {
+                color: move.capturedColor,
+                type:
+                  !move.capturedHidden || audience === move.color ? (move.captured ?? null) : null,
+                hidden: Boolean(move.capturedHidden),
+                capturedBy: move.color,
+              },
+            ]
           : [],
       ),
       ...(record.proposal && proposer?.side
@@ -621,6 +718,14 @@ export class OnlineMatchService {
       if (error instanceof RepositoryRevisionConflictError) {
         throw new OnlineMatchError('revision_conflict', 409, String(error.currentRevision ?? ''))
       }
+      if (error instanceof ActiveMatchQuotaError) {
+        throw new OnlineMatchError(
+          'active_match_quota_exceeded',
+          429,
+          '当前账号的活跃公网对局已达上限',
+          30,
+        )
+      }
       throw error
     }
   }
@@ -637,7 +742,8 @@ export class OnlineMatchService {
       }
     }
     if (this.chatRates.size > 2_000) {
-      for (const [key, rate] of this.chatRates) if (now - rate.startedAt >= 10_000) this.chatRates.delete(key)
+      for (const [key, rate] of this.chatRates)
+        if (now - rate.startedAt >= 10_000) this.chatRates.delete(key)
     }
   }
 }

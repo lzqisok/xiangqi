@@ -10,6 +10,9 @@
     "db:check": "tsx src/db/migrate-cli.ts check",
     "db:backup": "bash scripts/backup-mysql.sh",
     "db:restore:verify": "bash scripts/verify-mysql-restore.sh",
+    "platform:preflight": "node dist/platform/preflight.js",
+    "staging:smoke": "node scripts/staging-smoke.mjs",
+    "staging:read-load": "node scripts/staging-read-load.mjs",
     "start": "node dist/index.js",
     "test": "tsx --test \"src/**/*.test.ts\""
   },

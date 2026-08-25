@@ -1,0 +1,27 @@
+[Unit]
+Description=Xiangqi account and online server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xiangqi
+Group=xiangqi
+WorkingDirectory=/opt/xiangqi/current
+EnvironmentFile=/etc/xiangqi/runtime.env
+ExecStart=/opt/xiangqi/runtime/node-22.22.0/bin/node server/dist/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/xiangqi
+MemoryMax=4G
+TasksMax=128
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

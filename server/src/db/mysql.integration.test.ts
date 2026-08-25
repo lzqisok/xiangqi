@@ -83,9 +83,9 @@ test(
   integration,
   async () => {
     await withTestDatabase(async (database) => {
-      assert.deepEqual(await migrate(database), [1, 2, 3])
+      assert.deepEqual(await migrate(database), [1, 2, 3, 4])
       assert.deepEqual(await migrate(database), [])
-      assert.equal((await migrationStatus(database)).currentVersion, 3)
+      assert.equal((await migrationStatus(database)).currentVersion, 4)
 
       const accounts = new MySqlAccountRepository(database)
       const sessions = new MySqlSessionRepository(database)
@@ -440,15 +440,27 @@ test(
       const firstChat = await service.chat(redActor, matchId, chatCommand, '<b>服务端昵称</b>')
       const repeatedChat = await service.chat(redActor, matchId, chatCommand, '重复载荷不会新增')
       assert.equal(repeatedChat.id, firstChat.id)
-      assert.equal(repeatedChat.nickname, paired.participants.find((item) => item.userId === redId)!.displayNameSnapshot)
+      assert.equal(
+        repeatedChat.nickname,
+        paired.participants.find((item) => item.userId === redId)!.displayNameSnapshot,
+      )
       assert.equal((await service.chatHistory(firstActor, matchId)).length, 1)
 
       const firstHistory = await service.history(firstActor, {})
       const secondHistory = await service.history(secondActor, {})
       const outsiderHistory = await service.history(outsiderActor, {})
-      assert.equal(firstHistory.matches.some((item) => item.id === matchId), true)
-      assert.equal(secondHistory.matches.some((item) => item.id === matchId), true)
-      assert.equal(outsiderHistory.matches.some((item) => item.id === matchId), false)
+      assert.equal(
+        firstHistory.matches.some((item) => item.id === matchId),
+        true,
+      )
+      assert.equal(
+        secondHistory.matches.some((item) => item.id === matchId),
+        true,
+      )
+      assert.equal(
+        outsiderHistory.matches.some((item) => item.id === matchId),
+        false,
+      )
       assert.equal(
         (await service.history(firstActor, { from: '2999-01-01T00:00:00.000Z' })).matches.length,
         0,
@@ -470,7 +482,10 @@ test(
       })
       const invite = await service.createInvite(firstActor, privateMatch.match.id)
       const invited = await service.joinInvite(secondActor, invite.token)
-      assert.equal(invited.participants.some((item) => item.userId === second.id), true)
+      assert.equal(
+        invited.participants.some((item) => item.userId === second.id),
+        true,
+      )
       await assert.rejects(service.joinInvite(outsiderActor, invite.token), { code: 'not_found' })
       const firstReady = await service.ready(firstActor, {
         matchId: privateMatch.match.id,
@@ -541,7 +556,8 @@ test(
         }),
       ])
       assert.equal(gomokuFirst.record.match.id, gomokuSecond.record.match.id)
-      const gomokuRedId = gomokuFirst.record.participants.find((item) => item.side === 'red')!.userId
+      const gomokuRecord = await service.get(firstActor, gomokuFirst.record.match.id)
+      const gomokuRedId = gomokuRecord.participants.find((item) => item.side === 'red')!.userId
       const gomokuMoved = await service.move(gomokuRedId === first.id ? firstActor : secondActor, {
         matchId: gomokuFirst.record.match.id,
         commandId: randomUUID(),
@@ -556,7 +572,8 @@ test(
         service.quickMatch(secondActor, { variant: 'jieqi', requestKey: randomUUID() }),
       ])
       assert.equal(jieqiFirst.record.match.id, jieqiSecond.record.match.id)
-      const jieqiRedId = jieqiFirst.record.participants.find((item) => item.side === 'red')!.userId
+      const jieqiRecord = await service.get(firstActor, jieqiFirst.record.match.id)
+      const jieqiRedId = jieqiRecord.participants.find((item) => item.side === 'red')!.userId
       const jieqiMoved = await service.move(jieqiRedId === first.id ? firstActor : secondActor, {
         matchId: jieqiFirst.record.match.id,
         commandId: randomUUID(),
@@ -564,7 +581,10 @@ test(
         uci: 'a3a4',
       })
       assert.equal(jieqiMoved.record.state.moves.length, 1)
-      assert.equal((await repository.recoverActiveMatches()).some((item) => item.match.id === matchId), true)
+      assert.equal(
+        (await repository.recoverActiveMatches()).some((item) => item.match.id === matchId),
+        true,
+      )
     })
   },
 )
@@ -733,7 +753,7 @@ test('a database at migration 0001 upgrades to the current version', integration
         [first.version, first.name, first.checksum],
       )
     })
-    assert.deepEqual(await migrate(database), [2, 3])
-    assert.equal((await migrationStatus(database)).currentVersion, 3)
+    assert.deepEqual(await migrate(database), [2, 3, 4])
+    assert.equal((await migrationStatus(database)).currentVersion, 4)
   })
 })

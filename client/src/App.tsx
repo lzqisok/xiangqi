@@ -125,6 +125,8 @@ import LanApp from './lan/LanApp'
 import OnlineApp from './online/OnlineApp'
 import AccountEntry from './auth/AccountEntry'
 
+const PUBLIC_ONLINE_ENABLED = import.meta.env.VITE_PUBLIC_ONLINE_ENABLED === 'true'
+
 const GomokuApp = lazy(() => import('./gomoku/GomokuApp'))
 const GomokuLanApp = lazy(() => import('./gomoku/lan/GomokuLanApp'))
 
@@ -153,7 +155,7 @@ type XiangqiRule = 'xiangqi' | 'jieqi'
 
 export default function App() {
   const search = new URLSearchParams(window.location.search)
-  if (search.has('online')) return <OnlineApp />
+  if (search.has('online')) return PUBLIC_ONLINE_ENABLED ? <OnlineApp /> : <HomeScreen />
   if (search.has('gomoku') && (search.has('lan') || search.has('room')))
     return (
       <Suspense fallback={<main className="home-screen">正在载入五子棋大厅…</main>}>
@@ -316,12 +318,14 @@ function GameModeScreen({ game }: { game: 'xiangqi' | 'gomoku' }) {
             <small>创建局域网房间、邀请棋友、实时聊天与观战</small>
             <b>进入局域网大厅 →</b>
           </a>
-          <a href={gomoku ? '?online=1&game=gomoku' : '?online=1&game=xiangqi'}>
-            <span className="home-entry-mark online">联</span>
-            <strong>公网对战</strong>
-            <small>账号登录、快速匹配、邀请对局与跨设备历史恢复</small>
-            <b>进入公网大厅 →</b>
-          </a>
+          {PUBLIC_ONLINE_ENABLED && (
+            <a href={gomoku ? '?online=1&game=gomoku' : '?online=1&game=xiangqi'}>
+              <span className="home-entry-mark online">联</span>
+              <strong>公网对战</strong>
+              <small>账号登录、快速匹配、邀请对局与跨设备历史恢复</small>
+              <b>进入公网大厅 →</b>
+            </a>
+          )}
           <a href={gomoku ? '?gomoku=1&local=1&history=1' : '?local=1&intent=study'}>
             <span className="home-entry-mark study">研</span>
             <strong>训练与研究</strong>

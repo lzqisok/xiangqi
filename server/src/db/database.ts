@@ -7,6 +7,7 @@ import mysql, {
 } from 'mysql2/promise'
 import type { DatabaseConfig } from './config.js'
 import { DatabaseUnavailableError, translateDatabaseError } from './errors.js'
+import { metrics } from '../platform/observability.js'
 
 export type QueryResult<R> = { rows: R[]; rowCount: number }
 
@@ -26,6 +27,7 @@ function convertResult<R>(result: MySqlQueryResult): QueryResult<R> {
 export class Database {
   private readonly pool: Pool
   private closed = false
+  private activeConnections = 0
 
   constructor(
     readonly config: DatabaseConfig,
@@ -55,6 +57,8 @@ export class Database {
     values: readonly unknown[] = [],
   ): Promise<QueryResult<R>> {
     if (this.closed) throw new DatabaseUnavailableError()
+    const startedAt = performance.now()
+    this.connectionAcquired()
     try {
       const [result] = await this.pool.query<RowDataPacket[] | ResultSetHeader>({
         sql: text,
@@ -63,29 +67,47 @@ export class Database {
       })
       return convertResult<R>(result)
     } catch (error) {
+      metrics.increment('xiangqi_database_errors', { operation: 'query' })
       throw translateDatabaseError(error)
+    } finally {
+      this.connectionReleased()
+      metrics.observe('xiangqi_database_duration', performance.now() - startedAt, {
+        operation: 'query',
+      })
     }
   }
 
   async connection<T>(action: (client: Queryable) => Promise<T>): Promise<T> {
     if (this.closed) throw new DatabaseUnavailableError()
     let connection: PoolConnection | undefined
+    const startedAt = performance.now()
+    metrics.increment('xiangqi_database_connection_attempts')
     try {
       connection = await this.pool.getConnection()
+      this.connectionAcquired()
       await this.initializeConnection(connection)
       return await action(this.queryable(connection))
     } catch (error) {
+      metrics.increment('xiangqi_database_errors', { operation: 'connection' })
       throw translateDatabaseError(error)
     } finally {
-      connection?.release()
+      if (connection) {
+        connection.release()
+        this.connectionReleased()
+      }
+      metrics.observe('xiangqi_database_duration', performance.now() - startedAt, {
+        operation: 'connection',
+      })
     }
   }
 
   async transaction<T>(action: (client: Queryable) => Promise<T>): Promise<T> {
     if (this.closed) throw new DatabaseUnavailableError()
     let connection: PoolConnection | undefined
+    const startedAt = performance.now()
     try {
       connection = await this.pool.getConnection()
+      this.connectionAcquired()
       await this.initializeConnection(connection)
       await connection.beginTransaction()
       const result = await action(this.queryable(connection))
@@ -93,9 +115,17 @@ export class Database {
       return result
     } catch (error) {
       if (connection) await connection.rollback().catch(() => undefined)
+      metrics.increment('xiangqi_database_errors', { operation: 'transaction' })
+      metrics.increment('xiangqi_database_rollbacks')
       throw translateDatabaseError(error)
     } finally {
-      connection?.release()
+      if (connection) {
+        connection.release()
+        this.connectionReleased()
+      }
+      metrics.observe('xiangqi_database_duration', performance.now() - startedAt, {
+        operation: 'transaction',
+      })
     }
   }
 
@@ -128,14 +158,42 @@ export class Database {
   private queryable(connection: PoolConnection): Queryable {
     return {
       query: async <R>(text: string, values: readonly unknown[] = []) => {
-        const [result] = await connection.query<RowDataPacket[] | ResultSetHeader>({
-          sql: text,
-          values: [...values],
-          timeout: this.config.queryTimeoutMs,
-        })
-        return convertResult<R>(result)
+        const startedAt = performance.now()
+        try {
+          const [result] = await connection.query<RowDataPacket[] | ResultSetHeader>({
+            sql: text,
+            values: [...values],
+            timeout: this.config.queryTimeoutMs,
+          })
+          return convertResult<R>(result)
+        } catch (error) {
+          metrics.increment('xiangqi_database_errors', { operation: 'statement' })
+          throw error
+        } finally {
+          metrics.observe('xiangqi_database_duration', performance.now() - startedAt, {
+            operation: 'statement',
+          })
+        }
       },
     }
+  }
+
+  private connectionAcquired(): void {
+    this.activeConnections += 1
+    metrics.gauge('xiangqi_database_active_connections', this.activeConnections)
+    metrics.gauge(
+      'xiangqi_database_pool_pressure_ratio',
+      this.activeConnections / this.config.poolMax,
+    )
+  }
+
+  private connectionReleased(): void {
+    this.activeConnections = Math.max(0, this.activeConnections - 1)
+    metrics.gauge('xiangqi_database_active_connections', this.activeConnections)
+    metrics.gauge(
+      'xiangqi_database_pool_pressure_ratio',
+      this.activeConnections / this.config.poolMax,
+    )
   }
 
   private async initializeConnection(connection: PoolConnection): Promise<void> {

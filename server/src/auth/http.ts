@@ -16,6 +16,7 @@ import { MySqlAuthRepository } from './repository.js'
 import { AuthError, AuthService } from './service.js'
 import { createOpaqueToken, parseCookies, serializeCookie } from './security.js'
 import type { AuthSession, AuthTokenDelivery, PublicActor, UserActor } from './types.js'
+import { metrics } from '../platform/observability.js'
 
 export const SESSION_COOKIE = '__Host-xiangqi_session'
 export const DEVELOPMENT_SESSION_COOKIE = 'xiangqi_session'
@@ -28,6 +29,7 @@ export type AuthRuntimeOptions = {
   production: boolean
   exposeDevelopmentTokens: boolean
   allowedOrigins?: readonly string[]
+  clientIp?: (request: Request | IncomingMessage) => string
 }
 
 function asyncRoute(
@@ -111,18 +113,23 @@ export function createAuthRuntime(
   )
   const router = Router()
   const accountRouter = Router()
+  const getRequestIp = (request: Request | IncomingMessage) =>
+    options.clientIp?.(request) || requestIp(request)
 
-  const authenticateRequest = async (request: Request | IncomingMessage): Promise<RequestAuth> => {
+  const authenticateRequest = async (
+    request: Request | IncomingMessage,
+    requestId = randomUUID(),
+  ): Promise<RequestAuth> => {
     const cookies = parseCookies(request.headers.cookie)
     return service.authenticate(
       cookies.get(cookieName(options.production)),
-      randomUUID(),
-      requestIp(request),
+      requestId,
+      getRequestIp(request),
     )
   }
 
   const actorMiddleware = asyncRoute(async (request, response, next) => {
-    response.locals.auth = await authenticateRequest(request)
+    response.locals.auth = await authenticateRequest(request, response.locals.requestId)
     response.setHeader('X-Request-Id', authLocals(response).actor.requestId)
     next()
   })
@@ -185,9 +192,10 @@ export function createAuthRuntime(
         email: request.body?.email,
         password: request.body?.password,
         displayName: request.body?.displayName,
-        ipKey: requestIp(request),
+        ipKey: getRequestIp(request),
         userAgent: request.header('user-agent'),
       })
+      metrics.increment('xiangqi_auth_attempts', { action: 'register', result: 'accepted' })
       response.status(202).json({
         accepted: true,
         ...(options.exposeDevelopmentTokens && result.developmentToken
@@ -217,16 +225,17 @@ export function createAuthRuntime(
       const credentials = await service.login({
         email: request.body?.email,
         password: request.body?.password,
-        ipKey: requestIp(request),
+        ipKey: getRequestIp(request),
         deviceKey,
         deviceLabel: request.body?.deviceLabel,
         userAgent: request.header('user-agent'),
       })
+      metrics.increment('xiangqi_auth_attempts', { action: 'login', result: 'success' })
       appendSessionCookies(response, credentials.sessionToken, credentials.csrfToken)
       const account = await service.profile({
         kind: 'user',
         requestId: authLocals(response).actor.requestId,
-        ipKey: requestIp(request),
+        ipKey: getRequestIp(request),
         userId: credentials.session.userId,
         sessionId: credentials.session.id,
         authEpoch: credentials.session.authEpoch,
@@ -392,29 +401,40 @@ export function createAuthRuntime(
 
   const errorMiddleware = (
     error: unknown,
-    _request: Request,
+    request: Request,
     response: Response,
     next: NextFunction,
   ) => {
     if (response.headersSent) return next(error)
     if (error instanceof AuthError) {
       const [code, retryAfter] = error.code.split(':')
+      const action = request.path.includes('login')
+        ? 'login'
+        : request.path.includes('register')
+          ? 'register'
+          : request.path.includes('password')
+            ? 'recovery'
+            : 'other'
+      metrics.increment('xiangqi_auth_attempts', { action, result: 'rejected' })
       if (retryAfter) response.setHeader('Retry-After', retryAfter)
-      response.status(error.status).json({ error: code })
+      response.status(error.status).json({ error: code, requestId: response.locals.requestId })
       return
     }
     const validationCode = error instanceof Error && error.message.startsWith('invalid_')
     if (validationCode) {
-      response.status(400).json({ error: error.message })
+      response.status(400).json({ error: error.message, requestId: response.locals.requestId })
       return
     }
     if (error instanceof DatabaseUnavailableError) {
-      response.status(503).json({ error: error.code })
+      response.status(503).json({ error: error.code, requestId: response.locals.requestId })
       return
     }
     if (error instanceof RepositoryError) {
       const status = error.code === 'not_found' ? 404 : error.code.endsWith('_conflict') ? 409 : 500
-      response.status(status).json({ error: status === 500 ? 'internal_error' : error.code })
+      response.status(status).json({
+        error: status === 500 ? 'internal_error' : error.code,
+        requestId: response.locals.requestId,
+      })
       return
     }
     next(error)

@@ -282,6 +282,8 @@ pnpm --filter server test        # 服务端测试
 pnpm --filter client build       # 客户端构建
 pnpm --filter server build       # 服务端构建
 pnpm --filter server start       # 运行已构建服务端
+pnpm --filter server platform:preflight # 校验生产配置、版本和引擎制品
+pnpm --filter server staging:smoke      # staging HTTPS/账号只读冒烟
 ```
 
 ## 难度与引擎设置
@@ -386,14 +388,17 @@ pnpm --filter server build
 pnpm --filter server start
 ```
 
-前端生产文件位于 `client/dist/`，项目当前未内置统一生产部署脚本。
+前端生产文件位于 `client/dist/`。公网部署必须先阅读
+[`docs/online-production-runbook.md`](./docs/online-production-runbook.md)，并按
+[`deploy/nginx.conf.example`](./deploy/nginx.conf.example) 与
+[`deploy/xiangqi.service.example`](./deploy/xiangqi.service.example) 配置 TLS 代理、可信转发头、外部 secret 和资源上限。示例不是可直接复制到生产的完整平台配置。
 
 ## 当前边界与后续方向
 
 - 普通象棋的三次重复局面会按长将、长捉、将捉交替和双方责任自动裁定；普通重复作和，单方禁止着法判责任方负。揭棋继续使用独立规则，不进入该裁定器。
 - 分享功能采用 URL 内嵌的完整变招树回放 v2，暂不提供云端短链、封面、访问权限或过期失效。
 - 研究分析和复盘结果已绑定到变招节点；支持分析当前节点/分支、停止与同配置缓存复用，并可只读比较两条分支的胜率、分值、推荐变化和主要分歧。
-- 当前有小型开局名称目录，但没有供引擎走棋的大型统计开局库、账号、云同步和公网房间。
+- 当前有小型开局名称目录，但没有供引擎走棋的大型统计开局库。账号与数据库权威公网对局已实现，公网入口默认关闭；只有 staging 发布、回滚和备份恢复门禁留有证据后，才同时开启服务端 `PUBLIC_ONLINE_ENABLED` 与前端 `VITE_PUBLIC_ONLINE_ENABLED`。个人研究、训练、残局和设置的账号云同步仍在后续批次。
 
 完整优先级见 [`TODO.md`](./TODO.md)，变招树的数据模型与迁移说明见 [`docs/variation-tree-design.md`](./docs/variation-tree-design.md)。
 

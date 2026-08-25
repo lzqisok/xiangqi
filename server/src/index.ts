@@ -22,35 +22,84 @@ import { Database } from './db/database.js'
 import { assertSchemaReady } from './db/migrations.js'
 import { createAuthRuntime } from './auth/http.js'
 import type { UserActor } from './auth/types.js'
+import { createAuthTokenDelivery } from './auth/delivery.js'
 import { MySqlOnlineMatchRepository } from './online/repository.js'
 import { OnlineMatchService } from './online/service.js'
 import { OnlineMatchError } from './online/service.js'
 import { OnlineMatchManager } from './online/manager.js'
 import { createOnlineRouters } from './online/routes.js'
+import { loadPlatformConfig, PlatformConfigError } from './platform/config.js'
+import {
+  clientIp,
+  createCorsAndOriginGuard,
+  createPayloadComplexityGuard,
+  createRequestContext,
+  createSecurityHeaders,
+  createTransportSecurity,
+  jsonErrorHandler,
+  requestOriginAllowed,
+  TrustedProxyPolicy,
+} from './platform/security.js'
+import {
+  createHttpObservability,
+  engineHealthSnapshot,
+  metrics,
+  recordProcessMetrics,
+  structuredLog,
+} from './platform/observability.js'
+import {
+  ConnectionQuota,
+  EngineResourceGovernor,
+  ResourceLimitError,
+} from './platform/resources.js'
+import {
+  createPersistentRateLimitMiddleware,
+  MySqlRateLimitStore,
+  rateLimitErrorMiddleware,
+} from './platform/rateLimit.js'
 
 const app = express()
 const server = createServer(app)
 const LAN_MODE = process.env.LAN_MODE === '1'
+const platformConfig = loadPlatformConfig()
+const trustedProxies = new TrustedProxyPolicy(platformConfig.trustedProxyCidrs)
+app.disable('x-powered-by')
+app.set('trust proxy', (address: string) => trustedProxies.isTrusted(address))
 const databaseConfig = loadDatabaseConfig()
+if (platformConfig.publicOnlineEnabled && !databaseConfig.enabled) {
+  throw new PlatformConfigError('PUBLIC_ONLINE_ENABLED requires ONLINE_DATABASE_ENABLED')
+}
 const database = databaseConfig.enabled ? new Database(databaseConfig) : null
+const rateLimitStore = database ? new MySqlRateLimitStore(database) : null
+const connectionQuota = new ConnectionQuota(platformConfig.maxWsPerIp, platformConfig.maxWsPerUser)
+const engineGovernor = new EngineResourceGovernor(
+  platformConfig.maxEngineProcesses,
+  platformConfig.maxEngineTasks,
+)
+function logRuntimeError(event: string, error: unknown): void {
+  if (error instanceof Error && /timeout|timed out|did not return/i.test(error.message)) {
+    metrics.increment('xiangqi_engine_timeouts', { event })
+  }
+  structuredLog('error', event, {
+    errorCode: error instanceof Error ? error.name : 'unknown',
+  })
+}
 const authRuntime = database
-  ? createAuthRuntime(
-      database,
-      { deliver: async () => undefined },
-      {
-        production: databaseConfig.environment === 'production',
-        exposeDevelopmentTokens:
-          databaseConfig.environment !== 'production' &&
-          process.env.AUTH_DEV_EXPOSE_TOKENS === 'true',
-        allowedOrigins: process.env.AUTH_ALLOWED_ORIGINS?.split(',')
-          .map((item) => item.trim())
-          .filter(Boolean),
-      },
-    )
+  ? createAuthRuntime(database, createAuthTokenDelivery(process.env, platformConfig.production), {
+      production: databaseConfig.environment === 'production',
+      exposeDevelopmentTokens:
+        databaseConfig.environment !== 'production' &&
+        process.env.AUTH_DEV_EXPOSE_TOKENS === 'true',
+      allowedOrigins: platformConfig.allowedOrigins,
+      clientIp: (request) => clientIp(request, trustedProxies),
+    })
   : null
 const socketActors = new WeakMap<object, UserActor>()
-const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 })
-const gomokuWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 })
+const wss = new WebSocketServer({ noServer: true, maxPayload: platformConfig.wsMaxPayloadBytes })
+const gomokuWss = new WebSocketServer({
+  noServer: true,
+  maxPayload: platformConfig.gomokuWsMaxPayloadBytes,
+})
 server.on('upgrade', (request, socket, head) => {
   void (async () => {
     const pathname = new URL(request.url || '/', 'http://localhost').pathname
@@ -59,8 +108,21 @@ server.on('upgrade', (request, socket, head) => {
       socket.destroy()
       return
     }
+    if (platformConfig.production && !trustedProxies.isTrusted(request.socket.remoteAddress)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
+      socket.destroy()
+      metrics.increment('xiangqi_ws_upgrade_rejected', { reason: 'proxy' })
+      return
+    }
+    if (!requestOriginAllowed(request, platformConfig)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
+      socket.destroy()
+      metrics.increment('xiangqi_ws_upgrade_rejected', { reason: 'origin' })
+      return
+    }
+    let actor: UserActor | undefined
     if (authRuntime && !LAN_MODE) {
-      const actor = await authRuntime.authenticateUpgrade(request).catch(() => null)
+      actor = (await authRuntime.authenticateUpgrade(request).catch(() => null)) || undefined
       if (!actor) {
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
         socket.destroy()
@@ -68,14 +130,42 @@ server.on('upgrade', (request, socket, head) => {
       }
       socketActors.set(request, actor)
     }
-    target.handleUpgrade(request, socket, head, (ws) => target.emit('connection', ws, request))
-  })()
+    let releaseQuota: () => void
+    try {
+      releaseQuota = connectionQuota.reserve(clientIp(request, trustedProxies), actor?.userId)
+    } catch (error) {
+      const retryAfter = error instanceof ResourceLimitError ? error.retryAfterSeconds : 30
+      socket.write(
+        `HTTP/1.1 429 Too Many Requests\r\nRetry-After: ${retryAfter}\r\nConnection: close\r\n\r\n`,
+      )
+      socket.destroy()
+      return
+    }
+    try {
+      target.handleUpgrade(request, socket, head, (ws) => {
+        ws.once('close', releaseQuota)
+        metrics.increment('xiangqi_ws_connected', {
+          scene: pathname === '/gomoku-ws' ? 'gomoku' : 'core',
+        })
+        target.emit('connection', ws, request)
+      })
+    } catch (error) {
+      releaseQuota()
+      throw error
+    }
+  })().catch((error) => {
+    structuredLog('error', 'ws_upgrade_failed', {
+      errorCode: error instanceof Error ? error.name : 'unknown',
+    })
+    socket.destroy()
+  })
 })
 type LiveWebSocket = WebSocket & { isAlive?: boolean }
 const heartbeatTimer = setInterval(() => {
   for (const socketServer of [wss, gomokuWss]) {
     for (const client of socketServer.clients as Set<LiveWebSocket | RapfiWebSocket>) {
       if (client.isAlive === false) {
+        metrics.increment('xiangqi_ws_heartbeat_timeouts')
         client.terminate()
         continue
       }
@@ -93,19 +183,20 @@ const roomRepository = new RoomRepository(
   process.env.XIANGQI_ROOM_DIR || path.resolve(serverDirectory, '../data/rooms'),
 )
 const gameLeases = new GameLeaseManager()
-await gameRepository
-  .init()
-  .catch((error) => console.error('Game store initialization failed:', error))
-await roomRepository
-  .init()
-  .catch((error) => console.error('Room store initialization failed:', error))
-app.use(express.json({ limit: '10mb' }))
-if (authRuntime) {
-  app.use(authRuntime.actorMiddleware)
-  app.use('/api/auth', authRuntime.router)
-  app.use('/api/account', authRuntime.accountRouter)
-  app.use('/api/me', authRuntime.meRouter)
-}
+await gameRepository.init().catch((error) => logRuntimeError('game_store_init_failed', error))
+await roomRepository.init().catch((error) =>
+  structuredLog('error', 'room_store_init_failed', {
+    errorCode: error instanceof Error ? error.name : 'unknown',
+  }),
+)
+app.use(createRequestContext())
+app.use(createSecurityHeaders(platformConfig))
+app.use(createHttpObservability(platformConfig.httpSuccessLogSampleRate))
+app.use(createTransportSecurity(platformConfig, trustedProxies))
+app.use('/api', createCorsAndOriginGuard(platformConfig))
+app.use('/api/games/import', express.json({ limit: platformConfig.importJsonLimit, strict: true }))
+app.use('/api', express.json({ limit: platformConfig.apiJsonLimit, strict: true }))
+app.use('/api', createPayloadComplexityGuard(platformConfig))
 app.get('/health/live', (_req, res) => res.json({ status: 'live' }))
 app.get('/health/ready', async (_req, res) => {
   try {
@@ -118,9 +209,40 @@ app.get('/health/ready', async (_req, res) => {
     res.status(503).json({ status: 'unavailable' })
   }
 })
-app.get('/api/network-info', (_req, res) => {
-  res.json({ addresses: listLanIPv4(os.networkInterfaces()) })
+app.get('/health/engines', (_request, response) => {
+  response.json({ status: 'available-separately', ...engineHealthSnapshot() })
 })
+app.get('/api/capabilities', (_request, response) => {
+  response.json({ publicOnline: platformConfig.publicOnlineEnabled })
+})
+app.get('/internal/metrics', (request, response) => {
+  const supplied = request.header('authorization')?.replace(/^Bearer\s+/i, '')
+  const internal = trustedProxies.isTrusted(request.socket.remoteAddress)
+  if (platformConfig.metricsToken ? supplied !== platformConfig.metricsToken : !internal) {
+    response.status(404).json({ error: 'not_found' })
+    return
+  }
+  recordProcessMetrics()
+  response.type('text/plain; version=0.0.4').send(metrics.prometheus())
+})
+if (authRuntime) {
+  app.use(authRuntime.actorMiddleware)
+  if (rateLimitStore) {
+    app.use(
+      createPersistentRateLimitMiddleware(rateLimitStore, (request) =>
+        clientIp(request, trustedProxies),
+      ),
+    )
+  }
+  app.use('/api/auth', authRuntime.router)
+  app.use('/api/account', authRuntime.accountRouter)
+  app.use('/api/me', authRuntime.meRouter)
+}
+if (LAN_MODE) {
+  app.get('/api/network-info', (_req, res) => {
+    res.json({ addresses: listLanIPv4(os.networkInterfaces()) })
+  })
+}
 app.use(
   '/api/games',
   (req, res, next) => {
@@ -167,6 +289,7 @@ function getRuntimeOptions(msg: {
 
 type EngineSlot = {
   engine: PikafishEngine | null
+  releaseProcess?: () => void
   ready: boolean
   initPromise: Promise<PikafishEngine | null> | null
   runtimeOptions?: EngineRuntimeOptions
@@ -179,9 +302,15 @@ function makeSessionId(): string {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-function sendError(ws: WebSocket, message: string, requestId?: string) {
+function sendError(
+  ws: WebSocket,
+  message: string,
+  requestId?: string,
+  code?: string,
+  retryAfter?: number,
+) {
   if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'error', requestId, message }))
+    ws.send(JSON.stringify({ type: 'error', requestId, message, code, retryAfter }))
   }
 }
 
@@ -211,28 +340,49 @@ async function getEngine(
     if (slot.engine) {
       slot.engine.destroy()
       liveEngines.delete(slot.engine)
+      slot.releaseProcess?.()
+      slot.releaseProcess = undefined
     }
 
+    let releaseProcess: () => void
+    try {
+      releaseProcess = engineGovernor.reserveProcess(variant === 'jieqi' ? 'jieqi' : 'pikafish')
+    } catch {
+      return null
+    }
     const engine = new PikafishEngine(variant)
     liveEngines.add(engine)
     slot.engine = engine
+    slot.releaseProcess = releaseProcess
     slot.ready = await engine.init(slot.runtimeOptions)
 
     if (slot.disposed) {
       engine.destroy()
       liveEngines.delete(engine)
+      slot.releaseProcess?.()
+      slot.releaseProcess = undefined
       if (slot.engine === engine) slot.engine = null
       slot.ready = false
       return null
     }
 
     if (!slot.ready) {
-      console.warn('Engine not available, running in local-only mode')
+      engine.destroy()
+      liveEngines.delete(engine)
+      slot.releaseProcess?.()
+      slot.releaseProcess = undefined
+      slot.engine = null
+      structuredLog('warn', 'engine_unavailable', { kind: variant })
       return null
     }
 
     engine.on('exit', () => {
-      if (slot.engine === engine) slot.ready = false
+      if (slot.engine === engine) {
+        slot.ready = false
+        slot.releaseProcess?.()
+        slot.releaseProcess = undefined
+        metrics.increment('xiangqi_engine_exits', { kind: variant })
+      }
     })
 
     return engine
@@ -251,6 +401,8 @@ function destroyEngineSlots(slots: Record<EngineVariant, EngineSlot>) {
     if (!slot.engine) continue
     slot.engine.destroy()
     liveEngines.delete(slot.engine)
+    slot.releaseProcess?.()
+    slot.releaseProcess = undefined
     slot.engine = null
     slot.ready = false
   }
@@ -264,8 +416,17 @@ function roomIdentity(type: string, color: RoomColor) {
 }
 async function getRoomHint(room: StoredRoom, viewer: RoomColor): Promise<string | null> {
   if (room.variant === 'gomoku') return null
+  let releaseTask: (() => void) | undefined
+  try {
+    releaseTask = engineGovernor.reserveTask(`room:${room.id}:${viewer}`, 'finite')
+  } catch {
+    return null
+  }
   const engine = await getEngine(roomEngineSlots, room.variant)
-  if (!engine) return null
+  if (!engine) {
+    releaseTask()
+    return null
+  }
   const moves = room.moves.map((move) => {
     let text = move.uci
     if (move.revealed) text += roomIdentity(move.revealed, move.color)
@@ -273,39 +434,65 @@ async function getRoomHint(room: StoredRoom, viewer: RoomColor): Promise<string 
       text += roomIdentity(move.captured, move.capturedColor)
     return text
   })
-  const result = await engine.getBestMove(
-    room.variant === 'jieqi' ? JIEQI_INITIAL_FEN : INITIAL_FEN,
-    moves,
-    'master',
-  )
-  return result.move?.slice(0, 4) || null
+  const startedAt = Date.now()
+  try {
+    const result = await engine.getBestMove(
+      room.variant === 'jieqi' ? JIEQI_INITIAL_FEN : INITIAL_FEN,
+      moves,
+      'master',
+    )
+    metrics.observe('xiangqi_engine_search_duration', Date.now() - startedAt, {
+      kind: room.variant,
+      task: 'room_hint',
+    })
+    return result.move?.slice(0, 4) || null
+  } finally {
+    releaseTask()
+  }
 }
 const roomManager = new RoomManager(roomRepository, getRoomHint)
 roomManager.startPresenceRecovery()
-void roomManager.cleanup().catch((error) => console.error('Room cleanup failed:', error))
+void roomManager.cleanup().catch((error) => logRuntimeError('room_cleanup_failed', error))
 const roomCleanupTimer = setInterval(
-  () => void roomManager.cleanup().catch((error) => console.error('Room cleanup failed:', error)),
+  () => void roomManager.cleanup().catch((error) => logRuntimeError('room_cleanup_failed', error)),
   60 * 60 * 1000,
 )
 roomCleanupTimer.unref()
-app.use('/api/rooms', createRoomRouter(roomManager))
-const onlineService = database
-  ? new OnlineMatchService(new MySqlOnlineMatchRepository(database))
+if (LAN_MODE) app.use('/api/rooms', createRoomRouter(roomManager))
+const onlineService =
+  database && platformConfig.publicOnlineEnabled
+    ? new OnlineMatchService(new MySqlOnlineMatchRepository(database), {
+        rateLimitStore: rateLimitStore || undefined,
+        maxActiveMatchesPerUser: platformConfig.maxActiveMatchesPerUser,
+      })
+    : null
+const onlineManager = onlineService
+  ? new OnlineMatchManager(
+      onlineService,
+      60_000,
+      platformConfig.maxSpectatorsPerMatch,
+      platformConfig.maxPlayerConnectionsPerUser,
+    )
   : null
-const onlineManager = onlineService ? new OnlineMatchManager(onlineService) : null
 if (onlineService && authRuntime) {
   const onlineRouters = createOnlineRouters(onlineService, authRuntime)
   app.use('/api/online', onlineRouters.router)
   app.use('/api/me/matches', onlineRouters.meMatchesRouter)
   app.use(onlineRouters.errorMiddleware)
-  void onlineManager?.restore().catch((error) =>
-    console.error('Online match recovery failed; check migrations and database readiness:', error),
-  )
+  void onlineManager
+    ?.restore()
+    .catch((error) => logRuntimeError('online_match_recovery_failed', error))
 }
 if (authRuntime) app.use(authRuntime.errorMiddleware)
 
 const liveRapfiEngines = new Set<RapfiEngine>()
-registerRapfiWebSocketServer(gomokuWss, { lanMode: LAN_MODE, liveEngines: liveRapfiEngines })
+registerRapfiWebSocketServer(gomokuWss, {
+  liveEngines: liveRapfiEngines,
+  originAllowed: (request) => requestOriginAllowed(request, platformConfig),
+  reserveProcess: () => engineGovernor.reserveProcess('rapfi'),
+  reserveTask: (owner) => engineGovernor.reserveTask(owner, 'finite'),
+  taskOwner: (request) => socketActors.get(request)?.userId || clientIp(request, trustedProxies),
+})
 gomokuWss.on('connection', (ws, request) => {
   const actor = socketActors.get(request)
   if (actor && authRuntime) authRuntime.bindSocket(actor, ws)
@@ -317,21 +504,12 @@ wss.on('connection', async (ws, request) => {
     authRuntime.bindSocket(actor, ws)
     onlineManager?.bind(ws, actor)
   }
-  if (LAN_MODE && request.headers.origin) {
-    try {
-      if (new URL(request.headers.origin).host !== request.headers.host)
-        return ws.close(1008, 'Origin not allowed')
-    } catch {
-      return ws.close(1008, 'Origin not allowed')
-    }
-  }
   ;(ws as LiveWebSocket).isAlive = true
   ws.on('pong', () => {
     ;(ws as LiveWebSocket).isAlive = true
   })
-  console.log('Client connected')
-
   const sessionId = makeSessionId()
+  structuredLog('info', 'ws_connected', { connectionId: sessionId, scene: 'core' })
   const engineSlots = createEngineSlots()
   const activeAnalysis = new Map<EngineVariant, { sessionId: string; requestId?: string }>()
   let currentDifficulty: 'easy' | 'medium' | 'hard' | 'master' = 'medium'
@@ -345,6 +523,7 @@ wss.on('connection', async (ws, request) => {
   let requestGeneration = 0
   const activeFiniteRequests = new Map<string, PikafishEngine>()
   let infoEngine: PikafishEngine | null = null
+  let releaseAnalysisTask: (() => void) | undefined
 
   const attachAnalysisHandler = (engine: PikafishEngine) => {
     if (infoHandler && infoEngine) {
@@ -380,12 +559,34 @@ wss.on('connection', async (ws, request) => {
     ws.readyState === WebSocket.OPEN
 
   ws.on('message', async (data) => {
+    let releaseFiniteTask: (() => void) | undefined
+    let finiteTaskStartedAt = 0
+    let finiteTaskKind = 'unknown'
     try {
-      const roomMessage = JSON.parse(data.toString()) as Record<string, unknown>
+      const rawMessage = data.toString()
+      let roomMessage: Record<string, unknown> = {}
+      try {
+        const candidate = JSON.parse(rawMessage)
+        if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+          roomMessage = candidate as Record<string, unknown>
+        }
+      } catch {
+        // The engine protocol parser below returns the stable invalid JSON response.
+      }
       if (typeof roomMessage.type === 'string' && roomMessage.type.startsWith('match-')) {
         if (!onlineManager) {
           sendError(ws, '公网对局服务未启用')
           return
+        }
+        if (roomMessage.type === 'match-subscribe' && localAnalysisEngine) {
+          detachAnalysisHandler(localAnalysisEngine)
+          localAnalysisEngine.stopAnalysis()
+          localAnalysisEngine = null
+          if (localAnalysisVariant) activeAnalysis.delete(localAnalysisVariant)
+          localAnalysisVariant = null
+          localAnalysisRequestId = undefined
+          releaseAnalysisTask?.()
+          releaseAnalysisTask = undefined
         }
         try {
           await onlineManager.handle(ws, roomMessage)
@@ -396,10 +597,13 @@ wss.on('connection', async (ws, request) => {
                 type: 'match-error',
                 code: error.code,
                 message:
-                  error.code === 'revision_conflict' ? '对局状态已更新，正在重新同步' : error.message,
+                  error.code === 'revision_conflict'
+                    ? '对局状态已更新，正在重新同步'
+                    : error.message,
                 ...(error.code === 'revision_conflict'
                   ? { currentRevision: Number(error.message) }
                   : {}),
+                ...(error.retryAfterSeconds ? { retryAfter: error.retryAfterSeconds } : {}),
                 commandId:
                   typeof roomMessage.commandId === 'string' ? roomMessage.commandId : undefined,
               }),
@@ -415,6 +619,10 @@ wss.on('connection', async (ws, request) => {
         return
       }
       if (typeof roomMessage.type === 'string' && roomMessage.type.startsWith('room-')) {
+        if (!LAN_MODE) {
+          sendError(ws, '局域网房间协议在当前服务模式下未启用')
+          return
+        }
         try {
           await roomManager.handle(ws, roomMessage)
         } catch (error) {
@@ -426,12 +634,48 @@ wss.on('connection', async (ws, request) => {
         }
         return
       }
-      const parsed = parseClientMessage(data.toString())
+      const parsed = parseClientMessage(rawMessage)
       if (!parsed.ok) {
         sendError(ws, parsed.error, parsed.requestId)
         return
       }
       const msg = parsed.message
+      const engineMessage = new Set([
+        'init',
+        'move',
+        'hint',
+        'candidates',
+        'review',
+        'analyze-nodes',
+        'analyze',
+      ]).has(msg.type)
+      if (engineMessage && onlineManager?.isSubscribed(ws)) {
+        sendError(
+          ws,
+          '公网实战连接禁止使用分析和提示',
+          msg.requestId,
+          'online_match_analysis_forbidden',
+        )
+        metrics.increment('xiangqi_engine_rejected', { reason: 'online_match' })
+        return
+      }
+      if (['move', 'hint', 'candidates', 'review', 'analyze-nodes'].includes(msg.type)) {
+        try {
+          releaseFiniteTask = engineGovernor.reserveTask(actor?.userId || sessionId, 'finite')
+          finiteTaskStartedAt = performance.now()
+          finiteTaskKind = msg.type
+        } catch (error) {
+          const retryAfter = error instanceof ResourceLimitError ? error.retryAfterSeconds : 5
+          sendError(
+            ws,
+            `引擎任务繁忙，请在 ${retryAfter} 秒后重试`,
+            msg.requestId,
+            error instanceof ResourceLimitError ? error.code : 'engine_busy',
+            retryAfter,
+          )
+          return
+        }
+      }
       switch (msg.type) {
         case 'claim-game':
         case 'takeover-game': {
@@ -464,7 +708,7 @@ wss.on('connection', async (ws, request) => {
               try {
                 await engine.applyRuntimeOptions(runtimeOptions)
               } catch (err) {
-                console.error('Apply engine options error:', err)
+                logRuntimeError('engine_options_failed', err)
                 sendError(ws, 'Engine option update failed')
               }
             }
@@ -510,7 +754,7 @@ wss.on('connection', async (ws, request) => {
               )
             }
           } catch (err) {
-            console.error('Engine error:', err)
+            logRuntimeError('engine_move_failed', err)
             sendError(ws, 'Engine error', requestId)
           } finally {
             if (requestId) activeFiniteRequests.delete(requestId)
@@ -554,7 +798,7 @@ wss.on('connection', async (ws, request) => {
               )
             }
           } catch (err) {
-            console.error('Hint engine error:', err)
+            logRuntimeError('engine_hint_failed', err)
             sendError(ws, 'Hint engine error', requestId)
           } finally {
             if (requestId) activeFiniteRequests.delete(requestId)
@@ -591,7 +835,7 @@ wss.on('connection', async (ws, request) => {
               ws.send(JSON.stringify({ type: 'candidates', requestId, candidates }))
             }
           } catch (err) {
-            console.error('Candidate engine error:', err)
+            logRuntimeError('engine_candidates_failed', err)
             sendError(ws, 'Candidate engine error', requestId)
           } finally {
             if (requestId) activeFiniteRequests.delete(requestId)
@@ -600,7 +844,7 @@ wss.on('connection', async (ws, request) => {
                 attachAnalysisHandler(engine)
                 await engine.analyze(localAnalysisFen, localAnalysisMoves, localAnalysisLimit)
               } catch (err) {
-                console.error('Resume analysis error:', err)
+                logRuntimeError('engine_analysis_resume_failed', err)
               }
             }
           }
@@ -662,7 +906,7 @@ wss.on('connection', async (ws, request) => {
               ws.send(JSON.stringify({ type: 'review-result', requestId, positions }))
             }
           } catch (err) {
-            console.error('Review engine error:', err)
+            logRuntimeError('engine_review_failed', err)
             sendError(ws, 'Review engine error', requestId)
           } finally {
             if (requestId) activeFiniteRequests.delete(requestId)
@@ -671,7 +915,7 @@ wss.on('connection', async (ws, request) => {
                 attachAnalysisHandler(engine)
                 await engine.analyze(localAnalysisFen, localAnalysisMoves, localAnalysisLimit)
               } catch (err) {
-                console.error('Resume analysis error:', err)
+                logRuntimeError('engine_analysis_resume_failed', err)
               }
             }
           }
@@ -740,7 +984,7 @@ wss.on('connection', async (ws, request) => {
               ws.send(JSON.stringify({ type: 'node-analysis-result', requestId, positions }))
             }
           } catch (err) {
-            console.error('Node analysis engine error:', err)
+            logRuntimeError('engine_node_analysis_failed', err)
             sendError(ws, 'Node analysis engine error', requestId)
           } finally {
             if (requestId) activeFiniteRequests.delete(requestId)
@@ -749,7 +993,7 @@ wss.on('connection', async (ws, request) => {
                 attachAnalysisHandler(engine)
                 await engine.analyze(localAnalysisFen, localAnalysisMoves, localAnalysisLimit)
               } catch (err) {
-                console.error('Resume analysis error:', err)
+                logRuntimeError('engine_analysis_resume_failed', err)
               }
             }
           }
@@ -757,8 +1001,28 @@ wss.on('connection', async (ws, request) => {
         }
 
         case 'analyze': {
+          if (!releaseAnalysisTask) {
+            try {
+              releaseAnalysisTask = engineGovernor.reserveTask(
+                actor?.userId || sessionId,
+                'interactive',
+              )
+            } catch (error) {
+              const retryAfter = error instanceof ResourceLimitError ? error.retryAfterSeconds : 5
+              sendError(
+                ws,
+                `引擎任务繁忙，请在 ${retryAfter} 秒后重试`,
+                msg.requestId,
+                error instanceof ResourceLimitError ? error.code : 'engine_busy',
+                retryAfter,
+              )
+              break
+            }
+          }
           const engine = await getEngine(engineSlots, msg.variant)
           if (!engine) {
+            releaseAnalysisTask?.()
+            releaseAnalysisTask = undefined
             sendEngineStatus(ws, false, 'Engine not available')
             sendError(ws, 'Engine not available', msg.requestId)
             break
@@ -800,6 +1064,8 @@ wss.on('connection', async (ws, request) => {
             localAnalysisRequestId = undefined
             localAnalysisLimit = undefined
             localAnalysisVariant = null
+            releaseAnalysisTask?.()
+            releaseAnalysisTask = undefined
           }
           const enginesToInterrupt = new Set<PikafishEngine>()
           if (msg.requestId) {
@@ -816,13 +1082,27 @@ wss.on('connection', async (ws, request) => {
         }
       }
     } catch (err) {
-      console.error('Message parse error:', err)
+      structuredLog('warn', 'ws_message_rejected', {
+        connectionId: sessionId,
+        errorCode: err instanceof Error ? err.name : 'unknown',
+      })
+    } finally {
+      if (releaseFiniteTask && finiteTaskStartedAt) {
+        metrics.observe('xiangqi_engine_search_duration', performance.now() - finiteTaskStartedAt, {
+          kind: 'pikafish',
+          task: finiteTaskKind,
+        })
+      }
+      releaseFiniteTask?.()
     }
   })
 
   ws.on('close', () => {
-    console.log('Client disconnected')
+    structuredLog('info', 'ws_disconnected', { connectionId: sessionId, scene: 'core' })
+    metrics.increment('xiangqi_ws_disconnects', { scene: 'core' })
     if (localAnalysisEngine) detachAnalysisHandler(localAnalysisEngine)
+    releaseAnalysisTask?.()
+    releaseAnalysisTask = undefined
     if (localAnalysisVariant && activeAnalysis.get(localAnalysisVariant)?.sessionId === sessionId) {
       activeAnalysis.delete(localAnalysisVariant)
       localAnalysisEngine?.stopAnalysis()
@@ -836,11 +1116,43 @@ wss.on('connection', async (ws, request) => {
   })
 })
 
+app.use(jsonErrorHandler)
+app.use(rateLimitErrorMiddleware)
+app.use('/api', (_request, response) => {
+  response.status(404).json({ error: 'not_found', requestId: response.locals.requestId })
+})
+app.use(
+  (
+    error: unknown,
+    _request: express.Request,
+    response: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    structuredLog('error', 'http_unhandled_error', {
+      requestId: response.locals.requestId,
+      errorCode: error instanceof Error ? error.name : 'unknown',
+    })
+    response.status(500).json({ error: 'internal_error', requestId: response.locals.requestId })
+  },
+)
+
 if (LAN_MODE) {
   const clientDist = path.resolve(serverDirectory, '../client/dist')
-  app.use(express.static(clientDist))
+  app.use(
+    express.static(clientDist, {
+      etag: true,
+      maxAge: '1h',
+      setHeaders: (response, resourcePath) => {
+        if (resourcePath.includes(`${path.sep}assets${path.sep}`)) {
+          response.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+        }
+      },
+    }),
+  )
   app.get('*', (req, res, next) =>
-    req.path.startsWith('/api/') ? next() : res.sendFile(path.join(clientDist, 'index.html')),
+    req.path.startsWith('/api/')
+      ? next()
+      : res.setHeader('Cache-Control', 'no-store').sendFile(path.join(clientDist, 'index.html')),
   )
 }
 
@@ -848,14 +1160,17 @@ const PORT = process.env.PORT || 3001
 const HOST = process.env.HOST || (LAN_MODE ? '0.0.0.0' : '127.0.0.1')
 
 server.listen(Number(PORT), HOST, () => {
-  console.log(`Server running on http://${HOST}:${PORT}`)
-  console.log(`WebSocket available at ws://${HOST}:${PORT}/ws`)
-  console.log(`Rapfi WebSocket available at ws://${HOST}:${PORT}/gomoku-ws`)
+  structuredLog('info', 'server_started', {
+    host: HOST,
+    port: String(PORT),
+    environment: platformConfig.environment,
+    publicOnline: platformConfig.publicOnlineEnabled,
+  })
   if (LAN_MODE) {
     const addresses = listLanIPv4(os.networkInterfaces()).map(
       (address) => `http://${address}:${PORT}/?lan=1`,
     )
-    for (const address of addresses) console.log(`LAN lobby: ${address}`)
+    for (const address of addresses) structuredLog('info', 'lan_lobby_available', { address })
   }
 })
 
@@ -863,34 +1178,42 @@ let shuttingDown = false
 function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
-  console.log('\nShutting down...')
+  structuredLog('info', 'shutdown_started', { graceMs: platformConfig.shutdownGraceMs })
   clearInterval(heartbeatTimer)
   clearInterval(roomCleanupTimer)
-  for (const engine of liveEngines) engine.destroy()
-  liveEngines.clear()
-  for (const engine of liveRapfiEngines) engine.destroy()
-  liveRapfiEngines.clear()
-  for (const client of wss.clients) client.terminate()
-  for (const client of gomokuWss.clients) client.terminate()
-  wss.close()
-  gomokuWss.close()
+  for (const client of wss.clients) client.close(1012, 'Server restarting')
+  for (const client of gomokuWss.clients) client.close(1012, 'Server restarting')
+  const coreSocketsClosed = new Promise<void>((resolve) => wss.close(() => resolve()))
+  const gomokuSocketsClosed = new Promise<void>((resolve) => gomokuWss.close(() => resolve()))
   roomManager.dispose()
   onlineManager?.dispose()
   const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()))
   Promise.allSettled([
+    coreSocketsClosed,
+    gomokuSocketsClosed,
+    serverClosed,
     gameRepository.flush(),
     roomManager.flush(),
-    database?.close(),
-    serverClosed,
-  ]).then((results) => {
+  ]).then(async (results) => {
+    for (const engine of liveEngines) engine.destroy()
+    liveEngines.clear()
+    for (const engine of liveRapfiEngines) engine.destroy()
+    liveRapfiEngines.clear()
+    const databaseResult = await database?.close().then(
+      () => ({ status: 'fulfilled' as const, value: undefined }),
+      (reason) => ({ status: 'rejected' as const, reason }),
+    )
+    if (databaseResult) results.push(databaseResult)
     const failed = results.some((result) => result.status === 'rejected')
-    if (failed) console.error('Shutdown completed with errors:', results)
+    structuredLog(failed ? 'error' : 'info', 'shutdown_completed', { failed })
     process.exit(failed ? 1 : 0)
   })
   const forcedExit = setTimeout(() => {
-    console.error('Shutdown timed out')
+    for (const client of wss.clients) client.terminate()
+    for (const client of gomokuWss.clients) client.terminate()
+    structuredLog('error', 'shutdown_timed_out')
     process.exit(1)
-  }, 5_000)
+  }, platformConfig.shutdownGraceMs)
   forcedExit.unref()
 }
 

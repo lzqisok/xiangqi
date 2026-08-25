@@ -1,7 +1,10 @@
 import type { IncomingMessage } from 'node:http'
+import { randomUUID } from 'node:crypto'
 import { WebSocket, type WebSocketServer } from 'ws'
 import { parseRapfiClientMessage } from './protocol.js'
 import { RapfiEngine } from './rapfiEngine.js'
+import { metrics, structuredLog } from '../platform/observability.js'
+import { ResourceLimitError } from '../platform/resources.js'
 
 export type RapfiWebSocket = WebSocket & { isAlive?: boolean }
 
@@ -43,11 +46,22 @@ function originAllowed(request: IncomingMessage): boolean {
 
 export function registerRapfiWebSocketServer(
   wss: WebSocketServer,
-  options: { lanMode: boolean; liveEngines: Set<RapfiEngine> },
+  options: {
+    liveEngines: Set<RapfiEngine>
+    originAllowed?: (request: IncomingMessage) => boolean
+    reserveProcess?: () => () => void
+    reserveTask?: (owner: string) => () => void
+    taskOwner?: (request: IncomingMessage) => string
+  },
 ): void {
   wss.on('connection', (ws, request) => {
-    if (options.lanMode && !originAllowed(request)) return ws.close(1008, 'Origin not allowed')
+    if (!(options.originAllowed?.(request) ?? originAllowed(request))) {
+      metrics.increment('xiangqi_ws_rejected', { reason: 'origin', scene: 'gomoku' })
+      return ws.close(1008, 'Origin not allowed')
+    }
     ;(ws as RapfiWebSocket).isAlive = true
+    const connectionId = `gomoku-${randomUUID()}`
+    structuredLog('info', 'ws_connected', { connectionId, scene: 'gomoku' })
     ws.on('pong', () => {
       ;(ws as RapfiWebSocket).isAlive = true
     })
@@ -55,9 +69,31 @@ export function registerRapfiWebSocketServer(
     const engine = new RapfiEngine()
     options.liveEngines.add(engine)
     const requestGate = new RapfiRequestGate()
+    let releaseProcess: (() => void) | undefined
+    const owner = options.taskOwner?.(request) || request.socket.remoteAddress || 'unknown'
+    engine.on('engine-exit', (code: number | null) => {
+      releaseProcess?.()
+      releaseProcess = undefined
+      if (code !== null) metrics.increment('xiangqi_engine_exits', { kind: 'rapfi' })
+    })
 
     const initialize = async () => {
+      try {
+        releaseProcess ??= options.reserveProcess?.()
+      } catch {
+        send(ws, {
+          type: 'error',
+          code: 'engine_process_quota_exceeded',
+          message: 'Rapfi process quota exceeded',
+          retryAfter: 10,
+        })
+        return false
+      }
       const available = await engine.init()
+      if (!available) {
+        releaseProcess?.()
+        releaseProcess = undefined
+      }
       send(ws, {
         type: 'engine-status',
         available,
@@ -92,7 +128,9 @@ export function registerRapfiWebSocketServer(
         return
       }
       const startedAt = Date.now()
+      let releaseTask: (() => void) | undefined
       try {
+        releaseTask = options.reserveTask?.(owner)
         if (!engine.available && !(await initialize())) {
           send(ws, {
             type: 'error',
@@ -112,18 +150,36 @@ export function registerRapfiWebSocketServer(
           })
         }
       } catch (error) {
-        console.error('Rapfi search error:', error)
+        structuredLog('warn', 'rapfi_search_failed', {
+          errorCode: error instanceof Error ? error.name : 'unknown',
+        })
         if (requestGeneration === requestGate.currentGeneration) {
-          send(ws, { type: 'error', requestId: request.requestId, message: 'Rapfi search failed' })
+          const quota = error instanceof ResourceLimitError
+          send(ws, {
+            type: 'error',
+            requestId: request.requestId,
+            code: quota ? error.code : 'rapfi_search_failed',
+            message: quota ? 'Rapfi engine task quota exceeded' : 'Rapfi search failed',
+            ...(quota ? { retryAfter: error.retryAfterSeconds } : {}),
+          })
         }
       } finally {
+        metrics.observe('xiangqi_engine_search_duration', Date.now() - startedAt, {
+          kind: 'rapfi',
+          task: 'move',
+        })
+        releaseTask?.()
         requestGate.finish(requestGeneration)
       }
     })
 
     ws.on('close', () => {
+      structuredLog('info', 'ws_disconnected', { connectionId, scene: 'gomoku' })
+      metrics.increment('xiangqi_ws_disconnects', { scene: 'gomoku' })
       requestGate.cancel()
       engine.destroy()
+      releaseProcess?.()
+      releaseProcess = undefined
       options.liveEngines.delete(engine)
     })
   })

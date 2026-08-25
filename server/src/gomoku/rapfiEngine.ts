@@ -13,6 +13,7 @@ import {
   type GomokuMove,
   type GomokuPlayer,
 } from './protocol.js'
+import { metrics, structuredLog } from '../platform/observability.js'
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url))
 export const RAPFI_STOP_GRACE_MS = 3_000
@@ -83,9 +84,7 @@ export class RapfiEngine extends EventEmitter {
 
     const binary = findRapfiBinary(this.engineDirectory)
     if (!binary) {
-      console.warn(
-        `Rapfi engine binary not found. Expected ${path.join(this.engineDirectory, 'rapfi')}`,
-      )
+      structuredLog('warn', 'engine_binary_missing', { kind: 'rapfi' })
       return false
     }
 
@@ -108,7 +107,7 @@ export class RapfiEngine extends EventEmitter {
       })
       child.stderr?.on('data', (data: Buffer) => {
         const message = data.toString().trim()
-        if (message) console.error('[rapfi stderr]', message)
+        if (message) metrics.increment('xiangqi_engine_stderr', { kind: 'rapfi' })
       })
       child.on('error', (error) => {
         if (this.process === child) {
@@ -129,10 +128,13 @@ export class RapfiEngine extends EventEmitter {
       this.send(`INFO thread_num ${getRapfiThreadCount('medium')}`)
       this.send(`INFO max_memory ${256 * 1024 * 1024}`)
       this.ready = true
-      console.log('Rapfi engine initialized successfully:', binary)
+      structuredLog('info', 'engine_ready', { kind: 'rapfi' })
       return true
     } catch (error) {
-      console.error('Failed to start Rapfi:', error)
+      structuredLog('error', 'engine_start_failed', {
+        kind: 'rapfi',
+        errorCode: error instanceof Error ? error.name : 'unknown',
+      })
       this.destroy()
       return false
     }

@@ -2,6 +2,7 @@ import type { WebSocket } from 'ws'
 import type { UserActor } from '../auth/types.js'
 import { OnlineMatchError, OnlineMatchService } from './service.js'
 import type { OnlineActor, OnlineMatchRecord } from './types.js'
+import { metrics, structuredLog } from '../platform/observability.js'
 
 type Connection = {
   actor: OnlineActor
@@ -18,26 +19,40 @@ export class OnlineMatchManager {
   private readonly socketsByMatch = new Map<string, Set<WebSocket>>()
   private readonly playerSockets = new Map<string, WebSocket>()
   private readonly disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly matchPhases = new Map<string, OnlineMatchRecord['match']['phase']>()
 
   constructor(
     readonly service: OnlineMatchService,
     private readonly disconnectGraceMs = 60_000,
+    private readonly maxSpectatorsPerMatch = 50,
+    private readonly maxPlayerConnectionsPerUser = 2,
   ) {}
+
+  isSubscribed(socket: WebSocket): boolean {
+    return Boolean(this.connections.get(socket)?.matchId)
+  }
 
   bind(socket: WebSocket, actor: UserActor) {
     this.connections.set(socket, { actor, player: false })
+    metrics.gauge('xiangqi_online_connections', this.connections.size)
   }
 
   async restore() {
     const records = await this.service.repository.recoverActiveMatches()
     for (const record of records) {
+      this.matchPhases.set(record.match.id, record.match.phase)
       if (record.match.phase !== 'playing') continue
       const restartDeadline = new Date(Date.now() + this.disconnectGraceMs)
       for (const participant of record.participants) {
         if (!participant.userId || !participant.side) continue
         const deadline = participant.disconnectDeadline ?? restartDeadline
         if (!participant.disconnectDeadline) {
-          await this.service.repository.setPresence(record.match.id, participant.userId, false, deadline)
+          await this.service.repository.setPresence(
+            record.match.id,
+            participant.userId,
+            false,
+            deadline,
+          )
         }
         this.scheduleDisconnect(record.match.id, participant.userId, deadline)
       }
@@ -58,16 +73,22 @@ export class OnlineMatchManager {
     const actor = connection.actor
     switch (message.type) {
       case 'match-ready':
-        await this.broadcastResult(await this.service.safe(() => this.service.ready(actor, message)))
+        await this.broadcastResult(
+          await this.service.safe(() => this.service.ready(actor, message)),
+        )
         break
       case 'match-move':
         await this.broadcastResult(await this.service.safe(() => this.service.move(actor, message)))
         break
       case 'match-resign':
-        await this.broadcastResult(await this.service.safe(() => this.service.resign(actor, message)))
+        await this.broadcastResult(
+          await this.service.safe(() => this.service.resign(actor, message)),
+        )
         break
       case 'match-propose':
-        await this.broadcastResult(await this.service.safe(() => this.service.propose(actor, message)))
+        await this.broadcastResult(
+          await this.service.safe(() => this.service.propose(actor, message)),
+        )
         break
       case 'match-proposal-respond':
         await this.broadcastResult(
@@ -121,6 +142,7 @@ export class OnlineMatchManager {
     const connection = this.connections.get(socket)
     if (!connection) return
     this.connections.delete(socket)
+    metrics.gauge('xiangqi_online_connections', this.connections.size)
     if (!connection.matchId) return
     const sockets = this.socketsByMatch.get(connection.matchId)
     sockets?.delete(socket)
@@ -146,12 +168,40 @@ export class OnlineMatchManager {
     this.connections.clear()
     this.socketsByMatch.clear()
     this.playerSockets.clear()
+    this.matchPhases.clear()
+    metrics.gauge('xiangqi_online_connections', 0)
+    metrics.gauge('xiangqi_online_active_matches', 0)
   }
 
   private async subscribe(socket: WebSocket, connection: Connection, matchId: string) {
     const record = await this.service.safe(() => this.service.get(connection.actor, matchId))
     if (connection.matchId && connection.matchId !== matchId) await this.leave(socket, connection)
     const participant = record.participants.find((item) => item.userId === connection.actor.userId)
+    if (participant?.side && !connection.player) {
+      const playerConnections = [...this.connections.entries()].filter(
+        ([target, candidate]) =>
+          target !== socket &&
+          candidate.player &&
+          candidate.actor.userId === connection.actor.userId &&
+          candidate.matchId !== matchId,
+      ).length
+      if (playerConnections >= this.maxPlayerConnectionsPerUser) {
+        throw new OnlineMatchError(
+          'player_connection_quota_exceeded',
+          429,
+          '当前账号的公网棋手连接已达上限',
+          30,
+        )
+      }
+    }
+    if (!participant?.side) {
+      const spectators = [...(this.socketsByMatch.get(matchId) ?? [])].filter(
+        (target) => target !== socket && !this.connections.get(target)?.player,
+      ).length
+      if (spectators >= this.maxSpectatorsPerMatch) {
+        throw new OnlineMatchError('spectator_quota_exceeded', 429, '本局观战人数已达上限', 30)
+      }
+    }
     connection.matchId = matchId
     connection.player = Boolean(participant?.side)
     const sockets = this.socketsByMatch.get(matchId) ?? new Set<WebSocket>()
@@ -212,6 +262,23 @@ export class OnlineMatchManager {
   }
 
   private async broadcast(record: OnlineMatchRecord) {
+    const previousPhase = this.matchPhases.get(record.match.id)
+    this.matchPhases.set(record.match.id, record.match.phase)
+    if (record.match.phase === 'finished' && previousPhase !== 'finished') {
+      metrics.increment('xiangqi_online_matches_completed', {
+        variant: record.match.variant,
+        reason: record.match.statusReason || 'board_result',
+      })
+      structuredLog('info', 'online_match_finished', {
+        matchId: record.match.id,
+        variant: record.match.variant,
+        reason: record.match.statusReason || 'board_result',
+      })
+    }
+    metrics.gauge(
+      'xiangqi_online_active_matches',
+      [...this.matchPhases.values()].filter((phase) => phase !== 'finished').length,
+    )
     const sockets = this.socketsByMatch.get(record.match.id) ?? new Set<WebSocket>()
     const onlineUsers = new Set(
       [...sockets]
@@ -232,13 +299,16 @@ export class OnlineMatchManager {
   private scheduleDisconnect(matchId: string, userId: string, deadline: Date) {
     const key = this.playerKey(matchId, userId)
     clearTimeout(this.disconnectTimers.get(key))
-    const timer = setTimeout(() => {
-      this.disconnectTimers.delete(key)
-      void this.service.repository
-        .adjudicateDisconnect(matchId, userId, deadline)
-        .then((record) => (record ? this.broadcast(record) : undefined))
-        .catch(() => undefined)
-    }, Math.max(0, deadline.getTime() - Date.now()))
+    const timer = setTimeout(
+      () => {
+        this.disconnectTimers.delete(key)
+        void this.service.repository
+          .adjudicateDisconnect(matchId, userId, deadline)
+          .then((record) => (record ? this.broadcast(record) : undefined))
+          .catch(() => undefined)
+      },
+      Math.max(0, deadline.getTime() - Date.now()),
+    )
     timer.unref()
     this.disconnectTimers.set(key, timer)
   }

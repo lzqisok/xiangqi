@@ -86,12 +86,7 @@ function fakeService(records: OnlineMatchRecord[]) {
   const byId = new Map(records.map((item) => [item.match.id, item]))
   const repository = {
     recoverActiveMatches: async () => records,
-    setPresence: async (
-      matchId: string,
-      userId: string,
-      connected: boolean,
-      deadline?: Date,
-    ) => {
+    setPresence: async (matchId: string, userId: string, connected: boolean, deadline?: Date) => {
       presence.push({ matchId, userId, connected, deadline })
       return true
     },
@@ -175,6 +170,34 @@ test('resubscribing one socket moves account presence between public matches', a
   assert.equal(
     presence.some((item) => item.matchId === secondRecord.match.id && item.connected),
     true,
+  )
+  manager.dispose()
+})
+
+test('spectator quota rejects excess subscriptions with a retryable stable error', async () => {
+  const source = record('00000000-0000-4000-8000-000000000105')
+  const { service } = fakeService([source])
+  const manager = new OnlineMatchManager(service, 60_000, 1)
+  const first = new FakeSocket()
+  const second = new FakeSocket()
+  manager.bind(first as unknown as WebSocket, actor('spectator-one'))
+  manager.bind(second as unknown as WebSocket, actor('spectator-two'))
+
+  await manager.handle(first as unknown as WebSocket, {
+    type: 'match-subscribe',
+    matchId: source.match.id,
+  })
+  await assert.rejects(
+    manager.handle(second as unknown as WebSocket, {
+      type: 'match-subscribe',
+      matchId: source.match.id,
+    }),
+    (error: unknown) =>
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'spectator_quota_exceeded' &&
+      'retryAfterSeconds' in error &&
+      error.retryAfterSeconds === 30,
   )
   manager.dispose()
 })

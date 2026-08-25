@@ -167,8 +167,11 @@ export function createOnlineRouters(
   const errorMiddleware: ErrorRequestHandler = (error, _request, response, next) => {
     if (response.headersSent) return next(error)
     if (error instanceof OnlineMatchError) {
+      if (error.retryAfterSeconds) response.setHeader('Retry-After', error.retryAfterSeconds)
       response.status(error.status).json({
         error: error.code,
+        ...(error.retryAfterSeconds ? { retryAfter: error.retryAfterSeconds } : {}),
+        requestId: response.locals.requestId,
         ...(error.code === 'revision_conflict' && error.message
           ? { currentRevision: Number(error.message) }
           : {}),
@@ -177,11 +180,14 @@ export function createOnlineRouters(
     }
     if (error instanceof RepositoryError) {
       const status = error.code === 'not_found' ? 404 : error.code.endsWith('_conflict') ? 409 : 503
-      response.status(status).json({ error: error.code })
+      response.status(status).json({ error: error.code, requestId: response.locals.requestId })
       return
     }
     if (error instanceof Error) {
-      response.status(400).json({ error: 'invalid_match_operation', message: error.message })
+      response.status(400).json({
+        error: 'invalid_match_operation',
+        requestId: response.locals.requestId,
+      })
       return
     }
     next(error)

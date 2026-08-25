@@ -8,6 +8,7 @@ import {
   JsonGameRepository,
 } from './repository.js'
 import { isLiveGameMode } from './validation.js'
+import { structuredLog } from '../platform/observability.js'
 
 function leaseToken(req: Request): string | undefined {
   const value = req.header('x-game-lease')
@@ -24,8 +25,11 @@ function handleError(error: unknown, res: Response): void {
   } else if (error instanceof GameStoreUnavailableError) {
     res.status(503).json({ error: '本地对局存储不可用' })
   } else {
-    console.error('Game API error:', error)
-    res.status(500).json({ error: '对局存储操作失败' })
+    structuredLog('error', 'game_api_failed', {
+      requestId: res.locals.requestId,
+      errorCode: error instanceof Error ? error.name : 'unknown',
+    })
+    res.status(500).json({ error: '对局存储操作失败', requestId: res.locals.requestId })
   }
 }
 

@@ -12,6 +12,14 @@ import { executeGomokuMove, rebuildGomokuRoom, RebuiltGomokuRoom } from './gomok
 import { buildJieqiRoomProjection } from './jieqiRecord.js'
 import { RoomRepository } from './repository.js'
 import { RoomColor, RoomRole, RoomSnapshot, RoomSummary, StoredRoom } from './types.js'
+import { structuredLog } from '../platform/observability.js'
+
+function logRoomFailure(event: string, error: unknown, roomId?: string): void {
+  structuredLog('error', event, {
+    roomId,
+    errorCode: error instanceof Error ? error.name : 'unknown',
+  })
+}
 
 type Connection = {
   roomId: string
@@ -340,7 +348,9 @@ export class RoomManager {
       this.repository.list().map((room) => {
         const runtime = this.getRuntime(room.id)
         const operation = runtime.queue.then(() => this.cleanupLocked(room.id, now))
-        runtime.queue = operation.catch((error) => console.error('Room cleanup failed:', error))
+        runtime.queue = operation.catch((error) =>
+          logRoomFailure('room_cleanup_failed', error, room.id),
+        )
         return operation
       }),
     )
@@ -1446,7 +1456,9 @@ export class RoomManager {
   private enqueueWaitingOwnerExpiry(roomId: string, deadline: number) {
     const runtime = this.getRuntime(roomId)
     const operation = runtime.queue.then(() => this.expireWaitingOwner(roomId, deadline))
-    runtime.queue = operation.catch((error) => console.error('Waiting owner expiry failed:', error))
+    runtime.queue = operation.catch((error) =>
+      logRoomFailure('waiting_owner_expiry_failed', error, roomId),
+    )
   }
 
   private async expireWaitingOwner(roomId: string, deadline: number) {
@@ -1463,7 +1475,9 @@ export class RoomManager {
   private enqueueWaitingSeatExpiry(roomId: string, color: RoomColor, deadline: number) {
     const runtime = this.getRuntime(roomId)
     const operation = runtime.queue.then(() => this.expireWaitingSeat(roomId, color, deadline))
-    runtime.queue = operation.catch((error) => console.error('Waiting seat expiry failed:', error))
+    runtime.queue = operation.catch((error) =>
+      logRoomFailure('waiting_seat_expiry_failed', error, roomId),
+    )
   }
 
   private async expireWaitingSeat(roomId: string, color: RoomColor, deadline: number) {
@@ -1503,7 +1517,7 @@ export class RoomManager {
     const runtime = this.getRuntime(roomId)
     const operation = runtime.queue.then(() => this.adjudicateDisconnect(roomId, color, deadline))
     runtime.queue = operation.catch((error) =>
-      console.error('Disconnect adjudication failed:', error),
+      logRoomFailure('disconnect_adjudication_failed', error, roomId),
     )
   }
 

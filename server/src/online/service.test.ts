@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { MySqlOnlineMatchRepository } from './repository.js'
+import { ActiveMatchQuotaError, type MySqlOnlineMatchRepository } from './repository.js'
 import { OnlineMatchService } from './service.js'
 import type { OnlineMatchRecord } from './types.js'
 import { readOnlineRefereeState } from './state.js'
@@ -119,4 +119,17 @@ test('Jieqi online snapshots derive red, black, spectator and unseated-owner pro
     assert.equal(serialized.includes(layout), false)
     assert.equal(serialized.includes('referee_state'), false)
   }
+})
+
+test('active match quota becomes a stable retryable online error', async () => {
+  const service = new OnlineMatchService({} as MySqlOnlineMatchRepository)
+  await assert.rejects(
+    service.safe(() => Promise.reject(new ActiveMatchQuotaError())),
+    (error: unknown) =>
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'active_match_quota_exceeded' &&
+      'retryAfterSeconds' in error &&
+      error.retryAfterSeconds === 30,
+  )
 })

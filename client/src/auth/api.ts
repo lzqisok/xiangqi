@@ -60,6 +60,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T
 }
 
+export { request as accountRequest }
+
 export async function restoreSession(): Promise<AccountUser | null> {
   const session = await request<SessionResponse>('/api/auth/session')
   if (!session.authenticated) {

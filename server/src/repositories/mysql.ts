@@ -45,11 +45,14 @@ type MatchRow = {
   variant: MatchEntity['variant']
   gomoku_rule: MatchEntity['gomokuRule']
   matchmaking: number | boolean
+  competition_mode: MatchEntity['competitionMode']
+  clock_preset: MatchEntity['clockPreset']
   visibility: MatchEntity['visibility']
   phase: MatchEntity['phase']
   status: MatchEntity['status']
   status_reason: string | null
   revision: string
+  previous_match_id: string | null
   created_by_user_id: string | null
   created_at: Date
   updated_at: Date
@@ -65,8 +68,9 @@ const ACCOUNT_SELECT = `
 `
 
 const MATCH_COLUMNS = `
-  id, variant, gomoku_rule, matchmaking, visibility, phase, status, status_reason, revision,
-  created_by_user_id, created_at, updated_at, started_at, finished_at, expires_at
+  id, variant, gomoku_rule, matchmaking, competition_mode, clock_preset, visibility, phase,
+  status, status_reason, revision, previous_match_id, created_by_user_id, created_at, updated_at,
+  started_at, finished_at, expires_at
 `
 
 function account(row: AccountRow): AccountEntity {
@@ -103,11 +107,14 @@ function match(row: MatchRow): MatchEntity {
     variant: row.variant,
     gomokuRule: row.gomoku_rule,
     matchmaking: Boolean(row.matchmaking),
+    competitionMode: row.competition_mode,
+    clockPreset: row.clock_preset,
     visibility: row.visibility,
     phase: row.phase,
     status: row.status,
     statusReason: row.status_reason,
     revision: Number(row.revision),
+    previousMatchId: row.previous_match_id,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -279,18 +286,22 @@ export class MySqlMatchRepository implements MatchRepository {
     return this.database.transaction(async (client) => {
       await client.query(
         `INSERT INTO matches
-          (id, variant, gomoku_rule, matchmaking, visibility, phase, status, status_reason,
-           created_by_user_id, started_at, finished_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, variant, gomoku_rule, matchmaking, competition_mode, clock_preset, visibility,
+           phase, status, status_reason, previous_match_id, created_by_user_id, started_at,
+           finished_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           input.variant,
           input.gomokuRule ?? null,
           input.matchmaking ?? false,
+          input.competitionMode ?? 'casual',
+          input.clockPreset ?? 'none',
           input.visibility,
           input.phase,
           input.status,
           input.statusReason ?? null,
+          input.previousMatchId ?? null,
           input.createdByUserId,
           input.startedAt ?? null,
           input.finishedAt ?? null,

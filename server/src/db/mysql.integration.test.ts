@@ -18,6 +18,9 @@ import { MySqlAuthRepository } from '../auth/repository.js'
 import { AuthService } from '../auth/service.js'
 import type { DeliveredAccountToken } from '../auth/types.js'
 import { createAuthRuntime, CSRF_COOKIE, DEVELOPMENT_SESSION_COOKIE } from '../auth/http.js'
+import { MySqlOnlineMatchRepository } from '../online/repository.js'
+import { OnlineMatchService } from '../online/service.js'
+import type { OnlineActor } from '../online/types.js'
 
 function validTestConnectionString(raw: string | undefined): string | undefined {
   if (!raw) return undefined
@@ -80,9 +83,9 @@ test(
   integration,
   async () => {
     await withTestDatabase(async (database) => {
-      assert.deepEqual(await migrate(database), [1, 2])
+      assert.deepEqual(await migrate(database), [1, 2, 3])
       assert.deepEqual(await migrate(database), [])
-      assert.equal((await migrationStatus(database)).currentVersion, 2)
+      assert.equal((await migrationStatus(database)).currentVersion, 3)
 
       const accounts = new MySqlAccountRepository(database)
       const sessions = new MySqlSessionRepository(database)
@@ -306,6 +309,267 @@ test(
 )
 
 test(
+  'account online matches atomically pair users and enforce actor, revision, idempotency, and history',
+  integration,
+  async () => {
+    await withTestDatabase(async (database) => {
+      await migrate(database)
+      const accounts = new MySqlAccountRepository(database)
+      const createAccount = (ordinal: number) =>
+        accounts.create({
+          emailNormalized: `online-${ordinal}@example.com`,
+          emailDisplay: `online-${ordinal}@example.com`,
+          displayName: `公网棋手${ordinal}`,
+          passwordHash: `$argon2id$online-placeholder-${ordinal}`,
+          passwordHashVersion: 1,
+          verificationTokenHash: randomBytes(32),
+          verificationExpiresAt: new Date(Date.now() + 86_400_000),
+        })
+      const [first, second, outsider] = await Promise.all([
+        createAccount(1),
+        createAccount(2),
+        createAccount(3),
+      ])
+      await database.query("UPDATE users SET status = 'active'")
+      const actor = (userId: string): OnlineActor => ({
+        userId,
+        sessionId: randomUUID(),
+        ipKey: `ip:${userId}`,
+        capabilities: ['online:play', 'online:watch'],
+      })
+      const firstActor = actor(first.id)
+      const secondActor = actor(second.id)
+      const outsiderActor = actor(outsider.id)
+      const repository = new MySqlOnlineMatchRepository(database)
+      const service = new OnlineMatchService(repository)
+      const firstRequestKey = randomUUID()
+      const secondRequestKey = randomUUID()
+      const [firstRequest, secondRequest] = await Promise.all([
+        service.quickMatch(firstActor, {
+          variant: 'xiangqi',
+          requestKey: firstRequestKey,
+        }),
+        service.quickMatch(secondActor, {
+          variant: 'xiangqi',
+          requestKey: secondRequestKey,
+        }),
+      ])
+      assert.equal(firstRequest.record.match.id, secondRequest.record.match.id)
+      const matchId = firstRequest.record.match.id
+      const paired = await service.get(firstActor, matchId)
+      assert.equal(paired.match.phase, 'playing')
+      assert.equal(paired.match.revision, 1)
+      assert.equal(paired.participants.filter((item) => item.side).length, 2)
+      assert.deepEqual(
+        new Set(paired.participants.map((item) => item.userId)),
+        new Set([first.id, second.id]),
+      )
+      const queueCount = await database.query<{ count: string }>(
+        'SELECT count(*) AS count FROM matchmaking_entries',
+      )
+      assert.equal(Number(queueCount.rows[0].count), 0)
+      const retriedMatchedRequest = await service.quickMatch(firstActor, {
+        variant: 'xiangqi',
+        requestKey: firstRequestKey,
+      })
+      assert.equal(retriedMatchedRequest.record.match.id, matchId)
+      assert.equal(retriedMatchedRequest.created, false)
+
+      const redId = paired.participants.find((item) => item.side === 'red')!.userId!
+      const redActor = redId === first.id ? firstActor : secondActor
+      const blackActor = redId === first.id ? secondActor : firstActor
+      const moveCommand = randomUUID()
+      const moved = await service.move(redActor, {
+        matchId,
+        commandId: moveCommand,
+        expectedRevision: 1,
+        uci: 'a3a4',
+        userId: outsider.id,
+        role: 'owner',
+      })
+      assert.equal(moved.record.state.moves.length, 1)
+      assert.equal(moved.record.match.revision, 2)
+      const replayed = await service.move(redActor, {
+        matchId,
+        commandId: moveCommand,
+        expectedRevision: 1,
+        uci: 'a3a4',
+      })
+      assert.equal(replayed.duplicate, true)
+      assert.equal(replayed.record.state.moves.length, 1)
+      await assert.rejects(
+        service.safe(() =>
+          service.move(blackActor, {
+            matchId,
+            commandId: randomUUID(),
+            expectedRevision: 1,
+            uci: 'c6c5',
+          }),
+        ),
+        { code: 'revision_conflict' },
+      )
+      await assert.rejects(
+        service.move(outsiderActor, {
+          matchId,
+          commandId: randomUUID(),
+          expectedRevision: 2,
+          uci: 'a3a4',
+        }),
+        { code: 'not_found' },
+      )
+      await assert.rejects(
+        service.ready(outsiderActor, {
+          matchId,
+          commandId: randomUUID(),
+          expectedRevision: 2,
+          ready: true,
+        }),
+        { code: 'not_found' },
+      )
+      await assert.rejects(
+        service.propose(outsiderActor, {
+          matchId,
+          commandId: randomUUID(),
+          expectedRevision: 2,
+          kind: 'undo',
+        }),
+        { code: 'not_found' },
+      )
+
+      const chatCommand = randomUUID()
+      const firstChat = await service.chat(redActor, matchId, chatCommand, '<b>服务端昵称</b>')
+      const repeatedChat = await service.chat(redActor, matchId, chatCommand, '重复载荷不会新增')
+      assert.equal(repeatedChat.id, firstChat.id)
+      assert.equal(repeatedChat.nickname, paired.participants.find((item) => item.userId === redId)!.displayNameSnapshot)
+      assert.equal((await service.chatHistory(firstActor, matchId)).length, 1)
+
+      const firstHistory = await service.history(firstActor, {})
+      const secondHistory = await service.history(secondActor, {})
+      const outsiderHistory = await service.history(outsiderActor, {})
+      assert.equal(firstHistory.matches.some((item) => item.id === matchId), true)
+      assert.equal(secondHistory.matches.some((item) => item.id === matchId), true)
+      assert.equal(outsiderHistory.matches.some((item) => item.id === matchId), false)
+      assert.equal(
+        (await service.history(firstActor, { from: '2999-01-01T00:00:00.000Z' })).matches.length,
+        0,
+      )
+      assert.equal(
+        (await service.history(firstActor, { to: '2000-01-01T00:00:00.000Z' })).matches.length,
+        0,
+      )
+
+      const privateMatch = await service.create(firstActor, {
+        name: '仅邀请可见棋局',
+        variant: 'jieqi',
+        visibility: 'private',
+        side: 'red',
+      })
+      await assert.rejects(service.get(outsiderActor, privateMatch.match.id), { code: 'not_found' })
+      await assert.rejects(service.chatHistory(outsiderActor, privateMatch.match.id), {
+        code: 'not_found',
+      })
+      const invite = await service.createInvite(firstActor, privateMatch.match.id)
+      const invited = await service.joinInvite(secondActor, invite.token)
+      assert.equal(invited.participants.some((item) => item.userId === second.id), true)
+      await assert.rejects(service.joinInvite(outsiderActor, invite.token), { code: 'not_found' })
+      const firstReady = await service.ready(firstActor, {
+        matchId: privateMatch.match.id,
+        commandId: randomUUID(),
+        expectedRevision: 0,
+        ready: true,
+      })
+      const secondReady = await service.ready(secondActor, {
+        matchId: privateMatch.match.id,
+        commandId: randomUUID(),
+        expectedRevision: firstReady.record.match.revision,
+        ready: true,
+      })
+      assert.equal(secondReady.record.match.phase, 'playing')
+      const proposed = await service.propose(firstActor, {
+        matchId: privateMatch.match.id,
+        commandId: randomUUID(),
+        expectedRevision: secondReady.record.match.revision,
+        kind: 'draw',
+      })
+      const agreed = await service.respondProposal(secondActor, {
+        matchId: privateMatch.match.id,
+        commandId: randomUUID(),
+        expectedRevision: proposed.record.match.revision,
+        proposalId: proposed.record.proposal!.id,
+        accept: true,
+      })
+      assert.equal(agreed.record.match.statusReason, 'agreement')
+      const rematch = await service.rematch(firstActor, privateMatch.match.id)
+      assert.equal(rematch.match.previousMatchId, privateMatch.match.id)
+
+      const lobbyMatch = await service.create(firstActor, {
+        name: '大厅 DTO 测试',
+        variant: 'xiangqi',
+        visibility: 'public',
+        side: 'red',
+      })
+      const lobbyItem = (await service.lobby(firstActor, {})).find(
+        (item) => item.id === lobbyMatch.match.id,
+      )!
+      assert.deepEqual(lobbyItem.openSeats, ['black'])
+      assert.equal('visibility' in lobbyItem, false)
+
+      const waiting = await service.quickMatch(firstActor, {
+        variant: 'gomoku',
+        gomokuRule: 'renju',
+        requestKey: randomUUID(),
+      })
+      const repeatedWaiting = await service.quickMatch(firstActor, {
+        variant: 'gomoku',
+        gomokuRule: 'renju',
+        requestKey: randomUUID(),
+      })
+      assert.equal(repeatedWaiting.record.match.id, waiting.record.match.id)
+      assert.equal((await service.cancelMatchmaking(firstActor)).cancelled, true)
+      assert.equal((await service.cancelMatchmaking(firstActor)).cancelled, false)
+
+      const [gomokuFirst, gomokuSecond] = await Promise.all([
+        service.quickMatch(firstActor, {
+          variant: 'gomoku',
+          gomokuRule: 'renju',
+          requestKey: randomUUID(),
+        }),
+        service.quickMatch(secondActor, {
+          variant: 'gomoku',
+          gomokuRule: 'renju',
+          requestKey: randomUUID(),
+        }),
+      ])
+      assert.equal(gomokuFirst.record.match.id, gomokuSecond.record.match.id)
+      const gomokuRedId = gomokuFirst.record.participants.find((item) => item.side === 'red')!.userId
+      const gomokuMoved = await service.move(gomokuRedId === first.id ? firstActor : secondActor, {
+        matchId: gomokuFirst.record.match.id,
+        commandId: randomUUID(),
+        expectedRevision: 1,
+        row: 7,
+        col: 7,
+      })
+      assert.equal(gomokuMoved.record.state.moves.length, 1)
+
+      const [jieqiFirst, jieqiSecond] = await Promise.all([
+        service.quickMatch(firstActor, { variant: 'jieqi', requestKey: randomUUID() }),
+        service.quickMatch(secondActor, { variant: 'jieqi', requestKey: randomUUID() }),
+      ])
+      assert.equal(jieqiFirst.record.match.id, jieqiSecond.record.match.id)
+      const jieqiRedId = jieqiFirst.record.participants.find((item) => item.side === 'red')!.userId
+      const jieqiMoved = await service.move(jieqiRedId === first.id ? firstActor : secondActor, {
+        matchId: jieqiFirst.record.match.id,
+        commandId: randomUUID(),
+        expectedRevision: 1,
+        uci: 'a3a4',
+      })
+      assert.equal(jieqiMoved.record.state.moves.length, 1)
+      assert.equal((await repository.recoverActiveMatches()).some((item) => item.match.id === matchId), true)
+    })
+  },
+)
+
+test(
   'account HTTP flow enforces Origin, Cookie, CSRF, expiry, and logout',
   integration,
   async () => {
@@ -469,7 +733,7 @@ test('a database at migration 0001 upgrades to the current version', integration
         [first.version, first.name, first.checksum],
       )
     })
-    assert.deepEqual(await migrate(database), [2])
-    assert.equal((await migrationStatus(database)).currentVersion, 2)
+    assert.deepEqual(await migrate(database), [2, 3])
+    assert.equal((await migrationStatus(database)).currentVersion, 3)
   })
 })

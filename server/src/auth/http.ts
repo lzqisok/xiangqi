@@ -95,6 +95,8 @@ export type AuthRuntime = {
   errorMiddleware: ErrorRequestHandler
   authenticateUpgrade(request: IncomingMessage): Promise<UserActor | null>
   bindSocket(actor: UserActor, socket: WebSocket): void
+  requireUser(response: Response): UserActor
+  requireCsrf(request: Request, response: Response): UserActor
 }
 
 export function createAuthRuntime(
@@ -437,5 +439,7 @@ export function createAuthRuntime(
       timeout.unref()
       socket.once('close', () => clearTimeout(timeout))
     },
+    requireUser,
+    requireCsrf,
   }
 }

@@ -22,6 +22,11 @@ import { Database } from './db/database.js'
 import { assertSchemaReady } from './db/migrations.js'
 import { createAuthRuntime } from './auth/http.js'
 import type { UserActor } from './auth/types.js'
+import { MySqlOnlineMatchRepository } from './online/repository.js'
+import { OnlineMatchService } from './online/service.js'
+import { OnlineMatchError } from './online/service.js'
+import { OnlineMatchManager } from './online/manager.js'
+import { createOnlineRouters } from './online/routes.js'
 
 const app = express()
 const server = createServer(app)
@@ -284,6 +289,19 @@ const roomCleanupTimer = setInterval(
 )
 roomCleanupTimer.unref()
 app.use('/api/rooms', createRoomRouter(roomManager))
+const onlineService = database
+  ? new OnlineMatchService(new MySqlOnlineMatchRepository(database))
+  : null
+const onlineManager = onlineService ? new OnlineMatchManager(onlineService) : null
+if (onlineService && authRuntime) {
+  const onlineRouters = createOnlineRouters(onlineService, authRuntime)
+  app.use('/api/online', onlineRouters.router)
+  app.use('/api/me/matches', onlineRouters.meMatchesRouter)
+  app.use(onlineRouters.errorMiddleware)
+  void onlineManager?.restore().catch((error) =>
+    console.error('Online match recovery failed; check migrations and database readiness:', error),
+  )
+}
 if (authRuntime) app.use(authRuntime.errorMiddleware)
 
 const liveRapfiEngines = new Set<RapfiEngine>()
@@ -295,7 +313,10 @@ gomokuWss.on('connection', (ws, request) => {
 
 wss.on('connection', async (ws, request) => {
   const actor = socketActors.get(request)
-  if (actor && authRuntime) authRuntime.bindSocket(actor, ws)
+  if (actor && authRuntime) {
+    authRuntime.bindSocket(actor, ws)
+    onlineManager?.bind(ws, actor)
+  }
   if (LAN_MODE && request.headers.origin) {
     try {
       if (new URL(request.headers.origin).host !== request.headers.host)
@@ -361,6 +382,38 @@ wss.on('connection', async (ws, request) => {
   ws.on('message', async (data) => {
     try {
       const roomMessage = JSON.parse(data.toString()) as Record<string, unknown>
+      if (typeof roomMessage.type === 'string' && roomMessage.type.startsWith('match-')) {
+        if (!onlineManager) {
+          sendError(ws, '公网对局服务未启用')
+          return
+        }
+        try {
+          await onlineManager.handle(ws, roomMessage)
+        } catch (error) {
+          if (ws.readyState === WebSocket.OPEN && error instanceof OnlineMatchError) {
+            ws.send(
+              JSON.stringify({
+                type: 'match-error',
+                code: error.code,
+                message:
+                  error.code === 'revision_conflict' ? '对局状态已更新，正在重新同步' : error.message,
+                ...(error.code === 'revision_conflict'
+                  ? { currentRevision: Number(error.message) }
+                  : {}),
+                commandId:
+                  typeof roomMessage.commandId === 'string' ? roomMessage.commandId : undefined,
+              }),
+            )
+          } else {
+            sendError(
+              ws,
+              error instanceof Error ? error.message : '公网对局操作失败',
+              typeof roomMessage.commandId === 'string' ? roomMessage.commandId : undefined,
+            )
+          }
+        }
+        return
+      }
       if (typeof roomMessage.type === 'string' && roomMessage.type.startsWith('room-')) {
         try {
           await roomManager.handle(ws, roomMessage)
@@ -776,7 +829,10 @@ wss.on('connection', async (ws, request) => {
     }
     destroyEngineSlots(engineSlots)
     gameLeases.releaseSocket(ws)
-    if (!shuttingDown) roomManager.disconnect(ws)
+    if (!shuttingDown) {
+      roomManager.disconnect(ws)
+      onlineManager?.disconnect(ws)
+    }
   })
 })
 
@@ -819,6 +875,7 @@ function shutdown() {
   wss.close()
   gomokuWss.close()
   roomManager.dispose()
+  onlineManager?.dispose()
   const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()))
   Promise.allSettled([
     gameRepository.flush(),

@@ -1,0 +1,78 @@
+import type { Board, GameStatus, PieceColor, PieceType } from '../types'
+
+export type OnlineVariant = 'xiangqi' | 'jieqi' | 'gomoku'
+export type OnlineMatchSummary = {
+  id: string
+  name: string
+  variant: OnlineVariant
+  gomokuRule?: 'freestyle' | 'renju'
+  matchmaking: boolean
+  competitionMode: 'casual' | 'rated'
+  clockPreset: 'none' | '10m' | '15m-10s' | '30m'
+  visibility: 'public' | 'invite' | 'private'
+  phase: 'waiting' | 'playing' | 'finished'
+  red: string | null
+  black: string | null
+  moveCount: number
+  status: GameStatus
+  statusReason?: string
+  previousMatchId?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type OnlineLobbyMatch = Pick<
+  OnlineMatchSummary,
+  'id' | 'name' | 'variant' | 'gomokuRule' | 'clockPreset' | 'red' | 'black' | 'createdAt'
+> & {
+  openSeats: PieceColor[]
+}
+
+export type OnlineMatchSnapshot = OnlineMatchSummary & {
+  revision: number
+  role: 'owner' | PieceColor | 'spectator'
+  side: PieceColor | null
+  isOwner: boolean
+  seats: Partial<
+    Record<
+      PieceColor,
+      { nickname: string; ready: boolean; online: boolean; disconnectDeadline?: string }
+    >
+  >
+  board: Board | Array<Array<PieceColor | null>>
+  turn: PieceColor
+  moves: Array<{
+    uci: string
+    color: PieceColor
+    row?: number
+    col?: number
+    notation?: string
+    revealed?: PieceType
+    captured?: PieceType | null
+    capturedHidden?: boolean
+  }>
+  captured: Array<{
+    color: PieceColor
+    type: PieceType | null
+    hidden: boolean
+    capturedBy: PieceColor
+  }>
+  proposal?: {
+    id: string
+    kind: 'undo' | 'draw' | 'swap'
+    proposedBySide: PieceColor
+    deadline: string
+    canRespond: boolean
+    canWithdraw: boolean
+  }
+}
+
+export type OnlineChatMessage = {
+  id: string
+  sequence: number
+  authorUserId: string | null
+  nickname: string
+  role: 'owner' | PieceColor | 'spectator'
+  content: string
+  createdAt: string
+}

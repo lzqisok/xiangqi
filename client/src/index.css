@@ -28,6 +28,157 @@
   --panel-surface: rgba(91, 75, 55, 0.055);
 }
 
+/* Account-backed public matches are intentionally styled separately from LAN rooms. */
+.online-shell {
+  min-height: 100vh;
+}
+
+.online-account-gate {
+  display: grid;
+  gap: 16px;
+  max-width: 680px;
+}
+
+.online-actions-grid,
+.online-match-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.online-actions-grid,
+.online-list-section,
+.online-match-layout {
+  width: min(1180px, calc(100% - 32px));
+  margin: 18px auto 0;
+}
+
+.online-actions-grid .card,
+.online-list-section,
+.online-match-layout .card {
+  padding: 20px;
+}
+
+.online-actions-grid h2,
+.online-list-section h2,
+.online-match-layout h2 {
+  margin: 4px 0 10px;
+}
+
+.online-create-card,
+.online-create-card label,
+.online-side-column,
+.online-chat-card,
+.online-chat-card form,
+.online-board-column {
+  display: grid;
+  gap: 12px;
+}
+
+.online-create-card input,
+.online-create-card select,
+.online-invite-actions input,
+.online-chat-card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(74, 61, 45, 0.2);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fffdf8;
+  color: inherit;
+  font: inherit;
+}
+
+.online-choice-row,
+.online-invite-actions,
+.online-proposal-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.online-choice-row button.active {
+  border-color: #a44337;
+  background: #a44337;
+  color: #fffaf1;
+}
+
+.online-section-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.online-match-layout {
+  grid-template-columns: minmax(0, 1.65fr) minmax(300px, 0.75fr);
+  padding-bottom: 28px;
+}
+
+.online-board-card {
+  overflow: auto;
+}
+
+.online-chat-log {
+  display: grid;
+  gap: 8px;
+  min-height: 150px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.online-chat-log p {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: rgba(164, 67, 55, 0.07);
+}
+
+.online-chat-log strong {
+  font-size: 12px;
+}
+
+.online-invite-preview {
+  width: min(760px, calc(100% - 32px));
+  margin: 18px auto 0;
+  padding: 20px;
+}
+
+.online-shell button.primary,
+.online-shell button.danger {
+  min-height: 40px;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-weight: 800;
+}
+
+.online-shell button.primary {
+  border-color: #a44337;
+  background: #a44337;
+  color: #fffaf1;
+}
+
+.online-shell button.danger {
+  border-color: #9f3d32;
+  color: #9f3d32;
+}
+
+@media (max-width: 820px) {
+  .online-actions-grid,
+  .online-match-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .online-actions-grid,
+  .online-list-section,
+  .online-match-layout {
+    width: min(100% - 16px, 680px);
+  }
+}
+
 /* Jieqi records: an isolated, seat-scoped replay surface. */
 .jieqi-record-library,
 .jieqi-record-replay {

@@ -70,11 +70,14 @@ export type MatchEntity = {
   variant: MatchVariant
   gomokuRule: 'freestyle' | 'renju' | null
   matchmaking: boolean
+  competitionMode: 'casual' | 'rated'
+  clockPreset: 'none' | '10m' | '15m-10s' | '30m'
   visibility: MatchVisibility
   phase: MatchPhase
   status: MatchStatus
   statusReason: string | null
   revision: number
+  previousMatchId: string | null
   createdByUserId: string | null
   createdAt: Date
   updatedAt: Date
@@ -95,11 +98,14 @@ export type CreateMatchInput = {
   variant: MatchVariant
   gomokuRule?: 'freestyle' | 'renju'
   matchmaking?: boolean
+  competitionMode?: MatchEntity['competitionMode']
+  clockPreset?: MatchEntity['clockPreset']
   visibility: MatchVisibility
   phase: MatchPhase
   status: MatchStatus
   statusReason?: string
   createdByUserId: string
+  previousMatchId?: string
   participants: MatchParticipantInput[]
   stateSchemaVersion: number
   publicState: unknown

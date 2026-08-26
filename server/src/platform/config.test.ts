@@ -8,7 +8,10 @@ test('platform defaults keep local development bounded without requiring deploym
   assert.equal(config.importJsonLimit, '2mb')
   assert.equal(config.wsMaxPayloadBytes, 128 * 1024)
   assert.equal(config.maxEngineProcesses, 6)
+  assert.equal(config.maxMatchmakingQueueEntries, 100)
   assert.equal(config.publicOnlineEnabled, false)
+  assert.equal(config.publicOnlineMode, 'off')
+  assert.equal(config.registrationEnabled, true)
   assert.deepEqual(config.allowedOrigins, [])
 })
 
@@ -34,6 +37,28 @@ test('production requires HTTPS, explicit trusted proxies, and an engine version
   assert.deepEqual(config.allowedOrigins, ['https://chess.test'])
   assert.deepEqual(config.trustedProxyCidrs, ['10.0.0.0/8'])
   assert.equal(config.publicOnlineEnabled, true)
+  assert.equal(config.publicOnlineMode, 'open')
+})
+
+test('controlled and drain rollout modes validate their operational boundaries', () => {
+  assert.throws(
+    () => loadPlatformConfig({ NODE_ENV: 'development', PUBLIC_ONLINE_MODE: 'controlled' }),
+    /PUBLIC_ONLINE_ALLOWED_USER_IDS/,
+  )
+  const controlled = loadPlatformConfig({
+    NODE_ENV: 'development',
+    PUBLIC_ONLINE_MODE: 'controlled',
+    PUBLIC_ONLINE_ALLOWED_USER_IDS: 'user-a,user-b,user-a',
+    PUBLIC_REGISTRATION_ENABLED: 'false',
+  })
+  assert.equal(controlled.publicOnlineEnabled, true)
+  assert.equal(controlled.publicOnlineMode, 'controlled')
+  assert.deepEqual(controlled.publicOnlineAllowedUserIds, ['user-a', 'user-b'])
+  assert.equal(controlled.registrationEnabled, false)
+  assert.equal(
+    loadPlatformConfig({ NODE_ENV: 'development', PUBLIC_ONLINE_MODE: 'drain' }).publicOnlineMode,
+    'drain',
+  )
 })
 
 test('production refuses wildcard, path-bearing, and insecure allowed origins', () => {

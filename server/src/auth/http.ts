@@ -28,6 +28,7 @@ type RequestAuth = { actor: PublicActor; session?: AuthSession }
 export type AuthRuntimeOptions = {
   production: boolean
   exposeDevelopmentTokens: boolean
+  registrationEnabled?: boolean
   allowedOrigins?: readonly string[]
   clientIp?: (request: Request | IncomingMessage) => string
 }
@@ -188,6 +189,9 @@ export function createAuthRuntime(
     '/register',
     asyncRoute(async (request, response) => {
       requireOrigin(request)
+      if (options.registrationEnabled === false) {
+        throw new AuthError('registration_closed', 503)
+      }
       const result = await service.register({
         email: request.body?.email,
         password: request.body?.password,

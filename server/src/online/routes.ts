@@ -9,6 +9,11 @@ import type { UserActor } from '../auth/types.js'
 import { RepositoryError } from '../db/errors.js'
 import { onlineMatchSummary } from './repository.js'
 import { OnlineMatchError, OnlineMatchService } from './service.js'
+import {
+  canAccessPublicOnline,
+  canStartPublicOnlineOperation,
+  type PublicOnlineRollout,
+} from '../platform/rollout.js'
 
 type Authorize = {
   requireUser(response: Response): UserActor
@@ -32,14 +37,28 @@ function asyncRoute(
 export function createOnlineRouters(
   service: OnlineMatchService,
   authorize: Authorize,
+  rollout: PublicOnlineRollout = { mode: 'open', allowedUserIds: new Set() },
 ): OnlineRouters {
   const router = Router()
   const meMatchesRouter = Router()
+  const requireRolloutAccess = (actor: UserActor) => {
+    if (!canAccessPublicOnline(rollout, actor)) {
+      throw new OnlineMatchError('controlled_rollout', 403, '当前账号未进入公网灰度范围')
+    }
+    return actor
+  }
+  const requireNewOperation = (actor: UserActor) => {
+    requireRolloutAccess(actor)
+    if (!canStartPublicOnlineOperation(rollout, actor)) {
+      throw new OnlineMatchError('rollout_draining', 503, '公网入口正在摘流，仅保留进行中对局')
+    }
+    return actor
+  }
 
   router.get(
     '/lobby',
     asyncRoute(async (request, response) => {
-      const actor = authorize.requireUser(response)
+      const actor = requireRolloutAccess(authorize.requireUser(response))
       response.json({
         matches: await service.safe(() =>
           service.lobby(actor, { variant: request.query.variant, limit: request.query.limit }),
@@ -51,7 +70,7 @@ export function createOnlineRouters(
   router.post(
     '/matches',
     asyncRoute(async (request, response) => {
-      const actor = authorize.requireCsrf(request, response)
+      const actor = requireNewOperation(authorize.requireCsrf(request, response))
       const record = await service.safe(() => service.create(actor, request.body || {}))
       response.status(201).json({
         match: service.snapshot(record, actor.userId, new Set()),
@@ -62,7 +81,7 @@ export function createOnlineRouters(
   router.post(
     '/quick-match',
     asyncRoute(async (request, response) => {
-      const actor = authorize.requireCsrf(request, response)
+      const actor = requireNewOperation(authorize.requireCsrf(request, response))
       const result = await service.safe(() => service.quickMatch(actor, request.body || {}))
       response.status(result.created ? 201 : 200).json({
         created: result.created,
@@ -74,7 +93,7 @@ export function createOnlineRouters(
   router.delete(
     '/quick-match',
     asyncRoute(async (request, response) => {
-      const actor = authorize.requireCsrf(request, response)
+      const actor = requireRolloutAccess(authorize.requireCsrf(request, response))
       response.json(await service.safe(() => service.cancelMatchmaking(actor)))
     }),
   )
@@ -82,7 +101,7 @@ export function createOnlineRouters(
   router.get(
     '/matches/:id',
     asyncRoute(async (request, response) => {
-      const actor = authorize.requireUser(response)
+      const actor = requireRolloutAccess(authorize.requireUser(response))
       const record = await service.safe(() => service.get(actor, String(request.params.id)))
       response.json({ match: service.snapshot(record, actor.userId, new Set()) })
     }),
@@ -91,7 +110,7 @@ export function createOnlineRouters(
   router.post(
     '/matches/:id/invites',
     asyncRoute(async (request, response) => {
-      const actor = authorize.requireCsrf(request, response)
+      const actor = requireNewOperation(authorize.requireCsrf(request, response))
       const invite = await service.safe(() =>
         service.createInvite(actor, String(request.params.id), request.body?.side),
       )
@@ -105,7 +124,7 @@ export function createOnlineRouters(
   router.post(
     '/matches/:id/join',
     asyncRoute(async (request, response) => {
-      const actor = authorize.requireCsrf(request, response)
+      const actor = requireNewOperation(authorize.requireCsrf(request, response))
       const record = await service.safe(() =>
         service.joinPublic(actor, String(request.params.id), request.body?.side),
       )
@@ -116,7 +135,7 @@ export function createOnlineRouters(
   router.get(
     '/invites/:token',
     asyncRoute(async (request, response) => {
-      authorize.requireUser(response)
+      requireRolloutAccess(authorize.requireUser(response))
       const preview = await service.safe(() => service.previewInvite(String(request.params.token)))
       response.json({
         match: onlineMatchSummary(preview.record),
@@ -128,7 +147,7 @@ export function createOnlineRouters(
   router.post(
     '/invites/:token/join',
     asyncRoute(async (request, response) => {
-      const actor = authorize.requireCsrf(request, response)
+      const actor = requireNewOperation(authorize.requireCsrf(request, response))
       const record = await service.safe(() =>
         service.joinInvite(actor, String(request.params.token), request.body?.side),
       )
@@ -139,7 +158,7 @@ export function createOnlineRouters(
   router.post(
     '/matches/:id/rematch',
     asyncRoute(async (request, response) => {
-      const actor = authorize.requireCsrf(request, response)
+      const actor = requireNewOperation(authorize.requireCsrf(request, response))
       const record = await service.safe(() => service.rematch(actor, String(request.params.id)))
       response.status(201).json({ match: service.snapshot(record, actor.userId, new Set()) })
     }),
@@ -148,7 +167,7 @@ export function createOnlineRouters(
   meMatchesRouter.get(
     '/',
     asyncRoute(async (request, response) => {
-      const actor = authorize.requireUser(response)
+      const actor = requireRolloutAccess(authorize.requireUser(response))
       response.json(
         await service.safe(() =>
           service.history(actor, {

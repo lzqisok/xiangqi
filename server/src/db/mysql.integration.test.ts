@@ -557,6 +557,24 @@ test(
       assert.equal(retriedMatchedRequest.record.match.id, matchId)
       assert.equal(retriedMatchedRequest.created, false)
 
+      const boundedQueue = new OnlineMatchService(repository, { maxMatchmakingQueueEntries: 1 })
+      await boundedQueue.quickMatch(outsiderActor, {
+        variant: 'gomoku',
+        gomokuRule: 'freestyle',
+        requestKey: randomUUID(),
+      })
+      await assert.rejects(
+        boundedQueue.safe(() =>
+          boundedQueue.quickMatch(firstActor, {
+            variant: 'jieqi',
+            requestKey: randomUUID(),
+          }),
+        ),
+        (error: unknown) =>
+          error instanceof Error && 'code' in error && error.code === 'matchmaking_queue_full',
+      )
+      await boundedQueue.cancelMatchmaking(outsiderActor)
+
       const redId = paired.participants.find((item) => item.side === 'red')!.userId!
       const redActor = redId === first.id ? firstActor : secondActor
       const blackActor = redId === first.id ? secondActor : firstActor

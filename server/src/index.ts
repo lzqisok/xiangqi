@@ -30,6 +30,7 @@ import { OnlineMatchError } from './online/service.js'
 import { OnlineMatchManager } from './online/manager.js'
 import { createOnlineRouters } from './online/routes.js'
 import { loadPlatformConfig, PlatformConfigError } from './platform/config.js'
+import { canAccessPublicOnline } from './platform/rollout.js'
 import {
   clientIp,
   createCorsAndOriginGuard,
@@ -95,6 +96,7 @@ const authRuntime = database
       exposeDevelopmentTokens:
         databaseConfig.environment !== 'production' &&
         process.env.AUTH_DEV_EXPOSE_TOKENS === 'true',
+      registrationEnabled: platformConfig.registrationEnabled,
       allowedOrigins: platformConfig.allowedOrigins,
       clientIp: (request) => clientIp(request, trustedProxies),
     })
@@ -231,7 +233,11 @@ app.get('/health/engines', (_request, response) => {
   response.json({ status: 'available-separately', ...engineHealthSnapshot() })
 })
 app.get('/api/capabilities', (_request, response) => {
-  response.json({ publicOnline: platformConfig.publicOnlineEnabled })
+  response.json({
+    publicOnline: platformConfig.publicOnlineEnabled,
+    publicOnlineMode: platformConfig.publicOnlineMode,
+    registration: platformConfig.registrationEnabled,
+  })
 })
 app.get('/internal/metrics', (request, response) => {
   const supplied = request.header('authorization')?.replace(/^Bearer\s+/i, '')
@@ -519,6 +525,7 @@ const onlineService =
     ? new OnlineMatchService(new MySqlOnlineMatchRepository(database), {
         rateLimitStore: rateLimitStore || undefined,
         maxActiveMatchesPerUser: platformConfig.maxActiveMatchesPerUser,
+        maxMatchmakingQueueEntries: platformConfig.maxMatchmakingQueueEntries,
         jieqiSeatRecords: jieqiSeatRecordRepository || undefined,
       })
     : null
@@ -531,7 +538,11 @@ const onlineManager = onlineService
     )
   : null
 if (onlineService && authRuntime) {
-  const onlineRouters = createOnlineRouters(onlineService, authRuntime)
+  const onlineRollout = {
+    mode: platformConfig.publicOnlineMode,
+    allowedUserIds: new Set(platformConfig.publicOnlineAllowedUserIds),
+  }
+  const onlineRouters = createOnlineRouters(onlineService, authRuntime, onlineRollout)
   app.use('/api/online', onlineRouters.router)
   app.use('/api/me/matches', onlineRouters.meMatchesRouter)
   app.use(onlineRouters.errorMiddleware)
@@ -558,7 +569,17 @@ wss.on('connection', async (ws, request) => {
   const actor = socketActors.get(request)
   if (actor && authRuntime) {
     authRuntime.bindSocket(actor, ws)
-    onlineManager?.bind(ws, actor)
+    if (
+      canAccessPublicOnline(
+        {
+          mode: platformConfig.publicOnlineMode,
+          allowedUserIds: new Set(platformConfig.publicOnlineAllowedUserIds),
+        },
+        actor,
+      )
+    ) {
+      onlineManager?.bind(ws, actor)
+    }
   }
   ;(ws as LiveWebSocket).isAlive = true
   ws.on('pong', () => {

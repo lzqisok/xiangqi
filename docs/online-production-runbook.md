@@ -9,7 +9,7 @@
 - 发布制品记录 `DEPLOYMENT_VERSION`、Pikafish、揭棋引擎、Rapfi 和权重版本；生产启动拒绝 `development` 占位值。
 - `engine/` 由制品系统在启动前准备，二进制和权重不提交 Git。MySQL、邮件 webhook、metrics token 和 TLS 私钥只从 secret store 或 `/etc/xiangqi/runtime.env` 注入，不写入镜像层。
 - systemd 示例只允许 `/var/lib/xiangqi` 写入，因此 `XIANGQI_DATA_DIR` 和 `XIANGQI_ROOM_DIR` 必须指向该目录下由 `xiangqi` 用户拥有的子目录；不得让运行进程写发布制品目录。
-- `PUBLIC_ONLINE_ENABLED` 与前端构建变量 `VITE_PUBLIC_ONLINE_ENABLED` 默认均为 `false`。只有本手册的 staging 门禁有证据后才同时打开。
+- `PUBLIC_ONLINE_MODE=off` 与前端构建变量 `VITE_PUBLIC_ONLINE_ENABLED=false` 是默认值。首批使用 `controlled` 并配置不可变账号 ID allowlist，同时关闭公开注册；扩大后切换为 `open`。异常摘流先切到 `drain`，它拒绝创建、匹配、加入、邀请和重赛，但保留进行中对局、历史读取和同账号重连；确认无须保留实时对局后才切到 `off`。
 
 生产环境以 `server/.env.example` 为非秘密模板。应用发布前运行：
 
@@ -86,7 +86,7 @@ pnpm --filter server staging:read-load
 
 ## 回滚与恢复
 
-异常时先把 `PUBLIC_ONLINE_ENABLED` 和前端入口关闭，停止新匹配；无数据完整性风险时允许兼容中的对局完成。回滚应用制品，不执行 down migration。若新旧代码不能共享 schema，发布必须预先声明维护窗口，不得声称滚动兼容。
+异常时先把 `PUBLIC_ONLINE_MODE` 切到 `drain` 并关闭新入口，停止新建、匹配和加入；无数据完整性风险时允许兼容中的对局完成并继续支持重连。观察进行中对局归零后再切到 `off`。回滚应用制品，不执行 down migration。若新旧代码不能共享 schema，发布必须预先声明维护窗口，不得声称滚动兼容。
 
 备份：
 

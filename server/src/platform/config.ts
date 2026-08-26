@@ -1,9 +1,13 @@
 export type PlatformEnvironment = 'development' | 'test' | 'production'
+export type PublicOnlineMode = 'off' | 'controlled' | 'open' | 'drain'
 
 export type PlatformConfig = {
   environment: PlatformEnvironment
   production: boolean
   publicOnlineEnabled: boolean
+  publicOnlineMode: PublicOnlineMode
+  publicOnlineAllowedUserIds: readonly string[]
+  registrationEnabled: boolean
   publicOrigin?: string
   allowedOrigins: readonly string[]
   trustedProxyCidrs: readonly string[]
@@ -18,6 +22,7 @@ export type PlatformConfig = {
   maxPlayerConnectionsPerUser: number
   maxSpectatorsPerMatch: number
   maxActiveMatchesPerUser: number
+  maxMatchmakingQueueEntries: number
   maxEngineProcesses: number
   maxEngineTasks: number
   shutdownGraceMs: number
@@ -72,6 +77,17 @@ function boolean(value: string | undefined, fallback: boolean, name: string): bo
   if (value === 'true' || value === '1') return true
   if (value === 'false' || value === '0') return false
   throw new PlatformConfigError(`${name} must be true, false, 1, or 0`)
+}
+
+function publicOnlineMode(env: NodeJS.ProcessEnv): PublicOnlineMode {
+  const value = env.PUBLIC_ONLINE_MODE
+  if (value === undefined || value === '') {
+    return boolean(env.PUBLIC_ONLINE_ENABLED, false, 'PUBLIC_ONLINE_ENABLED') ? 'open' : 'off'
+  }
+  if (value === 'off' || value === 'controlled' || value === 'open' || value === 'drain') {
+    return value
+  }
+  throw new PlatformConfigError('PUBLIC_ONLINE_MODE must be off, controlled, open, or drain')
 }
 
 function origin(value: string | undefined, name: string): string | undefined {
@@ -144,10 +160,25 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv = process.env): Platfo
     return value
   }
 
+  const onlineMode = publicOnlineMode(env)
+  const allowedOnlineUsers = list(env.PUBLIC_ONLINE_ALLOWED_USER_IDS)
+  if (onlineMode === 'controlled' && allowedOnlineUsers.length === 0) {
+    throw new PlatformConfigError(
+      'controlled PUBLIC_ONLINE_MODE requires PUBLIC_ONLINE_ALLOWED_USER_IDS',
+    )
+  }
+
   return {
     environment,
     production,
-    publicOnlineEnabled: boolean(env.PUBLIC_ONLINE_ENABLED, false, 'PUBLIC_ONLINE_ENABLED'),
+    publicOnlineEnabled: onlineMode !== 'off',
+    publicOnlineMode: onlineMode,
+    publicOnlineAllowedUserIds: allowedOnlineUsers,
+    registrationEnabled: boolean(
+      env.PUBLIC_REGISTRATION_ENABLED,
+      true,
+      'PUBLIC_REGISTRATION_ENABLED',
+    ),
     publicOrigin,
     allowedOrigins,
     trustedProxyCidrs,
@@ -168,6 +199,7 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv = process.env): Platfo
     maxPlayerConnectionsPerUser: integer(env, 'MAX_PLAYER_CONNECTIONS_PER_USER', 2, 1, 20),
     maxSpectatorsPerMatch: integer(env, 'MAX_SPECTATORS_PER_MATCH', 50, 0, 1_000),
     maxActiveMatchesPerUser: integer(env, 'MAX_ACTIVE_MATCHES_PER_USER', 3, 1, 20),
+    maxMatchmakingQueueEntries: integer(env, 'MAX_MATCHMAKING_QUEUE_ENTRIES', 100, 1, 10_000),
     maxEngineProcesses: integer(env, 'MAX_ENGINE_PROCESSES', 6, 1, 64),
     maxEngineTasks: integer(env, 'MAX_ENGINE_TASKS', 4, 1, 128),
     shutdownGraceMs: integer(env, 'SHUTDOWN_GRACE_MS', 10_000, 1_000, 60_000),

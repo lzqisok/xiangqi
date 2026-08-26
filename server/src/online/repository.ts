@@ -195,6 +195,13 @@ export class ActiveMatchQuotaError extends Error {
   }
 }
 
+export class MatchmakingQueueFullError extends Error {
+  constructor() {
+    super('matchmaking_queue_full')
+    this.name = 'MatchmakingQueueFullError'
+  }
+}
+
 export class MySqlOnlineMatchRepository {
   constructor(private readonly database: Database) {}
 
@@ -257,6 +264,7 @@ export class MySqlOnlineMatchRepository {
     clockPreset: MatchEntity['clockPreset']
     requestKey: string
     maxActiveMatches?: number
+    maxQueueEntries?: number
   }): Promise<{ record: OnlineMatchRecord; created: boolean }> {
     return this.database.transaction(async (client) => {
       const profile = await this.requireActiveProfile(client, input.userId, true)
@@ -272,6 +280,13 @@ export class MySqlOnlineMatchRepository {
         }
       }
       const partitionKey = `${input.variant}:${input.variant === 'gomoku' ? (input.gomokuRule ?? 'freestyle') : '-'}:${input.competitionMode}:${input.clockPreset}`
+      await client.query(
+        `INSERT INTO matchmaking_partitions (partition_key) VALUES ('__capacity__')
+         ON DUPLICATE KEY UPDATE updated_at = updated_at`,
+      )
+      await client.query(
+        "SELECT partition_key FROM matchmaking_partitions WHERE partition_key = '__capacity__' FOR UPDATE",
+      )
       await client.query(
         `INSERT INTO matchmaking_partitions (partition_key) VALUES (?)
          ON DUPLICATE KEY UPDATE updated_at = updated_at`,
@@ -349,6 +364,15 @@ export class MySqlOnlineMatchRepository {
           [input.userId, input.requestKey, waiting.id],
         )
         return { record: await this.requireRecord(client, waiting.id), created: false }
+      }
+      if (input.maxQueueEntries !== undefined) {
+        const queued = await client.query<{ count: string }>(
+          `SELECT COUNT(*) AS count FROM matchmaking_entries
+           WHERE expires_at > CURRENT_TIMESTAMP(6)`,
+        )
+        if (Number(queued.rows[0]?.count || 0) >= input.maxQueueEntries) {
+          throw new MatchmakingQueueFullError()
+        }
       }
       const id = randomUUID()
       const side: RoomColor = randomInt(2) ? 'red' : 'black'

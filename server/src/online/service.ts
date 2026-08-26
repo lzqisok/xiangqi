@@ -7,6 +7,7 @@ import { buildJieqiRoomProjection } from '../rooms/jieqiRecord.js'
 import type { RoomColor, RoomStatusReason, StoredRoom } from '../rooms/types.js'
 import {
   ActiveMatchQuotaError,
+  MatchmakingQueueFullError,
   MySqlOnlineMatchRepository,
   onlineMatchSummary,
   type OnlineCommandCommit,
@@ -148,6 +149,7 @@ export class OnlineMatchService {
     private readonly options: {
       rateLimitStore?: MySqlRateLimitStore
       maxActiveMatchesPerUser?: number
+      maxMatchmakingQueueEntries?: number
       jieqiSeatRecords?: MySqlUserDocumentRepository<Record<string, unknown>>
     } = {},
   ) {}
@@ -198,6 +200,7 @@ export class OnlineMatchService {
           : 'none',
       requestKey: commandId(input.requestKey),
       maxActiveMatches: this.options.maxActiveMatchesPerUser,
+      maxQueueEntries: this.options.maxMatchmakingQueueEntries,
     })
     metrics.increment('xiangqi_matchmaking_requests', {
       result: result.record.match.phase === 'playing' ? 'matched' : 'waiting',
@@ -734,6 +737,14 @@ export class OnlineMatchService {
           'active_match_quota_exceeded',
           429,
           '当前账号的活跃公网对局已达上限',
+          30,
+        )
+      }
+      if (error instanceof MatchmakingQueueFullError) {
+        throw new OnlineMatchError(
+          'matchmaking_queue_full',
+          429,
+          '当前匹配分区已达到灰度容量上限',
           30,
         )
       }

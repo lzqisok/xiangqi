@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ActiveMatchQuotaError, type MySqlOnlineMatchRepository } from './repository.js'
+import {
+  ActiveMatchQuotaError,
+  MatchmakingQueueFullError,
+  type MySqlOnlineMatchRepository,
+} from './repository.js'
 import { OnlineMatchService } from './service.js'
 import type { OnlineMatchRecord } from './types.js'
 import { readOnlineRefereeState } from './state.js'
@@ -129,6 +133,19 @@ test('active match quota becomes a stable retryable online error', async () => {
       error instanceof Error &&
       'code' in error &&
       error.code === 'active_match_quota_exceeded' &&
+      'retryAfterSeconds' in error &&
+      error.retryAfterSeconds === 30,
+  )
+})
+
+test('matchmaking partition capacity becomes a stable retryable online error', async () => {
+  const service = new OnlineMatchService({} as MySqlOnlineMatchRepository)
+  await assert.rejects(
+    service.safe(() => Promise.reject(new MatchmakingQueueFullError())),
+    (error: unknown) =>
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'matchmaking_queue_full' &&
       'retryAfterSeconds' in error &&
       error.retryAfterSeconds === 30,
   )

@@ -144,6 +144,7 @@ import AccountEntry from './auth/AccountEntry'
 import { useAuth } from './auth/AuthContext'
 import {
   CloudDocumentResource,
+  pendingCloudMutationCount,
   resolveCloudConflict,
 } from './sync/cloudDocuments'
 
@@ -396,6 +397,9 @@ function LocalApp() {
   const [savedGames, setSavedGames] = useState<GameSummary[]>([])
   const [gameStoreLoading, setGameStoreLoading] = useState(true)
   const [gameStoreError, setGameStoreError] = useState('')
+  const [cloudSyncState, setCloudSyncState] = useState<
+    'local' | 'pending' | 'saving' | 'synced' | 'conflict' | 'failed'
+  >(auth.user ? 'synced' : 'local')
   const [gameStorageSource, setGameStorageSource] = useState<GameStorageSource>('device')
   const [startingGame, setStartingGame] = useState(false)
   const [difficulty, setDifficulty] = useState<Difficulty>('medium')
@@ -513,10 +517,14 @@ function LocalApp() {
         event as CustomEvent<{
           resource: CloudDocumentResource
           logicalId: string
-          kind: 'offline' | 'conflict' | 'error'
+          kind: 'pending' | 'saving' | 'synced' | 'offline' | 'conflict' | 'error'
         }>
       ).detail
       if (!detail) return
+      setCloudSyncState(
+        detail.kind === 'offline' ? 'pending' : detail.kind === 'error' ? 'failed' : detail.kind,
+      )
+      if (detail.kind === 'pending' || detail.kind === 'saving' || detail.kind === 'synced') return
       if (detail.kind === 'offline') {
         showToast('网络不可用，云端待保存内容已保留，联网后会自动重试。')
         return
@@ -532,17 +540,27 @@ function LocalApp() {
         confirmLabel: '保留本地',
         cancelLabel: '使用云端',
       }).then((result) => {
-        resolveCloudConflict(
-          detail.resource,
-          detail.logicalId,
-          result ? 'keep-local' : 'use-cloud',
-        )
+        resolveCloudConflict(detail.resource, detail.logicalId, result ? 'keep-local' : 'use-cloud')
         if (!result) window.location.reload()
       })
     }
     window.addEventListener('xiangqi-cloud-sync-status', handleSyncStatus)
     return () => window.removeEventListener('xiangqi-cloud-sync-status', handleSyncStatus)
   }, [requestProductDialog, showToast])
+
+  useEffect(() => {
+    const warnAboutPending = (event: BeforeUnloadEvent) => {
+      if (pendingCloudMutationCount() === 0) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnAboutPending)
+    return () => window.removeEventListener('beforeunload', warnAboutPending)
+  }, [])
+
+  useEffect(() => {
+    setCloudSyncState(auth.user ? (pendingCloudMutationCount() ? 'pending' : 'synced') : 'local')
+  }, [auth.user])
 
   useEffect(() => {
     setCustomEndgames(loadCustomEndgames())
@@ -632,8 +650,7 @@ function LocalApp() {
             ? '当前离线，正在显示此账号最近一次同步的只读缓存。'
             : '',
         )
-      }
-      else
+      } else
         setGameStoreError(
           gamesResult.reason instanceof Error ? gamesResult.reason.message : '无法读取已保存对局',
         )
@@ -1002,11 +1019,7 @@ function LocalApp() {
 
   const openTrainingSource = useCallback(
     async (task: TrainingTask) => {
-      if (
-        task.source.type === 'snapshot' ||
-        !task.source.id ||
-        task.source.available === false
-      )
+      if (task.source.type === 'snapshot' || !task.source.id || task.source.available === false)
         return
       setPendingSourceNodeId(task.source.nodeId)
       setSelectedTrainingTask(null)
@@ -1673,6 +1686,18 @@ function LocalApp() {
                 : gameMode === 'study' && studySaveStatus === 'shared'
                   ? '分享回放未保存'
                   : '本局无需保存'}
+          </span>
+          <span className={`workspace-cloud-sync ${cloudSyncState}`}>
+            {
+              {
+                local: '仅本机',
+                pending: '待同步',
+                saving: '同步中',
+                synced: '已同步',
+                conflict: '有冲突',
+                failed: '同步失败',
+              }[cloudSyncState]
+            }
           </span>
           <button className="workspace-new-game" onClick={() => void handleNewGame()}>
             新对局

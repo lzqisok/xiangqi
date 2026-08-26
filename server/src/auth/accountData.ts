@@ -3,6 +3,7 @@ import { Router, type Request, type Response } from 'express'
 import type { UserActor } from './types.js'
 import type { Database, Queryable } from '../db/database.js'
 import { structuredLog } from '../platform/observability.js'
+import { USER_DOCUMENT_RESOURCES, userDocumentDefinition } from '../documents/registry.js'
 
 type Options = {
   requireUser(response: Response): UserActor
@@ -65,6 +66,46 @@ export class MySqlAccountDataService {
       sharedMatchesToAnonymize: Number(matches.rows[0]?.count || 0),
       activeSessionsToRevoke: Number(sessions.rows[0]?.count || 0),
       recoveryDays: 30,
+    }
+  }
+
+  async overview(userId: string): Promise<Record<string, unknown>> {
+    const [documents, matches, securityEvents] = await Promise.all([
+      this.database.query<{
+        resource_type: string
+        count: number | string
+        bytes: number | string
+      }>(
+        `SELECT resource_type, COUNT(*) AS count,
+                COALESCE(SUM(OCTET_LENGTH(CAST(payload AS CHAR))), 0) AS bytes
+         FROM user_documents WHERE owner_user_id = ? GROUP BY resource_type`,
+        [userId],
+      ),
+      this.database.query<{ variant: string; count: number | string }>(
+        `SELECT m.variant, COUNT(*) AS count FROM match_participants p
+         JOIN matches m ON m.id = p.match_id WHERE p.user_id = ? GROUP BY m.variant`,
+        [userId],
+      ),
+      this.database.query<{ type: string; result: string; created_at: Date }>(
+        `SELECT type, result, created_at FROM security_events
+         WHERE user_id = ? ORDER BY created_at DESC LIMIT 20`,
+        [userId],
+      ),
+    ])
+    const countByResource = new Map(documents.rows.map((row) => [row.resource_type, row]))
+    return {
+      resources: USER_DOCUMENT_RESOURCES.map((resource) => ({
+        resource,
+        count: Number(countByResource.get(resource)?.count || 0),
+        bytes: Number(countByResource.get(resource)?.bytes || 0),
+        quota: userDocumentDefinition(resource)!.maxDocuments,
+      })),
+      matches: Object.fromEntries(matches.rows.map((row) => [row.variant, Number(row.count)])),
+      securityEvents: securityEvents.rows.map((event) => ({
+        type: event.type,
+        result: event.result,
+        createdAt: event.created_at.toISOString(),
+      })),
     }
   }
 
@@ -232,6 +273,13 @@ export function createAccountDataRouter(
   options: Options,
 ): Router {
   const router = Router()
+  router.get('/account-overview', async (_request, response, next) => {
+    try {
+      response.json({ overview: await service.overview(options.requireUser(response).userId) })
+    } catch (error) {
+      next(error)
+    }
+  })
   router.get('/deletion-impact', async (request, response, next) => {
     try {
       response.json({ impact: await service.deletionImpact(options.requireUser(response).userId) })

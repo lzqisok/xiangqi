@@ -365,7 +365,13 @@ export function createAuthRuntime(
   meRouter.get(
     '/sessions',
     asyncRoute(async (_request, response) => {
-      response.json({ sessions: await service.listSessions(requireUser(response)) })
+      const actor = requireUser(response)
+      response.json({
+        sessions: (await service.listSessions(actor)).map((session) => ({
+          ...session,
+          current: session.id === actor.sessionId,
+        })),
+      })
     }),
   )
   meRouter.delete(

@@ -23,7 +23,10 @@ import { AuthService } from '../auth/service.js'
 import type { DeliveredAccountToken } from '../auth/types.js'
 import { createAuthRuntime, CSRF_COOKIE, DEVELOPMENT_SESSION_COOKIE } from '../auth/http.js'
 import { MySqlOnlineMatchRepository } from '../online/repository.js'
-import { MySqlUserDocumentRepository } from '../repositories/userDocuments.js'
+import {
+  MySqlUserDocumentRepository,
+  UserDocumentLimitError,
+} from '../repositories/userDocuments.js'
 import { MySqlGameRepository } from '../games/mysqlRepository.js'
 import { GameNotFoundError } from '../games/repository.js'
 import { OnlineMatchService } from '../online/service.js'
@@ -253,6 +256,18 @@ test(
       await documents.delete(first.id, createdDocument.id, 1, 'delete-1')
       await documents.delete(first.id, createdDocument.id, 1, 'delete-1')
       assert.equal(await documents.find(first.id, createdDocument.id), null)
+      const limitedDocuments = new MySqlUserDocumentRepository(
+        database,
+        'limited-documents',
+        1,
+        objectState,
+        1,
+      )
+      await limitedDocuments.create(first.id, { id: 'first' }, 'limited-create-1')
+      await assert.rejects(
+        limitedDocuments.create(first.id, { id: 'second' }, 'limited-create-2'),
+        UserDocumentLimitError,
+      )
 
       const games = new MySqlGameRepository(database)
       const gameInput = {

@@ -28,7 +28,9 @@ export type GameRouterOptions = {
 }
 
 function handleError(error: unknown, res: Response): void {
-  if (error instanceof GameNotFoundError) {
+  if ((error as { status?: number }).status === 403) {
+    res.status(403).json({ error: error instanceof Error ? error.message : 'account_read_only' })
+  } else if (error instanceof GameNotFoundError) {
     res.status(404).json({ error: '对局不存在' })
   } else if (error instanceof GameRevisionConflictError) {
     res.status(409).json({ error: '对局版本冲突', currentRevision: error.currentRevision })
@@ -163,11 +165,7 @@ export function createGameRouter(
               req.body.state,
               clientMutationId(req)!,
             )
-          : await repository.updateState(
-              req.params.id,
-              req.body.expectedRevision,
-              req.body.state,
-            )
+          : await repository.updateState(req.params.id, req.body.expectedRevision, req.body.state)
       res.json({ game })
     } catch (error) {
       handleError(error, res)

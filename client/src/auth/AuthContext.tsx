@@ -3,6 +3,7 @@ import {
   AccountApiError,
   AccountUser,
   beginAccountDeletion,
+  changeAccountPassword,
   clearAccountCredentials,
   login as loginRequest,
   logout as logoutRequest,
@@ -20,6 +21,7 @@ type AuthContextValue = {
   logout(): Promise<void>
   updateProfile(displayName: string): Promise<void>
   deleteAccount(currentPassword: string): Promise<void>
+  changePassword(currentPassword: string, newPassword: string): Promise<void>
   refresh(): Promise<void>
 }
 
@@ -90,6 +92,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       async deleteAccount(currentPassword) {
         await beginAccountDeletion(currentPassword)
         replaceUser(null)
+      },
+      async changePassword(currentPassword, newPassword) {
+        await changeAccountPassword(currentPassword, newPassword)
+        await refresh()
       },
       refresh,
     }),

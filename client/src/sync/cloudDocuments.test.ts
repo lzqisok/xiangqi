@@ -123,13 +123,9 @@ test('cloud conflicts retain the local snapshot and retry from the server revisi
   await sync.pullCloudDocuments<{ id: string; name: string }>('studies', (item) => item.id)
 
   const conflict = new Promise<void>((resolve) => {
-    globalThis.window.addEventListener(
-      'xiangqi-cloud-sync-status',
-      (event) => {
-        if ((event as CustomEvent<{ kind: string }>).detail.kind === 'conflict') resolve()
-      },
-      { once: true },
-    )
+    globalThis.window.addEventListener('xiangqi-cloud-sync-status', (event) => {
+      if ((event as CustomEvent<{ kind: string }>).detail.kind === 'conflict') resolve()
+    })
   })
   globalThis.fetch = async () =>
     new Response(JSON.stringify({ error: 'revision_conflict', currentRevision: 3 }), {
@@ -193,13 +189,9 @@ test('offline writes retry after account restoration and deletion conflicts rema
   sync.configureCloudDocumentScope(userId)
 
   const offline = new Promise<void>((resolve) => {
-    globalThis.window.addEventListener(
-      'xiangqi-cloud-sync-status',
-      (event) => {
-        if ((event as CustomEvent<{ kind: string }>).detail.kind === 'offline') resolve()
-      },
-      { once: true },
-    )
+    globalThis.window.addEventListener('xiangqi-cloud-sync-status', (event) => {
+      if ((event as CustomEvent<{ kind: string }>).detail.kind === 'offline') resolve()
+    })
   })
   globalThis.fetch = async () => {
     throw new TypeError('offline')
@@ -230,13 +222,9 @@ test('offline writes retry after account restoration and deletion conflicts rema
   assert.deepEqual(JSON.parse(local.values.get(pendingKey)!), {})
 
   const conflict = new Promise<void>((resolve) => {
-    globalThis.window.addEventListener(
-      'xiangqi-cloud-sync-status',
-      (event) => {
-        if ((event as CustomEvent<{ kind: string }>).detail.kind === 'conflict') resolve()
-      },
-      { once: true },
-    )
+    globalThis.window.addEventListener('xiangqi-cloud-sync-status', (event) => {
+      if ((event as CustomEvent<{ kind: string }>).detail.kind === 'conflict') resolve()
+    })
   })
   globalThis.fetch = async () =>
     new Response(JSON.stringify({ error: 'revision_conflict', currentRevision: 1 }), {

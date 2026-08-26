@@ -22,6 +22,23 @@ export type AccountDeletionImpact = {
   recoveryDays: number
 }
 
+export type AccountSession = {
+  id: string
+  deviceLabel: string | null
+  createdAt: string
+  lastSeenAt: string
+  idleExpiresAt: string
+  absoluteExpiresAt: string
+  revokedAt: string | null
+  current: boolean
+}
+
+export type AccountOverview = {
+  resources: Array<{ resource: string; count: number; bytes: number; quota: number }>
+  matches: Record<string, number>
+  securityEvents: Array<{ type: string; result: string; createdAt: string }>
+}
+
 export class AccountApiError extends Error {
   constructor(
     readonly status: number,
@@ -166,4 +183,28 @@ export async function beginAccountDeletion(currentPassword: string): Promise<voi
   } finally {
     clearAccountCredentials()
   }
+}
+
+export async function accountOverview(): Promise<AccountOverview> {
+  const result = await request<{ overview: AccountOverview }>('/api/me/account-overview')
+  return result.overview
+}
+
+export async function listAccountSessions(): Promise<AccountSession[]> {
+  const result = await request<{ sessions: AccountSession[] }>('/api/me/sessions')
+  return result.sessions
+}
+
+export async function revokeAccountSession(sessionId: string): Promise<void> {
+  await request(`/api/me/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+}
+
+export async function changeAccountPassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await request('/api/me/password', {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  })
 }

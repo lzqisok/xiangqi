@@ -308,7 +308,10 @@ app.use(
     currentUserId: (response) =>
       response.locals.auth?.actor?.kind === 'user' ? response.locals.auth.actor.userId : null,
     requireCsrf: (request, response) => {
-      authRuntime?.requireCsrf(request, response)
+      const actor = authRuntime?.requireCsrf(request, response)
+      if (actor?.status === 'restricted') {
+        throw Object.assign(new Error('account_read_only'), { status: 403 })
+      }
     },
   }),
 )

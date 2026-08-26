@@ -6809,6 +6809,25 @@ body {
 .workspace-save-state.conflict {
   color: #a44337;
 }
+.workspace-cloud-sync {
+  flex: none;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(49, 91, 41, 0.08);
+  color: #53634c;
+  font-size: 10px;
+  font-weight: 800;
+}
+.workspace-cloud-sync.pending,
+.workspace-cloud-sync.saving {
+  background: rgba(149, 107, 47, 0.1);
+  color: #956b2f;
+}
+.workspace-cloud-sync.conflict,
+.workspace-cloud-sync.failed {
+  background: rgba(164, 67, 55, 0.1);
+  color: #a44337;
+}
 .workspace-new-game {
   flex: none;
   min-height: 36px;

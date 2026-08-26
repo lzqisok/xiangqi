@@ -176,6 +176,16 @@ function emitFailure(
   )
 }
 
+function emitSyncState(
+  resource: CloudDocumentResource,
+  logicalId: string,
+  kind: 'pending' | 'saving' | 'synced',
+): void {
+  window.dispatchEvent(
+    new CustomEvent('xiangqi-cloud-sync-status', { detail: { resource, logicalId, kind } }),
+  )
+}
+
 function enqueue(resource: CloudDocumentResource, logicalId: string, action: () => Promise<void>) {
   const key = `${resource}:${logicalId}`
   const previous = queues.get(key) || Promise.resolve()
@@ -225,6 +235,7 @@ export function queueCloudUpsert(
     clientMutationId: crypto.randomUUID(),
   }
   retainPending(userId, resource, pending)
+  emitSyncState(resource, logicalId, 'pending')
   scheduleMutation(userId, scopeGeneration, resource, pending)
 }
 
@@ -239,7 +250,30 @@ export function queueCloudDelete(resource: CloudDocumentResource, logicalId: str
     clientMutationId: crypto.randomUUID(),
   }
   retainPending(userId, resource, pending)
+  emitSyncState(resource, logicalId, 'pending')
   scheduleMutation(userId, scopeGeneration, resource, pending)
+}
+
+export async function importCloudDocumentBatch(
+  resource: CloudDocumentResource,
+  documents: object[],
+  importId: string,
+): Promise<number> {
+  const userId = activeUserId
+  const generation = scopeGeneration
+  if (!userId) throw new AccountApiError(401, 'authentication_required')
+  const result = await accountRequest<{ documents: CloudDocument<object>[] }>(
+    `/api/me/documents/${resource}/import`,
+    {
+      method: 'POST',
+      headers: { 'X-Client-Mutation-Id': importId },
+      body: JSON.stringify({ documents }),
+    },
+  )
+  if (generation !== scopeGeneration || userId !== activeUserId) {
+    throw new AccountApiError(409, 'account_scope_changed')
+  }
+  return result.documents.length
 }
 
 function retryPending(userId: string, generation: number): void {
@@ -263,6 +297,7 @@ function scheduleMutation(
     if (generation !== scopeGeneration || userId !== activeUserId) return
     const current = metadata(userId, resource)[logicalId]
     try {
+      emitSyncState(resource, logicalId, 'saving')
       if (pending.operation === 'delete') {
         if (!current) {
           clearPending(userId, resource, logicalId)
@@ -275,6 +310,7 @@ function scheduleMutation(
         if (generation !== scopeGeneration || userId !== activeUserId) return
         updateMetadata(userId, resource, logicalId, null)
         clearPending(userId, resource, logicalId)
+        emitSyncState(resource, logicalId, 'synced')
         return
       }
       const result =
@@ -301,6 +337,7 @@ function scheduleMutation(
       if (generation !== scopeGeneration || userId !== activeUserId) return
       updateMetadata(userId, resource, logicalId, result.document)
       clearPending(userId, resource, logicalId)
+      emitSyncState(resource, logicalId, 'synced')
     } catch (error) {
       if (error instanceof AccountApiError && error.status === 409 && current) {
         const currentRevision = Number(
@@ -319,4 +356,43 @@ function scheduleMutation(
       emitFailure(resource, logicalId, kind)
     }
   })
+}
+
+export function pendingCloudMutationCount(): number {
+  if (!activeUserId) return 0
+  return ALL_RESOURCES.reduce(
+    (count, resource) =>
+      count +
+      Object.keys(
+        readJson<Record<string, PendingMutation>>(pendingKey(activeUserId!, resource), {}),
+      ).length,
+    0,
+  )
+}
+
+export function retryPendingCloudMutations(): void {
+  if (activeUserId) retryPending(activeUserId, scopeGeneration)
+}
+
+export function downloadPendingCloudMutations(): void {
+  if (!activeUserId) return
+  const resources = Object.fromEntries(
+    ALL_RESOURCES.map((resource) => [
+      resource,
+      readJson<Record<string, PendingMutation>>(pendingKey(activeUserId!, resource), {}),
+    ]),
+  )
+  const url = URL.createObjectURL(
+    new Blob(
+      [JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), resources }, null, 2)],
+      {
+        type: 'application/json',
+      },
+    ),
+  )
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `xiangqi-pending-sync-${new Date().toISOString().slice(0, 10)}.json`
+  anchor.click()
+  URL.revokeObjectURL(url)
 }

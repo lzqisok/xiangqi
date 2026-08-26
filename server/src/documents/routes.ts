@@ -37,6 +37,13 @@ export function createUserDocumentRouter(database: Database, options: Options): 
     }
     return current
   }
+  const requireWritable = (request: Request, response: Response): UserActor => {
+    const actor = options.requireCsrf(request, response)
+    if (actor.status === 'restricted') {
+      throw Object.assign(new Error('account_read_only'), { status: 403 })
+    }
+    return actor
+  }
   const dto = (
     resource: string,
     document: Awaited<ReturnType<ReturnType<typeof repository>['create']>>,
@@ -101,7 +108,7 @@ export function createUserDocumentRouter(database: Database, options: Options): 
         response.status(403).json({ error: 'server_managed_resource' })
         return
       }
-      const actor = options.requireCsrf(request, response)
+      const actor = requireWritable(request, response)
       const values = request.body?.documents
       if (!Array.isArray(values) || values.length > 1000) {
         response.status(400).json({ error: 'invalid_import' })
@@ -128,7 +135,7 @@ export function createUserDocumentRouter(database: Database, options: Options): 
         response.status(403).json({ error: 'server_managed_resource' })
         return
       }
-      const actor = options.requireCsrf(request, response)
+      const actor = requireWritable(request, response)
       await assertOwnedReferences(request.params.resource, actor.userId, request.body?.payload)
       const document = await repository(request.params.resource).create(
         actor.userId,
@@ -161,7 +168,7 @@ export function createUserDocumentRouter(database: Database, options: Options): 
         response.status(403).json({ error: 'server_managed_resource' })
         return
       }
-      const actor = options.requireCsrf(request, response)
+      const actor = requireWritable(request, response)
       await assertOwnedReferences(request.params.resource, actor.userId, request.body?.payload)
       const document = await repository(request.params.resource).update(
         actor.userId,
@@ -178,7 +185,7 @@ export function createUserDocumentRouter(database: Database, options: Options): 
 
   router.delete('/:resource/:id', async (request, response, next) => {
     try {
-      const actor = options.requireCsrf(request, response)
+      const actor = requireWritable(request, response)
       await repository(request.params.resource).delete(
         actor.userId,
         request.params.id,

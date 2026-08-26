@@ -1,4 +1,8 @@
-import { createRoomInitialState, executeRoomMoveFromState, rebuildRoomBoard } from '../rooms/core.js'
+import {
+  createRoomInitialState,
+  executeRoomMoveFromState,
+  rebuildRoomBoard,
+} from '../rooms/core.js'
 import { executeGomokuMove, rebuildGomokuRoom } from '../rooms/gomokuCore.js'
 import type { MatchVariant } from '../repositories/contracts.js'
 import type { RoomMove } from '../rooms/types.js'
@@ -14,7 +18,9 @@ function validLayout(layout: string): boolean {
 }
 
 export function normalizeOnlineMatchName(value: unknown): string {
-  const name = String(value ?? '').trim().replace(/\s+/g, ' ')
+  const name = String(value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
   if (Array.from(name).length < 2 || Array.from(name).length > 40) {
     throw new Error('对局名称需为 2 至 40 个字符')
   }

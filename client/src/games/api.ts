@@ -122,7 +122,10 @@ export async function listGamesWithSource(): Promise<{
     if (accountScopeUserId && result.storage === 'cloud') {
       writeCache(summaryCacheKey(accountScopeUserId), result.games)
     }
-    return { games: result.games, source: result.storage || (accountScopeUserId ? 'cloud' : 'device') }
+    return {
+      games: result.games,
+      source: result.storage || (accountScopeUserId ? 'cloud' : 'device'),
+    }
   } catch (error) {
     if (accountScopeUserId && error instanceof GameApiError && error.status === 0) {
       const cached = readSummaryCache(accountScopeUserId)
@@ -150,12 +153,15 @@ export async function loadGame(id: string): Promise<GameDocument> {
   }
 }
 
-export async function createGame(input: {
-  name?: string
-  mode: LiveGameMode
-  config: PersistedGameConfig
-  state: PersistedGameState
-}, clientMutationId = mutationId()): Promise<GameDocument> {
+export async function createGame(
+  input: {
+    name?: string
+    mode: LiveGameMode
+    config: PersistedGameConfig
+    state: PersistedGameState
+  },
+  clientMutationId = mutationId(),
+): Promise<GameDocument> {
   const response = await request<{ game: StoredGameDocument }>('/api/games', {
     method: 'POST',
     headers: { 'X-Client-Mutation-Id': clientMutationId },

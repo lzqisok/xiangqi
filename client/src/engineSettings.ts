@@ -105,9 +105,7 @@ export function loadEngineSettings(): EngineSettings {
     const account = accountRaw ? (JSON.parse(accountRaw) as Partial<EngineSettings>) : {}
     const device = deviceRaw ? (JSON.parse(deviceRaw) as Partial<EngineSettings>) : {}
     const legacy =
-      !cloudSyncEnabled() && legacyRaw
-        ? (JSON.parse(legacyRaw) as Partial<EngineSettings>)
-        : {}
+      !cloudSyncEnabled() && legacyRaw ? (JSON.parse(legacyRaw) as Partial<EngineSettings>) : {}
     return normalizeEngineSettings({ ...legacy, ...account, ...device })
   } catch {
     return DEFAULT_ENGINE_SETTINGS

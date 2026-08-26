@@ -48,7 +48,9 @@ export function useOnlineMatch(matchId: string) {
           setError('')
           finish()
         } else if (message.type === 'match-chat-history') {
-          setMessages(Array.isArray(message.messages) ? (message.messages as OnlineChatMessage[]) : [])
+          setMessages(
+            Array.isArray(message.messages) ? (message.messages as OnlineChatMessage[]) : [],
+          )
         } else if (message.type === 'match-chat-message') {
           const next = message.message as OnlineChatMessage
           if (next?.id) {

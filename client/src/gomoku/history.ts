@@ -79,9 +79,7 @@ export function loadGomokuHistory(): GomokuGameRecord[] {
   try {
     const value = JSON.parse(localStorage.getItem(scopedStorageKey(KEY)) || '[]') as unknown
     if (!Array.isArray(value)) return []
-    return value
-      .filter(isValidGomokuRecord)
-      .slice(0, 50)
+    return value.filter(isValidGomokuRecord).slice(0, 50)
   } catch {
     return []
   }

@@ -41,8 +41,8 @@ test('online chat acknowledgements are ordered, deduplicated and bounded', () =>
       ['second', 'server-authoritative'],
     ],
   )
-  assert.deepEqual(mergeOnlineChat(current, message('third', 3), 2).map((item) => item.id), [
-    'second',
-    'third',
-  ])
+  assert.deepEqual(
+    mergeOnlineChat(current, message('third', 3), 2).map((item) => item.id),
+    ['second', 'third'],
+  )
 })

@@ -1,8 +1,5 @@
 import type { Database } from '../db/database.js'
-import {
-  RepositoryNotFoundError,
-  RepositoryRevisionConflictError,
-} from '../db/errors.js'
+import { RepositoryNotFoundError, RepositoryRevisionConflictError } from '../db/errors.js'
 import type { UserDocumentEntity } from '../repositories/contracts.js'
 import {
   MySqlUserDocumentRepository,

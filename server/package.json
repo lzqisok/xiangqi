@@ -20,7 +20,7 @@
     "argon2": "^0.45.1",
     "express": "^4.21.2",
     "mysql2": "^3.24.2",
-    "ws": "^8.18.0"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

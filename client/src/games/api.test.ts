@@ -61,10 +61,13 @@ test('game cache is isolated by account and only backs the active account offlin
   await assert.rejects(listGamesWithSource(), /network_error/)
 
   globalThis.fetch = async () =>
-    new Response(JSON.stringify({ games: [summary(secondUser, 'game-second')], storage: 'cloud' }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    new Response(
+      JSON.stringify({ games: [summary(secondUser, 'game-second')], storage: 'cloud' }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      },
+    )
   assert.equal((await listGamesWithSource()).games[0].ownerUserId, secondUser)
   globalThis.fetch = async () => {
     throw new TypeError('offline')

@@ -26,11 +26,13 @@ export function listMyMatches(variant?: OnlineVariant) {
   )
 }
 
-export function createOnlineMatch(input: MatchSetup & {
-  name: string
-  visibility: 'public' | 'invite' | 'private'
-  side: 'red' | 'black'
-}) {
+export function createOnlineMatch(
+  input: MatchSetup & {
+    name: string
+    visibility: 'public' | 'invite' | 'private'
+    side: 'red' | 'black'
+  },
+) {
   return accountRequest<{ match: OnlineMatchSnapshot }>('/api/online/matches', {
     method: 'POST',
     body: JSON.stringify(input),

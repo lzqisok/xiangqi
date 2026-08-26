@@ -27,7 +27,8 @@ import { useOnlineMatch } from './useOnlineMatch'
 
 function variantName(match: Pick<OnlineMatchSummary, 'variant' | 'gomokuRule'>) {
   if (match.variant === 'jieqi') return '揭棋'
-  if (match.variant === 'gomoku') return match.gomokuRule === 'renju' ? '五子棋 · 黑方禁手' : '标准五子棋'
+  if (match.variant === 'gomoku')
+    return match.gomokuRule === 'renju' ? '五子棋 · 黑方禁手' : '标准五子棋'
   return '普通象棋'
 }
 
@@ -54,7 +55,9 @@ export default function OnlineApp() {
   const [visibility, setVisibility] = useState<'public' | 'invite'>('public')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [invitePreview, setInvitePreview] = useState<Awaited<ReturnType<typeof previewOnlineInvite>> | null>(null)
+  const [invitePreview, setInvitePreview] = useState<Awaited<
+    ReturnType<typeof previewOnlineInvite>
+  > | null>(null)
 
   const setup: MatchSetup = {
     variant,
@@ -75,7 +78,10 @@ export default function OnlineApp() {
           setHistory(nextHistory.matches)
         }
       })
-      .catch((cause) => !disposed && setError(cause instanceof Error ? cause.message : '无法加载公网大厅'))
+      .catch(
+        (cause) =>
+          !disposed && setError(cause instanceof Error ? cause.message : '无法加载公网大厅'),
+      )
     return () => {
       disposed = true
     }
@@ -86,7 +92,9 @@ export default function OnlineApp() {
     let disposed = false
     previewOnlineInvite(inviteToken)
       .then((preview) => !disposed && setInvitePreview(preview))
-      .catch((cause) => !disposed && setError(cause instanceof Error ? cause.message : '邀请已失效'))
+      .catch(
+        (cause) => !disposed && setError(cause instanceof Error ? cause.message : '邀请已失效'),
+      )
     return () => {
       disposed = true
     }
@@ -160,7 +168,9 @@ export default function OnlineApp() {
           <button
             className="primary"
             disabled={busy}
-            onClick={() => run(() => joinOnlineInvite(inviteToken, invitePreview.allowedSide || undefined))}
+            onClick={() =>
+              run(() => joinOnlineInvite(inviteToken, invitePreview.allowedSide || undefined))
+            }
           >
             {busy ? '正在加入…' : '确认昵称与席位并加入'}
           </button>
@@ -174,16 +184,40 @@ export default function OnlineApp() {
           <p>按棋类、规则和棋钟档位原子匹配；重复点击或多标签页不会重复占位。</p>
           {game === 'xiangqi' ? (
             <div className="online-choice-row">
-              <button className={variant === 'xiangqi' ? 'active' : ''} onClick={() => setVariant('xiangqi')}>普通象棋</button>
-              <button className={variant === 'jieqi' ? 'active' : ''} onClick={() => setVariant('jieqi')}>揭棋</button>
+              <button
+                className={variant === 'xiangqi' ? 'active' : ''}
+                onClick={() => setVariant('xiangqi')}
+              >
+                普通象棋
+              </button>
+              <button
+                className={variant === 'jieqi' ? 'active' : ''}
+                onClick={() => setVariant('jieqi')}
+              >
+                揭棋
+              </button>
             </div>
           ) : (
             <div className="online-choice-row">
-              <button className={gomokuRule === 'freestyle' ? 'active' : ''} onClick={() => setGomokuRule('freestyle')}>标准规则</button>
-              <button className={gomokuRule === 'renju' ? 'active' : ''} onClick={() => setGomokuRule('renju')}>黑方禁手</button>
+              <button
+                className={gomokuRule === 'freestyle' ? 'active' : ''}
+                onClick={() => setGomokuRule('freestyle')}
+              >
+                标准规则
+              </button>
+              <button
+                className={gomokuRule === 'renju' ? 'active' : ''}
+                onClick={() => setGomokuRule('renju')}
+              >
+                黑方禁手
+              </button>
             </div>
           )}
-          <button className="primary" disabled={busy} onClick={() => run(() => quickMatchOnline(setup, createLanCommandId()))}>
+          <button
+            className="primary"
+            disabled={busy}
+            onClick={() => run(() => quickMatchOnline(setup, createLanCommandId()))}
+          >
             {busy ? '正在匹配…' : '开始休闲匹配'}
           </button>
         </article>
@@ -197,7 +231,10 @@ export default function OnlineApp() {
           </label>
           <label>
             可见性
-            <select value={visibility} onChange={(event) => setVisibility(event.target.value as 'public' | 'invite')}>
+            <select
+              value={visibility}
+              onChange={(event) => setVisibility(event.target.value as 'public' | 'invite')}
+            >
               <option value="public">公开大厅</option>
               <option value="invite">仅邀请</option>
             </select>
@@ -205,7 +242,9 @@ export default function OnlineApp() {
           <button
             className="primary"
             disabled={busy || name.trim().length < 2}
-            onClick={() => run(() => createOnlineMatch({ ...setup, name, visibility, side: 'red' }))}
+            onClick={() =>
+              run(() => createOnlineMatch({ ...setup, name, visibility, side: 'red' }))
+            }
           >
             创建并进入准备室
           </button>
@@ -214,39 +253,55 @@ export default function OnlineApp() {
 
       <section className="card online-list-section">
         <div className="online-section-title">
-          <div><small>PUBLIC LOBBY</small><h2>可加入对局</h2></div>
+          <div>
+            <small>PUBLIC LOBBY</small>
+            <h2>可加入对局</h2>
+          </div>
           <span>{lobby.length} 局</span>
         </div>
         <div className="lan-room-list">
-          {lobby.length ? lobby.map((match) => (
-            <LanRoomCard
-              key={match.id}
-              name={match.name}
-              meta={`${variantName(match)} · 等待就座`}
-              details={`红方 ${match.red || '空缺'} · 黑方 ${match.black || '空缺'}`}
-              actionLabel="加入准备室"
-              onOpen={() => run(() => joinOnlineMatch(match.id))}
-            />
-          )) : <p className="lan-empty">暂无公开等待对局，可以快速匹配或创建一局。</p>}
+          {lobby.length ? (
+            lobby.map((match) => (
+              <LanRoomCard
+                key={match.id}
+                name={match.name}
+                meta={`${variantName(match)} · 等待就座`}
+                details={`红方 ${match.red || '空缺'} · 黑方 ${match.black || '空缺'}`}
+                actionLabel="加入准备室"
+                onOpen={() => run(() => joinOnlineMatch(match.id))}
+              />
+            ))
+          ) : (
+            <p className="lan-empty">暂无公开等待对局，可以快速匹配或创建一局。</p>
+          )}
         </div>
       </section>
 
       <section className="card online-list-section">
         <div className="online-section-title">
-          <div><small>MY MATCHES</small><h2>我的对局历史</h2></div>
+          <div>
+            <small>MY MATCHES</small>
+            <h2>我的对局历史</h2>
+          </div>
           <span>{history.length} 局</span>
         </div>
         <div className="lan-room-list">
-          {history.length ? history.map((match) => (
-            <LanRoomCard
-              key={match.id}
-              name={match.name}
-              meta={`${variantName(match)} · ${phaseName(match)}`}
-              details={`${match.moveCount} 手 · ${new Date(match.updatedAt).toLocaleString()}`}
-              actionLabel={match.phase === 'finished' ? '查看历史' : '恢复对局'}
-              onOpen={() => { location.href = onlineRoomUrl(location.href, match.id, game) }}
-            />
-          )) : <p className="lan-empty">账号下还没有公网对局。</p>}
+          {history.length ? (
+            history.map((match) => (
+              <LanRoomCard
+                key={match.id}
+                name={match.name}
+                meta={`${variantName(match)} · ${phaseName(match)}`}
+                details={`${match.moveCount} 手 · ${new Date(match.updatedAt).toLocaleString()}`}
+                actionLabel={match.phase === 'finished' ? '查看历史' : '恢复对局'}
+                onOpen={() => {
+                  location.href = onlineRoomUrl(location.href, match.id, game)
+                }}
+              />
+            ))
+          ) : (
+            <p className="lan-empty">账号下还没有公网对局。</p>
+          )}
         </div>
       </section>
     </main>
@@ -291,7 +346,8 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
     )
   }
   const color = match.side
-  const canMove = match.phase === 'playing' && match.status === 'playing' && color === match.turn && !pending
+  const canMove =
+    match.phase === 'playing' && match.status === 'playing' && color === match.turn && !pending
   const last = match.moves[match.moves.length - 1]
   const lastMove: Move | null =
     last && board
@@ -315,7 +371,14 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
   const boardReason: GameStatusReason | undefined =
     match.statusReason === 'agreement'
       ? 'manual'
-      : ['checkmate', 'stalemate', 'resignation', 'repetition', 'natural-limit', 'move-limit'].includes(match.statusReason || '')
+      : [
+            'checkmate',
+            'stalemate',
+            'resignation',
+            'repetition',
+            'natural-limit',
+            'move-limit',
+          ].includes(match.statusReason || '')
         ? (match.statusReason as GameStatusReason)
         : undefined
   const invite = async () => {
@@ -337,7 +400,14 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
   return (
     <main className="lan-shell online-shell online-match-shell">
       <header className="lan-header">
-        <div><small>ACCOUNT MATCH</small><h1>{match.name}</h1><p>{variantName(match)} · {connected ? '实时连接正常' : '正在重连'} · revision {match.revision}</p></div>
+        <div>
+          <small>ACCOUNT MATCH</small>
+          <h1>{match.name}</h1>
+          <p>
+            {variantName(match)} · {connected ? '实时连接正常' : '正在重连'} · revision{' '}
+            {match.revision}
+          </p>
+        </div>
         <a href={`?online=1&game=${game}`}>返回公网大厅</a>
       </header>
       {error && <div className="lan-status error">{error}</div>}
@@ -346,7 +416,13 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
       <section className="online-match-layout">
         <div className="online-board-column">
           <section className="card online-ready-room">
-            <div className="online-section-title"><div><small>{match.phase === 'waiting' ? 'READY ROOM' : 'PLAYERS'}</small><h2>{match.phase === 'waiting' ? '准备室' : '对局席位'}</h2></div><span>{phaseName(match)}</span></div>
+            <div className="online-section-title">
+              <div>
+                <small>{match.phase === 'waiting' ? 'READY ROOM' : 'PLAYERS'}</small>
+                <h2>{match.phase === 'waiting' ? '准备室' : '对局席位'}</h2>
+              </div>
+              <span>{phaseName(match)}</span>
+            </div>
             <div className="lan-ready-seats">
               {(['red', 'black'] as const).map((seat) => {
                 const player = match.seats[seat]
@@ -355,12 +431,32 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
                   <LanReadySeat
                     key={seat}
                     side={seat}
-                    mark={match.variant === 'gomoku' ? (seat === 'red' ? '●' : '○') : seat === 'red' ? '帅' : '将'}
+                    mark={
+                      match.variant === 'gomoku'
+                        ? seat === 'red'
+                          ? '●'
+                          : '○'
+                        : seat === 'red'
+                          ? '帅'
+                          : '将'
+                    }
                     title={seat === 'red' ? '红方' : '黑方'}
-                    status={player ? `${player.nickname} · ${player.online ? '在线' : '离线'} · ${player.ready ? '已准备' : '未准备'}` : '席位空缺'}
+                    status={
+                      player
+                        ? `${player.nickname} · ${player.online ? '在线' : '离线'} · ${player.ready ? '已准备' : '未准备'}`
+                        : '席位空缺'
+                    }
                     current={mine}
                     disabled={!mine || match.phase !== 'waiting' || pending}
-                    actionLabel={mine ? (player?.ready ? '取消准备' : '准备开局') : player ? '已就座' : '等待加入'}
+                    actionLabel={
+                      mine
+                        ? player?.ready
+                          ? '取消准备'
+                          : '准备开局'
+                        : player
+                          ? '已就座'
+                          : '等待加入'
+                    }
                     onAction={() => mine && send('match-ready', { ready: !player?.ready })}
                   />
                 )
@@ -369,7 +465,13 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
             {match.isOwner && match.phase === 'waiting' && !match.matchmaking && (
               <div className="online-invite-actions">
                 <button onClick={invite}>创建一次性邀请链接</button>
-                {inviteUrl && <input readOnly value={inviteUrl} onFocus={(event) => event.currentTarget.select()} />}
+                {inviteUrl && (
+                  <input
+                    readOnly
+                    value={inviteUrl}
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                )}
               </div>
             )}
             {match.isOwner && match.phase === 'waiting' && match.matchmaking && (
@@ -396,10 +498,19 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
             {match.variant === 'gomoku' ? (
               <GomokuLanBoard
                 board={match.board as Array<Array<'red' | 'black' | null>>}
-                moves={match.moves.filter((move): move is typeof move & { row: number; col: number } => Number.isInteger(move.row) && Number.isInteger(move.col))}
+                moves={match.moves.filter(
+                  (move): move is typeof move & { row: number; col: number } =>
+                    Number.isInteger(move.row) && Number.isInteger(move.col),
+                )}
                 disabled={!canMove}
                 showOrder
-                winner={match.status === 'red-wins' ? 'red' : match.status === 'black-wins' ? 'black' : null}
+                winner={
+                  match.status === 'red-wins'
+                    ? 'red'
+                    : match.status === 'black-wins'
+                      ? 'black'
+                      : null
+                }
                 onMove={(row, col) => send('match-move', { row, col })}
               />
             ) : (
@@ -426,24 +537,124 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
         <aside className="online-side-column">
           {match.proposal && (
             <section className="card online-proposal-strip">
-              <strong>{match.proposal.kind === 'draw' ? '议和' : match.proposal.kind === 'undo' ? '悔棋' : '换边'}协商</strong>
+              <strong>
+                {match.proposal.kind === 'draw'
+                  ? '议和'
+                  : match.proposal.kind === 'undo'
+                    ? '悔棋'
+                    : '换边'}
+                协商
+              </strong>
               <span>{proposalSeconds} 秒后失效</span>
-              {match.proposal.canRespond && <><button onClick={() => send('match-proposal-respond', { proposalId: match.proposal!.id, accept: true })}>同意</button><button onClick={() => send('match-proposal-respond', { proposalId: match.proposal!.id, accept: false })}>拒绝</button></>}
-              {match.proposal.canWithdraw && <button onClick={() => send('match-proposal-withdraw', { proposalId: match.proposal!.id })}>撤回</button>}
+              {match.proposal.canRespond && (
+                <>
+                  <button
+                    onClick={() =>
+                      send('match-proposal-respond', {
+                        proposalId: match.proposal!.id,
+                        accept: true,
+                      })
+                    }
+                  >
+                    同意
+                  </button>
+                  <button
+                    onClick={() =>
+                      send('match-proposal-respond', {
+                        proposalId: match.proposal!.id,
+                        accept: false,
+                      })
+                    }
+                  >
+                    拒绝
+                  </button>
+                </>
+              )}
+              {match.proposal.canWithdraw && (
+                <button
+                  onClick={() =>
+                    send('match-proposal-withdraw', { proposalId: match.proposal!.id })
+                  }
+                >
+                  撤回
+                </button>
+              )}
             </section>
           )}
           <section className="card online-match-tools">
-            <small>MATCH ACTIONS</small><h2>对局操作</h2>
-            {color && match.phase === 'playing' && <div className="online-choice-row"><button disabled={pending || !match.moves.length} onClick={() => send('match-propose', { kind: 'undo' })}>申请悔棋</button><button disabled={pending} onClick={() => send('match-propose', { kind: 'draw' })}>提议和棋</button></div>}
-            {color && match.phase === 'playing' && <button className="danger" disabled={pending} onClick={() => send('match-resign')}>认输并结束本局</button>}
-            {match.phase === 'finished' && <button className="primary" onClick={() => { setActionError(''); createOnlineRematch(match.id).then((result) => { location.href = onlineRoomUrl(location.href, result.match.id, game) }).catch((cause) => setActionError(cause instanceof Error ? cause.message : '创建新对局失败')) }}>再来一局</button>}
+            <small>MATCH ACTIONS</small>
+            <h2>对局操作</h2>
+            {color && match.phase === 'playing' && (
+              <div className="online-choice-row">
+                <button
+                  disabled={pending || !match.moves.length}
+                  onClick={() => send('match-propose', { kind: 'undo' })}
+                >
+                  申请悔棋
+                </button>
+                <button disabled={pending} onClick={() => send('match-propose', { kind: 'draw' })}>
+                  提议和棋
+                </button>
+              </div>
+            )}
+            {color && match.phase === 'playing' && (
+              <button className="danger" disabled={pending} onClick={() => send('match-resign')}>
+                认输并结束本局
+              </button>
+            )}
+            {match.phase === 'finished' && (
+              <button
+                className="primary"
+                onClick={() => {
+                  setActionError('')
+                  createOnlineRematch(match.id)
+                    .then((result) => {
+                      location.href = onlineRoomUrl(location.href, result.match.id, game)
+                    })
+                    .catch((cause) =>
+                      setActionError(cause instanceof Error ? cause.message : '创建新对局失败'),
+                    )
+                }}
+              >
+                再来一局
+              </button>
+            )}
           </section>
           <section className="card online-chat-card">
-            <small>MATCH CHAT</small><h2>对局聊天</h2>
-            <div className="online-chat-log">{messages.length ? messages.map((message) => <p key={message.id}><strong>{message.nickname}</strong><span>{message.content}</span></p>) : <em>暂无消息</em>}</div>
-            <form onSubmit={(event) => { event.preventDefault(); if (chat.trim() && sendChat(chat)) setChat('') }}>
-              <textarea value={chat} maxLength={200} rows={3} disabled={match.phase === 'finished'} onChange={(event) => setChat(event.target.value)} placeholder={match.phase === 'finished' ? '历史聊天只读' : '发送给本局棋友'} />
-              <button className="primary" disabled={!chat.trim() || pending || match.phase === 'finished'}>发送</button>
+            <small>MATCH CHAT</small>
+            <h2>对局聊天</h2>
+            <div className="online-chat-log">
+              {messages.length ? (
+                messages.map((message) => (
+                  <p key={message.id}>
+                    <strong>{message.nickname}</strong>
+                    <span>{message.content}</span>
+                  </p>
+                ))
+              ) : (
+                <em>暂无消息</em>
+              )}
+            </div>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault()
+                if (chat.trim() && sendChat(chat)) setChat('')
+              }}
+            >
+              <textarea
+                value={chat}
+                maxLength={200}
+                rows={3}
+                disabled={match.phase === 'finished'}
+                onChange={(event) => setChat(event.target.value)}
+                placeholder={match.phase === 'finished' ? '历史聊天只读' : '发送给本局棋友'}
+              />
+              <button
+                className="primary"
+                disabled={!chat.trim() || pending || match.phase === 'finished'}
+              >
+                发送
+              </button>
             </form>
           </section>
         </aside>

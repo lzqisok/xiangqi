@@ -9,10 +9,22 @@ import {
 } from './repository.js'
 import { isLiveGameMode } from './validation.js'
 import { structuredLog } from '../platform/observability.js'
+import { MySqlGameRepository } from './mysqlRepository.js'
 
 function leaseToken(req: Request): string | undefined {
   const value = req.header('x-game-lease')
   return value?.trim() || undefined
+}
+
+function clientMutationId(req: Request): string | undefined {
+  const value = req.header('x-client-mutation-id')
+  return value?.trim() || undefined
+}
+
+export type GameRouterOptions = {
+  cloudRepository?: MySqlGameRepository
+  currentUserId?: (response: Response) => string | null
+  requireCsrf?: (request: Request, response: Response) => void
 }
 
 function handleError(error: unknown, res: Response): void {
@@ -33,12 +45,35 @@ function handleError(error: unknown, res: Response): void {
   }
 }
 
-export function createGameRouter(repository: JsonGameRepository, leases: GameLeaseManager): Router {
+export function createGameRouter(
+  repository: JsonGameRepository,
+  leases: GameLeaseManager,
+  options: GameRouterOptions = {},
+): Router {
   const router = Router()
+  const userId = (response: Response) => options.currentUserId?.(response) || null
+  const scope = (response: Response) => {
+    const current = userId(response)
+    return current ? `user:${current}` : 'local'
+  }
+  const requireMutation = (request: Request, response: Response): string | null => {
+    const current = userId(response)
+    if (!current) return null
+    options.requireCsrf?.(request, response)
+    if (!clientMutationId(request)) throw new InvalidGameDataError('clientMutationId 必填')
+    return current
+  }
 
-  router.get('/', (_req, res) => {
+  router.get('/', async (_req, res) => {
     try {
-      res.json({ games: repository.list() })
+      const current = userId(res)
+      res.json({
+        games:
+          current && options.cloudRepository
+            ? await options.cloudRepository.list(current)
+            : repository.list(),
+        storage: current && options.cloudRepository ? 'cloud' : 'device',
+      })
     } catch (error) {
       handleError(error, res)
     }
@@ -47,25 +82,35 @@ export function createGameRouter(repository: JsonGameRepository, leases: GameLea
   router.post('/', async (req, res) => {
     try {
       if (!isLiveGameMode(req.body?.mode)) throw new InvalidGameDataError('Invalid game mode')
-      const game = await repository.create({
+      const current = requireMutation(req, res)
+      const input = {
         name: typeof req.body.name === 'string' ? req.body.name : undefined,
         mode: req.body.mode,
         config: req.body.config,
         state: req.body.state,
-      })
+        clientMutationId: clientMutationId(req),
+      }
+      const game =
+        current && options.cloudRepository
+          ? await options.cloudRepository.create(current, input)
+          : await repository.create(input)
       res.status(201).json({ game })
     } catch (error) {
       handleError(error, res)
     }
   })
 
-  router.get('/export', (req, res) => {
+  router.get('/export', async (req, res) => {
     try {
       const ids =
         typeof req.query.ids === 'string' && req.query.ids.trim()
           ? req.query.ids.split(',')
           : undefined
-      const payload = repository.export(ids)
+      const current = userId(res)
+      const payload =
+        current && options.cloudRepository
+          ? await options.cloudRepository.export(current, ids)
+          : repository.export(ids)
       res.setHeader('Content-Disposition', 'attachment; filename="xiangqi-games.json"')
       res.json(payload)
     } catch (error) {
@@ -75,16 +120,26 @@ export function createGameRouter(repository: JsonGameRepository, leases: GameLea
 
   router.post('/import', async (req, res) => {
     try {
-      const result = await repository.import(req.body)
+      const current = requireMutation(req, res)
+      const result =
+        current && options.cloudRepository
+          ? await options.cloudRepository.import(current, req.body, clientMutationId(req)!)
+          : await repository.import(req.body)
       res.status(201).json(result)
     } catch (error) {
       handleError(error, res)
     }
   })
 
-  router.get('/:id', (req, res) => {
+  router.get('/:id', async (req, res) => {
     try {
-      res.json({ game: repository.get(req.params.id) })
+      const current = userId(res)
+      res.json({
+        game:
+          current && options.cloudRepository
+            ? await options.cloudRepository.get(current, req.params.id)
+            : repository.get(req.params.id),
+      })
     } catch (error) {
       handleError(error, res)
     }
@@ -92,17 +147,27 @@ export function createGameRouter(repository: JsonGameRepository, leases: GameLea
 
   router.put('/:id/state', async (req, res) => {
     try {
-      if (!leases.validates(req.params.id, leaseToken(req))) {
+      const current = requireMutation(req, res)
+      if (!leases.validates(req.params.id, leaseToken(req), scope(res))) {
         res.status(423).json({ error: '当前标签页没有对局编辑权' })
         return
       }
       if (!Number.isInteger(req.body?.expectedRevision))
         throw new InvalidGameDataError('Invalid expectedRevision')
-      const game = await repository.updateState(
-        req.params.id,
-        req.body.expectedRevision,
-        req.body.state,
-      )
+      const game =
+        current && options.cloudRepository
+          ? await options.cloudRepository.updateState(
+              current,
+              req.params.id,
+              req.body.expectedRevision,
+              req.body.state,
+              clientMutationId(req)!,
+            )
+          : await repository.updateState(
+              req.params.id,
+              req.body.expectedRevision,
+              req.body.state,
+            )
       res.json({ game })
     } catch (error) {
       handleError(error, res)
@@ -111,13 +176,26 @@ export function createGameRouter(repository: JsonGameRepository, leases: GameLea
 
   router.patch('/:id', async (req, res) => {
     try {
-      if (leases.hasLease(req.params.id) && !leases.validates(req.params.id, leaseToken(req))) {
+      const current = requireMutation(req, res)
+      if (
+        leases.hasLease(req.params.id, scope(res)) &&
+        !leases.validates(req.params.id, leaseToken(req), scope(res))
+      ) {
         res.status(423).json({ error: '对局正在其他标签页编辑' })
         return
       }
       if (!Number.isInteger(req.body?.expectedRevision) || typeof req.body?.name !== 'string')
         throw new InvalidGameDataError('Invalid metadata update')
-      const game = await repository.rename(req.params.id, req.body.expectedRevision, req.body.name)
+      const game =
+        current && options.cloudRepository
+          ? await options.cloudRepository.rename(
+              current,
+              req.params.id,
+              req.body.expectedRevision,
+              req.body.name,
+              clientMutationId(req)!,
+            )
+          : await repository.rename(req.params.id, req.body.expectedRevision, req.body.name)
       res.json({ game })
     } catch (error) {
       handleError(error, res)
@@ -126,13 +204,26 @@ export function createGameRouter(repository: JsonGameRepository, leases: GameLea
 
   router.delete('/:id', async (req, res) => {
     try {
-      if (leases.hasLease(req.params.id) && !leases.validates(req.params.id, leaseToken(req))) {
+      const current = requireMutation(req, res)
+      if (
+        leases.hasLease(req.params.id, scope(res)) &&
+        !leases.validates(req.params.id, leaseToken(req), scope(res))
+      ) {
         res.status(423).json({ error: '对局正在其他标签页编辑' })
         return
       }
       const revision = Number(req.query.revision)
       if (!Number.isInteger(revision)) throw new InvalidGameDataError('Invalid revision')
-      await repository.delete(req.params.id, revision)
+      if (current && options.cloudRepository) {
+        await options.cloudRepository.delete(
+          current,
+          req.params.id,
+          revision,
+          clientMutationId(req)!,
+        )
+      } else {
+        await repository.delete(req.params.id, revision)
+      }
       res.status(204).end()
     } catch (error) {
       handleError(error, res)

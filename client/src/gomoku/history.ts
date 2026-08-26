@@ -2,6 +2,12 @@ import { GameMode, Move, Player, WinResult } from './core/types'
 import { applyMove, createEmptyBoard, isBoardFull } from './core/board'
 import { checkWinResult } from './core/rules'
 import type { Board } from './core/board'
+import {
+  pullCloudDocuments,
+  queueCloudDelete,
+  queueCloudUpsert,
+  scopedStorageKey,
+} from '../sync/cloudDocuments'
 
 export type GomokuGameRecord = {
   id: string
@@ -14,6 +20,27 @@ export type GomokuGameRecord = {
 }
 
 const KEY = 'gomoku-game-history-v1'
+
+function isValidGomokuRecord(record: unknown): record is GomokuGameRecord {
+  if (!record || typeof record !== 'object') return false
+  const item = record as Partial<GomokuGameRecord>
+  if (
+    typeof item.id !== 'string' ||
+    !Number.isFinite(item.createdAt) ||
+    !['pvp', 'ai', 'ai-vs-ai'].includes(item.mode || '') ||
+    typeof item.forbiddenEnabled !== 'boolean' ||
+    typeof item.draw !== 'boolean' ||
+    (item.winner !== null && item.winner !== 1 && item.winner !== 2) ||
+    !Array.isArray(item.moves) ||
+    item.moves.length > 225
+  )
+    return false
+  const replay = replayStoredMoves(item.moves, item.forbiddenEnabled)
+  if (!replay) return false
+  return item.draw
+    ? item.winner === null && !replay.ended && isBoardFull(replay.board)
+    : Boolean(replay.ended && replay.ended.winner === item.winner)
+}
 
 function replayStoredMoves(
   moves: Move[],
@@ -50,29 +77,10 @@ function replayStoredMoves(
 
 export function loadGomokuHistory(): GomokuGameRecord[] {
   try {
-    const value = JSON.parse(localStorage.getItem(KEY) || '[]') as unknown
+    const value = JSON.parse(localStorage.getItem(scopedStorageKey(KEY)) || '[]') as unknown
     if (!Array.isArray(value)) return []
     return value
-      .filter((record): record is GomokuGameRecord => {
-        if (!record || typeof record !== 'object') return false
-        const item = record as Partial<GomokuGameRecord>
-        if (
-          typeof item.id !== 'string' ||
-          !Number.isFinite(item.createdAt) ||
-          !['pvp', 'ai', 'ai-vs-ai'].includes(item.mode || '') ||
-          typeof item.forbiddenEnabled !== 'boolean' ||
-          typeof item.draw !== 'boolean' ||
-          (item.winner !== null && item.winner !== 1 && item.winner !== 2) ||
-          !Array.isArray(item.moves) ||
-          item.moves.length > 225
-        )
-          return false
-        const replay = replayStoredMoves(item.moves, item.forbiddenEnabled)
-        if (!replay) return false
-        return item.draw
-          ? item.winner === null && !replay.ended && isBoardFull(replay.board)
-          : Boolean(replay.ended && replay.ended.winner === item.winner)
-      })
+      .filter(isValidGomokuRecord)
       .slice(0, 50)
   } catch {
     return []
@@ -85,18 +93,38 @@ export function saveGomokuRecord(record: Omit<GomokuGameRecord, 'id' | 'createdA
     id: `${createdAt}-${record.moves.length}`,
     createdAt,
   }
-  const history = [saved, ...loadGomokuHistory()].slice(0, 50)
+  const previous = loadGomokuHistory()
+  const history = [saved, ...previous].slice(0, 50)
   try {
-    localStorage.setItem(KEY, JSON.stringify(history))
+    localStorage.setItem(scopedStorageKey(KEY), JSON.stringify(history))
   } catch {
     /* History is optional when storage is unavailable. */
+  }
+  queueCloudUpsert('gomoku-history', saved.id, saved)
+  const retained = new Set(history.map((item) => item.id))
+  for (const item of previous) {
+    if (!retained.has(item.id)) queueCloudDelete('gomoku-history', item.id)
   }
   return history
 }
 export function clearGomokuHistory() {
+  const previous = loadGomokuHistory()
   try {
-    localStorage.removeItem(KEY)
+    localStorage.removeItem(scopedStorageKey(KEY))
   } catch {
     /* optional */
   }
+  for (const item of previous) queueCloudDelete('gomoku-history', item.id)
+}
+
+export async function syncGomokuHistoryFromCloud(): Promise<GomokuGameRecord[] | null> {
+  const pulled = await pullCloudDocuments<GomokuGameRecord>('gomoku-history', (item) => item.id)
+  if (!pulled) return null
+  const valid = pulled.filter(isValidGomokuRecord).slice(0, 50)
+  try {
+    localStorage.setItem(scopedStorageKey(KEY), JSON.stringify(valid))
+  } catch {
+    // Optional cache.
+  }
+  return valid
 }

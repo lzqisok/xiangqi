@@ -1,4 +1,10 @@
 import { Difficulty } from './types'
+import {
+  cloudSyncEnabled,
+  pullCloudDocuments,
+  queueCloudUpsert,
+  scopedStorageKey,
+} from './sync/cloudDocuments'
 
 export type EngineSearchMode = 'depth' | 'time'
 export type EngineThreads = 'auto' | number
@@ -25,7 +31,9 @@ export const DEFAULT_ENGINE_SETTINGS: EngineSettings = {
   engineHashMb: 128,
 }
 
-const STORAGE_KEY = 'xiangqi_engine_settings'
+const LEGACY_STORAGE_KEY = 'xiangqi_engine_settings'
+const ACCOUNT_STORAGE_KEY = 'xiangqi_account_settings'
+const DEVICE_STORAGE_KEY = 'xiangqi_engine_device_settings'
 const DIFFICULTIES = new Set<Difficulty>(['easy', 'medium', 'hard', 'master'])
 const SEARCH_MODES = new Set<EngineSearchMode>(['depth', 'time'])
 
@@ -91,9 +99,16 @@ export function loadEngineSettings(): EngineSettings {
   if (!canUseStorage()) return DEFAULT_ENGINE_SETTINGS
 
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return DEFAULT_ENGINE_SETTINGS
-    return normalizeEngineSettings(JSON.parse(raw) as Partial<EngineSettings>)
+    const accountRaw = window.localStorage.getItem(scopedStorageKey(ACCOUNT_STORAGE_KEY))
+    const deviceRaw = window.localStorage.getItem(DEVICE_STORAGE_KEY)
+    const legacyRaw = window.localStorage.getItem(LEGACY_STORAGE_KEY)
+    const account = accountRaw ? (JSON.parse(accountRaw) as Partial<EngineSettings>) : {}
+    const device = deviceRaw ? (JSON.parse(deviceRaw) as Partial<EngineSettings>) : {}
+    const legacy =
+      !cloudSyncEnabled() && legacyRaw
+        ? (JSON.parse(legacyRaw) as Partial<EngineSettings>)
+        : {}
+    return normalizeEngineSettings({ ...legacy, ...account, ...device })
   } catch {
     return DEFAULT_ENGINE_SETTINGS
   }
@@ -102,7 +117,33 @@ export function loadEngineSettings(): EngineSettings {
 export function saveEngineSettings(value: Partial<EngineSettings>): EngineSettings {
   const next = normalizeEngineSettings(value)
   if (canUseStorage()) {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+    const account = {
+      candidateCount: next.candidateCount,
+      candidateAutoRefreshDelay: next.candidateAutoRefreshDelay,
+      hintDifficulty: next.hintDifficulty,
+      searchMode: next.searchMode,
+      searchDepth: next.searchDepth,
+      searchTimeMs: next.searchTimeMs,
+    }
+    window.localStorage.setItem(scopedStorageKey(ACCOUNT_STORAGE_KEY), JSON.stringify(account))
+    window.localStorage.setItem(
+      DEVICE_STORAGE_KEY,
+      JSON.stringify({ engineThreads: next.engineThreads, engineHashMb: next.engineHashMb }),
+    )
+    queueCloudUpsert('account-settings', 'engine', account)
   }
   return next
+}
+
+export async function syncEngineSettingsFromCloud(): Promise<EngineSettings | null> {
+  const pulled = await pullCloudDocuments<Partial<EngineSettings>>(
+    'account-settings',
+    () => 'engine',
+  )
+  if (!pulled) return null
+  const account = pulled[0] || {}
+  if (canUseStorage()) {
+    window.localStorage.setItem(scopedStorageKey(ACCOUNT_STORAGE_KEY), JSON.stringify(account))
+  }
+  return loadEngineSettings()
 }

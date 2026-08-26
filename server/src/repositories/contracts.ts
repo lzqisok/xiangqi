@@ -144,6 +144,7 @@ export type UserDocumentEntity<T> = {
   schemaVersion: number
   revision: number
   payload: T
+  clientMutationId: string
   createdAt: Date
   updatedAt: Date
 }
@@ -151,14 +152,25 @@ export type UserDocumentEntity<T> = {
 export interface UserDocumentRepository<T> {
   list(ownerUserId: string): Promise<readonly UserDocumentEntity<T>[]>
   find(ownerUserId: string, id: string): Promise<UserDocumentEntity<T> | null>
-  create(ownerUserId: string, payload: T, clientMutationId?: string): Promise<UserDocumentEntity<T>>
+  create(
+    ownerUserId: string,
+    payload: T,
+    clientMutationId: string,
+    requestedId?: string,
+  ): Promise<UserDocumentEntity<T>>
   update(
     ownerUserId: string,
     id: string,
     expectedRevision: number,
     payload: T,
+    clientMutationId: string,
   ): Promise<UserDocumentEntity<T>>
-  delete(ownerUserId: string, id: string, expectedRevision: number): Promise<void>
+  delete(
+    ownerUserId: string,
+    id: string,
+    expectedRevision: number,
+    clientMutationId: string,
+  ): Promise<void>
 }
 
 export type JsonValidator<T> = (value: unknown) => value is T

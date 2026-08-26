@@ -29,10 +29,16 @@ import {
   loadCustomEndgames,
   loadFavoriteEndgameIds,
   normalizeTags,
+  syncEndgamesFromCloud,
   toggleFavoriteEndgame,
   upsertCustomEndgame,
 } from './endgames/storage'
-import { loadRecentFenPositions, RecentFenPosition, saveRecentFenPosition } from './fen/storage'
+import {
+  loadRecentFenPositions,
+  RecentFenPosition,
+  saveRecentFenPosition,
+  syncRecentFenPositionsFromCloud,
+} from './fen/storage'
 import {
   deleteStudyPosition,
   deleteStudyPositions,
@@ -42,11 +48,17 @@ import {
   loadStudyPositions,
   renameStudyPosition,
   saveStudyPosition,
+  syncStudyPositionsFromCloud,
 } from './studies/storage'
 import { validateFenPosition } from './engine/validation'
 import { getNaturalLimitReminder } from './engine/naturalLimit'
 import { getRepetitionReminder } from './engine/repetition'
-import { EngineSettings, loadEngineSettings, saveEngineSettings } from './engineSettings'
+import {
+  EngineSettings,
+  loadEngineSettings,
+  saveEngineSettings,
+  syncEngineSettingsFromCloud,
+} from './engineSettings'
 import { buildBoardExportMetadata, createAnnotatedBoardPng } from './export/boardImage'
 import {
   formatTrainingHintHistory,
@@ -64,10 +76,13 @@ import { createBoardAnnotation } from './annotations/model'
 import { createStudyContentSignature, createStudySaveInput } from './studies/autosave'
 import {
   createGame,
+  configureGameAccountScope,
   deleteGame,
+  GameStorageSource,
   gameExportUrl,
   importGames,
   listGames,
+  listGamesWithSource,
   loadGame,
   renameGame,
 } from './games/api'
@@ -79,6 +94,7 @@ import {
   exportTrainingTasksJson,
   importTrainingTasksJson,
   loadTrainingTasks,
+  syncTrainingTasksFromCloud,
   updateTrainingTaskAttempt,
   upsertTrainingTask,
 } from './training/storage'
@@ -98,6 +114,7 @@ import {
   exportJieqiSeatBackupJson,
   importJieqiSeatBackupJson,
   loadJieqiSeatRecords,
+  syncJieqiSeatRecordsFromCloud,
   upsertJieqiSeatRecord,
 } from './jieqi-record/storage'
 import type { JieqiSeatProjection } from './jieqi-record/types'
@@ -124,6 +141,11 @@ import {
 import LanApp from './lan/LanApp'
 import OnlineApp from './online/OnlineApp'
 import AccountEntry from './auth/AccountEntry'
+import { useAuth } from './auth/AuthContext'
+import {
+  CloudDocumentResource,
+  resolveCloudConflict,
+} from './sync/cloudDocuments'
 
 const PUBLIC_ONLINE_ENABLED = import.meta.env.VITE_PUBLIC_ONLINE_ENABLED === 'true'
 
@@ -178,9 +200,21 @@ export default function App() {
 }
 
 function JieqiRecordApp() {
+  const auth = useAuth()
   const [records, setRecords] = useState<JieqiSeatProjection[]>(() => loadJieqiSeatRecords())
   const [selectedRecord, setSelectedRecord] = useState<JieqiSeatProjection | null>(null)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    setRecords(loadJieqiSeatRecords())
+    if (!auth.user || auth.loading) return
+    const generation = auth.generation
+    void syncJieqiSeatRecordsFromCloud()
+      .then((cloudRecords) => {
+        if (generation === auth.generation && cloudRecords) setRecords(cloudRecords)
+      })
+      .catch(() => setError('云端揭棋记录暂时不可用，本机缓存未受影响。'))
+  }, [auth.generation, auth.loading, auth.user])
 
   if (selectedRecord) {
     return <JieqiRecordReplay record={selectedRecord} onBack={() => setSelectedRecord(null)} />
@@ -234,8 +268,11 @@ function JieqiRecordApp() {
 
 function HomeScreen() {
   const [latestGame, setLatestGame] = useState<GameSummary | null>(null)
+  const auth = useAuth()
 
   useEffect(() => {
+    if (auth.loading) return
+    configureGameAccountScope(auth.user?.id || null)
     let active = true
     listGames()
       .then((games) => {
@@ -245,7 +282,7 @@ function HomeScreen() {
     return () => {
       active = false
     }
-  }, [])
+  }, [auth.generation, auth.loading, auth.user?.id])
 
   return (
     <main className="home-screen">
@@ -344,6 +381,7 @@ function GameModeScreen({ game }: { game: 'xiangqi' | 'gomoku' }) {
 }
 
 function LocalApp() {
+  const auth = useAuth()
   const [initialReplay] = useState(() =>
     typeof window === 'undefined' || new URLSearchParams(window.location.search).has('game')
       ? null
@@ -358,6 +396,7 @@ function LocalApp() {
   const [savedGames, setSavedGames] = useState<GameSummary[]>([])
   const [gameStoreLoading, setGameStoreLoading] = useState(true)
   const [gameStoreError, setGameStoreError] = useState('')
+  const [gameStorageSource, setGameStorageSource] = useState<GameStorageSource>('device')
   const [startingGame, setStartingGame] = useState(false)
   const [difficulty, setDifficulty] = useState<Difficulty>('medium')
   const [playerSide, setPlayerSide] = useState<PlayerSide>('red')
@@ -469,22 +508,88 @@ function LocalApp() {
   }, [])
 
   useEffect(() => {
+    const handleSyncStatus = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          resource: CloudDocumentResource
+          logicalId: string
+          kind: 'offline' | 'conflict' | 'error'
+        }>
+      ).detail
+      if (!detail) return
+      if (detail.kind === 'offline') {
+        showToast('网络不可用，云端待保存内容已保留，联网后会自动重试。')
+        return
+      }
+      if (detail.kind !== 'conflict') {
+        showToast('云端同步失败，本机内容与待保存快照均已保留。')
+        return
+      }
+      void requestProductDialog({
+        title: '云端版本冲突',
+        description:
+          '另一台设备已经更新了这份内容。选择“保留本地”会用当前页面内容覆盖最新云端版本；选择“使用云端”会丢弃本次待保存快照并重新载入。',
+        confirmLabel: '保留本地',
+        cancelLabel: '使用云端',
+      }).then((result) => {
+        resolveCloudConflict(
+          detail.resource,
+          detail.logicalId,
+          result ? 'keep-local' : 'use-cloud',
+        )
+        if (!result) window.location.reload()
+      })
+    }
+    window.addEventListener('xiangqi-cloud-sync-status', handleSyncStatus)
+    return () => window.removeEventListener('xiangqi-cloud-sync-status', handleSyncStatus)
+  }, [requestProductDialog, showToast])
+
+  useEffect(() => {
     setCustomEndgames(loadCustomEndgames())
     setFavoriteEndgameIds(loadFavoriteEndgameIds())
     setRecentFenPositions(loadRecentFenPositions())
     setStudies(loadStudyPositions())
     setTrainingTasks(loadTrainingTasks())
-  }, [])
+    setEngineSettings(loadEngineSettings())
+    if (!auth.user || auth.loading) return
+    const generation = auth.generation
+    void Promise.all([
+      syncEndgamesFromCloud(),
+      syncRecentFenPositionsFromCloud(),
+      syncStudyPositionsFromCloud(),
+      syncTrainingTasksFromCloud(),
+      syncEngineSettingsFromCloud(),
+    ])
+      .then(([endgames, recent, cloudStudies, cloudTraining, cloudSettings]) => {
+        if (generation !== auth.generation) return
+        if (endgames) {
+          setCustomEndgames(endgames.endgames)
+          setFavoriteEndgameIds(endgames.favorites)
+        }
+        if (recent) setRecentFenPositions(recent)
+        if (cloudStudies) setStudies(cloudStudies)
+        if (cloudTraining) setTrainingTasks(cloudTraining)
+        if (cloudSettings) setEngineSettings(cloudSettings)
+      })
+      .catch(() => {
+        if (generation === auth.generation) {
+          setGameStoreError('部分云端个人数据暂时无法同步，本机待保存内容已保留。')
+        }
+      })
+  }, [auth.generation, auth.loading, auth.user])
 
   const refreshSavedGames = useCallback(async () => {
     try {
-      const games = await listGames()
-      setSavedGames(games)
-      setGameStoreError('')
+      const result = await listGamesWithSource()
+      setSavedGames(result.games)
+      setGameStorageSource(result.source)
+      setGameStoreError(
+        result.source === 'cache' ? '当前离线，正在显示此账号最近一次同步的只读缓存。' : '',
+      )
     } catch (error) {
       setGameStoreError(error instanceof Error ? error.message : '无法读取已保存对局')
     }
-  }, [])
+  }, [auth.generation, auth.user?.id])
 
   const openGame = useCallback((document: GameDocument, updateUrl = true) => {
     setActiveGame(document)
@@ -501,16 +606,33 @@ function LocalApp() {
   }, [])
 
   useEffect(() => {
+    if (auth.loading) return
+    configureGameAccountScope(auth.user?.id || null)
     let cancelled = false
     const boot = async () => {
       setGameStoreLoading(true)
+      setSavedGames([])
+      setActiveGame(null)
+      setInitialLiveState(null)
+      setToastMessage('')
+      dialogResolveRef.current?.(null)
+      dialogResolveRef.current = null
+      setProductDialog(null)
       const gameId = new URLSearchParams(window.location.search).get('game')
       const [gamesResult, gameResult] = await Promise.allSettled([
-        listGames(),
+        listGamesWithSource(),
         gameId ? loadGame(gameId) : Promise.resolve(null),
       ])
       if (cancelled) return
-      if (gamesResult.status === 'fulfilled') setSavedGames(gamesResult.value)
+      if (gamesResult.status === 'fulfilled') {
+        setSavedGames(gamesResult.value.games)
+        setGameStorageSource(gamesResult.value.source)
+        setGameStoreError(
+          gamesResult.value.source === 'cache'
+            ? '当前离线，正在显示此账号最近一次同步的只读缓存。'
+            : '',
+        )
+      }
       else
         setGameStoreError(
           gamesResult.reason instanceof Error ? gamesResult.reason.message : '无法读取已保存对局',
@@ -530,7 +652,7 @@ function LocalApp() {
     return () => {
       cancelled = true
     }
-  }, [openGame])
+  }, [auth.generation, auth.loading, auth.user?.id, openGame])
 
   useEffect(() => {
     if (initialReplay && !initialReplay.ok) {
@@ -880,7 +1002,12 @@ function LocalApp() {
 
   const openTrainingSource = useCallback(
     async (task: TrainingTask) => {
-      if (task.source.type === 'snapshot' || !task.source.id) return
+      if (
+        task.source.type === 'snapshot' ||
+        !task.source.id ||
+        task.source.available === false
+      )
+        return
       setPendingSourceNodeId(task.source.nodeId)
       setSelectedTrainingTask(null)
       setTrainingEvaluation(null)
@@ -1219,6 +1346,13 @@ function LocalApp() {
           games={savedGames}
           loading={gameStoreLoading}
           storeError={gameStoreError}
+          storageNotice={
+            gameStorageSource === 'cloud'
+              ? `默认保存到账号“${auth.user?.displayName || ''}”的云端对局库。网络失败时保留当前待保存内容。`
+              : gameStorageSource === 'cache'
+                ? '当前离线，仅显示此账号最近一次同步的缓存；重新联网后才能保存。'
+                : '未登录：对局仅保存在此设备，不会同步到其他设备。'
+          }
           starting={startingGame}
           onRetry={refreshSavedGames}
           onOpenTraining={() => setTrainingLibraryOpen(true)}
@@ -1740,7 +1874,8 @@ function LocalApp() {
                 hasNext={Boolean(nextTrainingTask)}
                 canOpenSource={
                   selectedTrainingTask.source.type !== 'snapshot' &&
-                  Boolean(selectedTrainingTask.source.id)
+                  Boolean(selectedTrainingTask.source.id) &&
+                  selectedTrainingTask.source.available !== false
                 }
                 onRevealHint={() => setTrainingTaskHintLevel((level) => Math.min(3, level + 1))}
                 onRetry={retryTrainingTask}
@@ -2235,6 +2370,7 @@ function createTrainingSessionStudy(task: TrainingTask): StudyPosition {
 function toGameSummary(game: GameDocument): GameSummary {
   return {
     id: game.id,
+    ownerUserId: game.ownerUserId,
     revision: game.revision,
     name: game.name,
     mode: game.mode,
@@ -2430,6 +2566,7 @@ function StartScreen({
   games,
   loading,
   storeError,
+  storageNotice,
   starting,
   onRetry,
   onOpen,
@@ -2445,6 +2582,7 @@ function StartScreen({
   games: GameSummary[]
   loading: boolean
   storeError: string
+  storageNotice: string
   starting: boolean
   onRetry: () => void
   onOpen: (id: string) => void
@@ -2797,6 +2935,7 @@ function StartScreen({
                 </label>
               </div>
             </div>
+            <div className="saved-games-storage-notice">{storageNotice}</div>
             {storeError && (
               <div className="saved-games-error">
                 {storeError} <button onClick={onRetry}>重试</button>

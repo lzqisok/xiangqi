@@ -189,6 +189,8 @@ export interface TrainingTaskSource {
   name: string
   /** 走棋前局面在来源变招树中的稳定节点。 */
   nodeId: string
+  /** Cloud sync marks a deleted or inaccessible source without removing the training snapshot. */
+  available?: boolean
 }
 
 export interface TrainingTask {
@@ -230,8 +232,10 @@ export interface PersistedGameState {
 
 export interface GameDocument {
   id: string
+  ownerUserId: string | null
   schemaVersion: 2
   revision: number
+  clientMutationId: string | null
   name: string
   mode: LiveGameMode
   config: PersistedGameConfig
@@ -285,6 +289,7 @@ export interface StoredGameDocument extends Omit<GameDocument, 'state'> {
 
 export interface GameSummary {
   id: string
+  ownerUserId: string | null
   revision: number
   name: string
   mode: LiveGameMode

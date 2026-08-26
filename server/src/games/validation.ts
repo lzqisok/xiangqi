@@ -145,6 +145,12 @@ export function isGameDocument(value: unknown): value is GameDocument {
   if (!game || typeof game.id !== 'string' || !GAME_ID.test(game.id) || game.schemaVersion !== 2)
     return false
   if (
+    (game.ownerUserId !== undefined &&
+      game.ownerUserId !== null &&
+      (typeof game.ownerUserId !== 'string' || !GAME_ID.test(game.ownerUserId))) ||
+    (game.clientMutationId !== undefined &&
+      game.clientMutationId !== null &&
+      (typeof game.clientMutationId !== 'string' || game.clientMutationId.length > 128)) ||
     !Number.isInteger(game.revision) ||
     Number(game.revision) < 0 ||
     typeof game.name !== 'string' ||
@@ -171,6 +177,9 @@ export function isGameSummary(value: unknown): value is GameSummary {
   return (
     Boolean(game) &&
     typeof game!.id === 'string' &&
+    (game!.ownerUserId === undefined ||
+      game!.ownerUserId === null ||
+      (typeof game!.ownerUserId === 'string' && GAME_ID.test(game!.ownerUserId))) &&
     Number.isInteger(game!.revision) &&
     typeof game!.name === 'string' &&
     isLiveGameMode(game!.mode) &&

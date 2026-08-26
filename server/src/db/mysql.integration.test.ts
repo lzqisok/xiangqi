@@ -7,7 +7,11 @@ import express from 'express'
 import mysql from 'mysql2/promise'
 import { loadDatabaseConfig } from './config.js'
 import { Database } from './database.js'
-import { DatabaseUnavailableError, RepositoryRevisionConflictError } from './errors.js'
+import {
+  DatabaseUnavailableError,
+  RepositoryNotFoundError,
+  RepositoryRevisionConflictError,
+} from './errors.js'
 import { loadMigrations, migrate, migrationStatus, splitSqlStatements } from './migrations.js'
 import {
   MySqlAccountRepository,
@@ -19,8 +23,14 @@ import { AuthService } from '../auth/service.js'
 import type { DeliveredAccountToken } from '../auth/types.js'
 import { createAuthRuntime, CSRF_COOKIE, DEVELOPMENT_SESSION_COOKIE } from '../auth/http.js'
 import { MySqlOnlineMatchRepository } from '../online/repository.js'
+import { MySqlUserDocumentRepository } from '../repositories/userDocuments.js'
+import { MySqlGameRepository } from '../games/mysqlRepository.js'
+import { GameNotFoundError } from '../games/repository.js'
 import { OnlineMatchService } from '../online/service.js'
 import type { OnlineActor } from '../online/types.js'
+import { MySqlAccountDataService } from '../auth/accountData.js'
+import { USER_DOCUMENT_RESOURCES, userDocumentDefinition } from '../documents/registry.js'
+import { userDocumentSourceAccessible } from '../documents/routes.js'
 
 function validTestConnectionString(raw: string | undefined): string | undefined {
   if (!raw) return undefined
@@ -78,14 +88,85 @@ async function withTestDatabase<T>(action: (database: Database) => Promise<T>): 
 const objectState = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
+const INITIAL_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
+
+function resourcePayload(resource: (typeof USER_DOCUMENT_RESOURCES)[number], suffix: string) {
+  const now = suffix === 'a' ? 1 : 2
+  switch (resource) {
+    case 'studies':
+      return {
+        id: `study-${suffix}`,
+        name: `研究${suffix}`,
+        initialFen: INITIAL_FEN,
+        moves: [],
+        currentMoveIndex: -1,
+        analysisPoints: [],
+        createdAt: now,
+        updatedAt: now,
+      }
+    case 'training-tasks':
+      return {
+        id: `training-${suffix}`,
+        positionFen: INITIAL_FEN,
+        mover: 'red',
+        playedMove: 'a3a4',
+        recommendedMove: 'a3a4',
+        source: { type: 'study', id: `study-${suffix}`, name: `研究${suffix}`, nodeId: 'root' },
+        attempts: 0,
+        createdAt: now,
+        updatedAt: now,
+      }
+    case 'custom-endgames':
+      return { id: `endgame-${suffix}`, name: `残局${suffix}`, fen: INITIAL_FEN, source: 'custom' }
+    case 'favorite-endgames':
+      return { endgameId: `builtin-${suffix}` }
+    case 'jieqi-seat-records':
+      return {
+        kind: 'jieqi-record-projection',
+        schemaVersion: 1,
+        recordId: `jieqi-${suffix}`,
+        audience: suffix === 'a' ? 'red' : 'black',
+        initialBoard: Array.from({ length: 10 }, () => []),
+        events: [],
+        privateEvents: [],
+        createdAt: now,
+        updatedAt: now,
+      }
+    case 'gomoku-history':
+      return {
+        id: `gomoku-${suffix}`,
+        createdAt: now,
+        mode: 'pvp',
+        forbiddenEnabled: false,
+        winner: 1,
+        draw: false,
+        moves: [
+          { row: 7, col: 3, player: 1 },
+          { row: 0, col: 0, player: 2 },
+          { row: 7, col: 4, player: 1 },
+          { row: 0, col: 1, player: 2 },
+          { row: 7, col: 5, player: 1 },
+          { row: 0, col: 2, player: 2 },
+          { row: 7, col: 6, player: 1 },
+          { row: 0, col: 3, player: 2 },
+          { row: 7, col: 7, player: 1 },
+        ],
+      }
+    case 'recent-fens':
+      return { fen: INITIAL_FEN.replace(' 0 1', ` 0 ${now}`), label: `局面${suffix}`, savedAt: now }
+    case 'account-settings':
+      return { candidateCount: suffix === 'a' ? 3 : 4, searchMode: 'depth', searchDepth: 12 }
+  }
+}
+
 test(
   'empty MySQL database migrates and repositories preserve atomic revisions',
   integration,
   async () => {
     await withTestDatabase(async (database) => {
-      assert.deepEqual(await migrate(database), [1, 2, 3, 4])
+      assert.deepEqual(await migrate(database), [1, 2, 3, 4, 5])
       assert.deepEqual(await migrate(database), [])
-      assert.equal((await migrationStatus(database)).currentVersion, 4)
+      assert.equal((await migrationStatus(database)).currentVersion, 5)
 
       const accounts = new MySqlAccountRepository(database)
       const sessions = new MySqlSessionRepository(database)
@@ -122,6 +203,92 @@ test(
       )
       const count = await database.query<{ count: string }>('SELECT count(*) AS count FROM users')
       assert.equal(Number(count.rows[0].count), 2)
+
+      const documents = new MySqlUserDocumentRepository(
+        database,
+        'test-documents',
+        1,
+        (value): value is { title: string } =>
+          Boolean(value) &&
+          typeof value === 'object' &&
+          typeof (value as { title?: unknown }).title === 'string',
+        10,
+        (value) => value.title,
+      )
+      const createdDocument = await documents.create(first.id, { title: '第一版' }, 'create-1')
+      const repeatedCreate = await documents.create(first.id, { title: '第一版' }, 'create-1')
+      assert.equal(repeatedCreate.id, createdDocument.id)
+      const deduplicatedCreate = await documents.create(
+        first.id,
+        { title: '第一版' },
+        'create-same-logical-key',
+      )
+      assert.equal(deduplicatedCreate.id, createdDocument.id)
+      assert.equal((await documents.list(first.id)).length, 1)
+      assert.equal(await documents.find(second.id, createdDocument.id), null)
+      const updatedDocument = await documents.update(
+        first.id,
+        createdDocument.id,
+        0,
+        { title: '第二版' },
+        'update-1',
+      )
+      assert.equal(updatedDocument.revision, 1)
+      assert.equal(
+        (
+          await documents.update(
+            first.id,
+            createdDocument.id,
+            0,
+            { title: '重复请求不会重复更新' },
+            'update-1',
+          )
+        ).revision,
+        1,
+      )
+      await assert.rejects(
+        documents.update(first.id, createdDocument.id, 0, { title: '过期写入' }, 'update-stale'),
+        RepositoryRevisionConflictError,
+      )
+      await documents.delete(first.id, createdDocument.id, 1, 'delete-1')
+      await documents.delete(first.id, createdDocument.id, 1, 'delete-1')
+      assert.equal(await documents.find(first.id, createdDocument.id), null)
+
+      const games = new MySqlGameRepository(database)
+      const gameInput = {
+        name: '账号私有对局',
+        mode: 'human-vs-human' as const,
+        config: {
+          difficulty: 'medium' as const,
+          playerSide: 'red' as const,
+          aiRedDifficulty: 'medium' as const,
+          aiBlackDifficulty: 'medium' as const,
+        },
+        state: {
+          f: 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1',
+          t: { r: 'root', c: 'root', n: { root: { p: null, c: [] } } },
+          s: 'playing' as const,
+        },
+        clientMutationId: 'game-create-1',
+      }
+      const cloudGame = await games.create(first.id, gameInput)
+      assert.equal((await games.create(first.id, gameInput)).id, cloudGame.id)
+      assert.equal(cloudGame.ownerUserId, first.id)
+      await assert.rejects(games.get(second.id, cloudGame.id), GameNotFoundError)
+      const renamedGame = await games.rename(
+        first.id,
+        cloudGame.id,
+        0,
+        '账号私有对局-已改名',
+        'game-rename-1',
+      )
+      assert.equal(renamedGame.revision, 1)
+      assert.equal((await games.list(second.id)).length, 0)
+      const exportFile = await games.export(first.id)
+      const importedOnce = await games.import(second.id, exportFile, 'game-import-1')
+      const importedTwice = await games.import(second.id, exportFile, 'game-import-1')
+      assert.equal(importedOnce.imported[0].id, importedTwice.imported[0].id)
+      assert.equal((await games.list(second.id)).length, 1)
 
       const now = new Date()
       const tokenHash = randomBytes(32)
@@ -590,6 +757,185 @@ test(
 )
 
 test(
+  'every private resource enforces owner-scoped CRUD, export, deduplication, and references',
+  integration,
+  async () => {
+    await withTestDatabase(async (database) => {
+      await migrate(database)
+      const accounts = new MySqlAccountRepository(database)
+      const createAccount = (suffix: string) =>
+        accounts.create({
+          emailNormalized: `documents-${suffix}@example.com`,
+          emailDisplay: `documents-${suffix}@example.com`,
+          displayName: `文档棋手${suffix}`,
+          passwordHash: `$argon2id$documents-placeholder-${suffix}`,
+          passwordHashVersion: 1,
+          verificationTokenHash: randomBytes(32),
+          verificationExpiresAt: new Date(Date.now() + 86_400_000),
+        })
+      const [first, second] = await Promise.all([createAccount('a'), createAccount('b')])
+      await database.query("UPDATE users SET status = 'active'")
+      const firstDocuments: Array<{
+        resource: (typeof USER_DOCUMENT_RESOURCES)[number]
+        repository: MySqlUserDocumentRepository<Record<string, unknown>>
+        id: string
+        revision: number
+      }> = []
+
+      for (const resource of USER_DOCUMENT_RESOURCES) {
+        const definition = userDocumentDefinition(resource)!
+        const repository = new MySqlUserDocumentRepository<Record<string, unknown>>(
+          database,
+          definition.resource,
+          definition.schemaVersion,
+          definition.validate,
+          definition.maxDocuments,
+          definition.logicalKey,
+        )
+        const firstPayload = resourcePayload(resource, 'a')
+        const secondPayload = resourcePayload(resource, 'b')
+        const created = await repository.create(first.id, firstPayload, randomUUID())
+        const duplicate = await repository.create(first.id, firstPayload, randomUUID())
+        assert.equal(duplicate.id, created.id, `${resource} logical key must deduplicate per owner`)
+        const secondCreated = await repository.create(second.id, secondPayload, randomUUID())
+        assert.notEqual(secondCreated.id, created.id)
+        assert.deepEqual(
+          (await repository.list(second.id)).map((document) => document.ownerUserId),
+          [second.id],
+        )
+        assert.equal(await repository.find(second.id, created.id), null)
+        await assert.rejects(
+          repository.update(second.id, created.id, 0, firstPayload, randomUUID()),
+          RepositoryNotFoundError,
+        )
+        await assert.rejects(
+          repository.delete(second.id, created.id, 0, randomUUID()),
+          RepositoryNotFoundError,
+        )
+        const updated = await repository.update(first.id, created.id, 0, firstPayload, randomUUID())
+        firstDocuments.push({ resource, repository, id: created.id, revision: updated.revision })
+      }
+
+      const training = resourcePayload('training-tasks', 'a')
+      assert.equal(await userDocumentSourceAccessible(database, first.id, training), true)
+      assert.equal(await userDocumentSourceAccessible(database, second.id, training), false)
+      const exported = await new MySqlAccountDataService(database).export(first.id)
+      assert.equal((exported.privateDocuments as unknown[]).length, USER_DOCUMENT_RESOURCES.length)
+
+      for (const document of firstDocuments) {
+        await document.repository.delete(first.id, document.id, document.revision, randomUUID())
+        assert.equal(await document.repository.find(first.id, document.id), null)
+      }
+    })
+  },
+)
+
+test(
+  'due account deletion removes private data and anonymizes retained shared history',
+  integration,
+  async () => {
+    await withTestDatabase(async (database) => {
+      await migrate(database)
+      const accounts = new MySqlAccountRepository(database)
+      const account = await accounts.create({
+        emailNormalized: 'delete-me@example.com',
+        emailDisplay: 'delete-me@example.com',
+        displayName: '待删除棋手',
+        passwordHash: '$argon2id$deletion-placeholder-hash',
+        passwordHashVersion: 1,
+        verificationTokenHash: randomBytes(32),
+        verificationExpiresAt: new Date(Date.now() + 86_400_000),
+      })
+      await database.query("UPDATE users SET status = 'active' WHERE id = ?", [account.id])
+      const documents = new MySqlUserDocumentRepository(database, 'studies', 1, objectState)
+      await documents.create(account.id, { id: 'private-study' }, randomUUID())
+
+      const matchId = randomUUID()
+      await database.query(
+        `INSERT INTO matches
+        (id, variant, matchmaking, visibility, phase, status, created_by_user_id, expires_at)
+       VALUES (?, 'xiangqi', false, 'private', 'finished', 'draw', ?, ?)`,
+        [matchId, account.id, new Date(Date.now() + 86_400_000)],
+      )
+      await database.query(
+        `INSERT INTO match_participants
+        (id, match_id, user_id, side, is_owner, display_name_snapshot, ready, left_at)
+       VALUES (?, ?, ?, 'red', true, '待删除棋手', true, CURRENT_TIMESTAMP(6))`,
+        [randomUUID(), matchId, account.id],
+      )
+      await database.query(
+        `INSERT INTO match_states
+        (match_id, schema_version, revision, public_state, referee_state)
+       VALUES (?, 1, 0, JSON_OBJECT('moves', JSON_ARRAY()), JSON_OBJECT('moves', JSON_ARRAY()))`,
+        [matchId],
+      )
+
+      const service = new MySqlAccountDataService(database)
+      const exported = await service.export(account.id)
+      assert.equal((exported.privateDocuments as unknown[]).length, 1)
+      assert.equal((exported.sharedMatchViews as unknown[]).length, 1)
+      assert.equal(JSON.stringify(exported).includes('refereeState'), false)
+      const impact = await service.deletionImpact(account.id)
+      assert.equal(impact.privateDocumentTotal, 1)
+      assert.equal(impact.sharedMatchesToAnonymize, 1)
+
+      const due = new Date(Date.now() - 1_000)
+      await database.query(
+        `UPDATE users SET status = 'pending_deletion', deletion_requested_at = ?, deletion_due_at = ?
+       WHERE id = ?`,
+        [new Date(due.getTime() - 1_000), due, account.id],
+      )
+      assert.equal(await service.cleanupDue(new Date()), 1)
+      assert.equal(await service.cleanupDue(new Date()), 0)
+      assert.equal(
+        Number(
+          (
+            await database.query<{ count: string }>(
+              'SELECT COUNT(*) AS count FROM users WHERE id = ?',
+              [account.id],
+            )
+          ).rows[0].count,
+        ),
+        0,
+      )
+      assert.equal(
+        Number(
+          (
+            await database.query<{ count: string }>(
+              'SELECT COUNT(*) AS count FROM user_documents WHERE owner_user_id = ?',
+              [account.id],
+            )
+          ).rows[0].count,
+        ),
+        0,
+      )
+      const participant = await database.query<{
+        user_id: string | null
+        display_name_snapshot: string
+        anonymized_at: Date | null
+      }>(
+        'SELECT user_id, display_name_snapshot, anonymized_at FROM match_participants WHERE match_id = ?',
+        [matchId],
+      )
+      assert.equal(participant.rows[0].user_id, null)
+      assert.equal(participant.rows[0].display_name_snapshot, '已注销棋手')
+      assert.ok(participant.rows[0].anonymized_at)
+      assert.equal(
+        Number(
+          (
+            await database.query<{ count: string }>(
+              'SELECT COUNT(*) AS count FROM matches WHERE id = ?',
+              [matchId],
+            )
+          ).rows[0].count,
+        ),
+        1,
+      )
+    })
+  },
+)
+
+test(
   'account HTTP flow enforces Origin, Cookie, CSRF, expiry, and logout',
   integration,
   async () => {
@@ -753,7 +1099,7 @@ test('a database at migration 0001 upgrades to the current version', integration
         [first.version, first.name, first.checksum],
       )
     })
-    assert.deepEqual(await migrate(database), [2, 3, 4])
-    assert.equal((await migrationStatus(database)).currentVersion, 4)
+    assert.deepEqual(await migrate(database), [2, 3, 4, 5])
+    assert.equal((await migrationStatus(database)).currentVersion, 5)
   })
 })

@@ -1,5 +1,11 @@
 import { BoardAnnotation, MoveRecord, NodeAnalysis, StudyPosition, VariationTree } from '../types'
 import { MAX_NODE_ANNOTATIONS } from '../annotations/model'
+import {
+  pullCloudDocuments,
+  queueCloudDelete,
+  queueCloudUpsert,
+  scopedStorageKey,
+} from '../sync/cloudDocuments'
 
 const STORAGE_KEY = 'xiangqi.study-positions.v1'
 
@@ -162,7 +168,7 @@ function isValidMoveRecord(value: unknown): value is MoveRecord {
 export function loadStudyPositions(): StudyPosition[] {
   if (!canUseStorage()) return []
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const raw = window.localStorage.getItem(scopedStorageKey(STORAGE_KEY))
     if (!raw) return []
     const parsed = JSON.parse(raw)
     return Array.isArray(parsed) ? parsed.filter(isValidStudy) : []
@@ -172,8 +178,27 @@ export function loadStudyPositions(): StudyPosition[] {
 }
 
 export function saveStudyPositions(studies: StudyPosition[]) {
+  const previous = loadStudyPositions()
+  const valid = studies.filter(isValidStudy)
+  writeStudyPositions(valid)
+  const nextIds = new Set(valid.map((study) => study.id))
+  for (const study of valid) queueCloudUpsert('studies', study.id, study)
+  for (const study of previous) {
+    if (!nextIds.has(study.id)) queueCloudDelete('studies', study.id)
+  }
+}
+
+function writeStudyPositions(studies: StudyPosition[]): void {
   if (!canUseStorage()) return
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(studies.filter(isValidStudy)))
+  window.localStorage.setItem(scopedStorageKey(STORAGE_KEY), JSON.stringify(studies))
+}
+
+export async function syncStudyPositionsFromCloud(): Promise<StudyPosition[] | null> {
+  const pulled = await pullCloudDocuments<StudyPosition>('studies', (study) => study.id)
+  if (!pulled) return null
+  const valid = pulled.filter(isValidStudy).sort((a, b) => b.updatedAt - a.updatedAt)
+  writeStudyPositions(valid)
+  return valid
 }
 
 export function saveStudyPosition(
@@ -192,8 +217,9 @@ export function saveStudyPosition(
   }
   const next = [saved, ...current.filter((item) => item.id !== saved.id)]
   if (canUseStorage()) {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+    window.localStorage.setItem(scopedStorageKey(STORAGE_KEY), JSON.stringify(next))
   }
+  queueCloudUpsert('studies', saved.id, saved)
   return next
 }
 

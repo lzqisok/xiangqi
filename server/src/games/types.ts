@@ -45,8 +45,10 @@ export interface StoredGameState {
 
 export interface GameDocument {
   id: string
+  ownerUserId: string | null
   schemaVersion: 2
   revision: number
+  clientMutationId: string | null
   name: string
   mode: LiveGameMode
   config: GameConfig
@@ -57,6 +59,7 @@ export interface GameDocument {
 
 export interface GameSummary {
   id: string
+  ownerUserId: string | null
   revision: number
   name: string
   mode: LiveGameMode

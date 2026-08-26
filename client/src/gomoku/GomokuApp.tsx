@@ -12,10 +12,12 @@ import {
   GomokuGameRecord,
   loadGomokuHistory,
   saveGomokuRecord,
+  syncGomokuHistoryFromCloud,
 } from './history'
 import MobileStageBar from '../components/MobileStageBar'
 import ProductDialog from '../components/ProductDialog'
 import ProductState from '../components/ProductState'
+import { useAuth } from '../auth/AuthContext'
 
 type GomokuStage = 'status' | 'settings' | 'review'
 
@@ -24,6 +26,7 @@ function historySignature(moves: Array<{ row: number; col: number; player: numbe
 }
 
 export default function GomokuApp() {
+  const auth = useAuth()
   const moveHistory = useGameStore((state) => state.moveHistory)
   const isStarted = useGameStore((state) => state.isStarted)
   const mode = useGameStore((state) => state.mode)
@@ -47,6 +50,17 @@ export default function GomokuApp() {
   useEffect(() => {
     return () => disconnectRapfi()
   }, [])
+
+  useEffect(() => {
+    setHistory(loadGomokuHistory())
+    if (!auth.user || auth.loading) return
+    const generation = auth.generation
+    void syncGomokuHistoryFromCloud()
+      .then((cloudHistory) => {
+        if (generation === auth.generation && cloudHistory) setHistory(cloudHistory)
+      })
+      .catch(() => undefined)
+  }, [auth.generation, auth.loading, auth.user])
 
   const canUndo = getUndoStepCount(moveHistory.length, mode, humanPlayer) > 0
   useEffect(() => {

@@ -27,8 +27,10 @@ test('stored state allows the root plus the maximum protocol move count', () => 
 test('game document requires a canonical UUID-shaped id', () => {
   const base: GameDocument = {
     id: '123e4567-e89b-12d3-a456-426614174000',
+    ownerUserId: null,
     schemaVersion: 2,
     revision: 0,
+    clientMutationId: null,
     name: '测试对局',
     mode: 'human-vs-human',
     config: {

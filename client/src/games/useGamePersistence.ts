@@ -34,7 +34,10 @@ export function useGamePersistence({
   const [error, setError] = useState('')
   const gameRef = useRef(game)
   const leaseTokenRef = useRef(leaseToken)
-  const pendingRef = useRef<PersistedGameState | null>(null)
+  const pendingRef = useRef<{
+    state: PersistedGameState
+    clientMutationId: string
+  } | null>(null)
   const savedSignatureRef = useRef<string | null>(baselineState ? signature(baselineState) : null)
   const savingPromiseRef = useRef<Promise<void> | null>(null)
   const saveFailedRef = useRef(false)
@@ -54,7 +57,9 @@ export function useGamePersistence({
 
   const flush = useCallback(async (latestState?: PersistedGameState | null) => {
     if (latestState && signature(latestState) !== savedSignatureRef.current) {
-      pendingRef.current = latestState
+      if (!pendingRef.current || signature(pendingRef.current.state) !== signature(latestState)) {
+        pendingRef.current = { state: latestState, clientMutationId: crypto.randomUUID() }
+      }
     }
     while (pendingRef.current) {
       if (savingPromiseRef.current) {
@@ -64,7 +69,7 @@ export function useGamePersistence({
 
       const pending = pendingRef.current
       pendingRef.current = null
-      if (signature(pending) === savedSignatureRef.current) continue
+      if (signature(pending.state) === savedSignatureRef.current) continue
       const currentGame = gameRef.current
       const currentLeaseToken = leaseTokenRef.current
       if (!currentGame || !currentLeaseToken) {
@@ -75,10 +80,15 @@ export function useGamePersistence({
       setStatus('saving')
       setError('')
       let savedSuccessfully = false
-      const task = saveGameState(currentGame, pending, currentLeaseToken)
+      const task = saveGameState(
+        currentGame,
+        pending.state,
+        currentLeaseToken,
+        pending.clientMutationId,
+      )
         .then((saved) => {
           gameRef.current = saved
-          savedSignatureRef.current = signature(pending)
+          savedSignatureRef.current = signature(pending.state)
           onSavedRef.current(saved)
           saveFailedRef.current = false
           savedSuccessfully = true
@@ -87,7 +97,7 @@ export function useGamePersistence({
         .catch((cause) => {
           // A newer snapshot may have been queued while this request was in flight.
           // Keep that snapshot; otherwise retain the failed one for an explicit retry.
-          pendingRef.current = retainNewestPendingState(pendingRef.current, pending)
+          pendingRef.current ||= pending
           const message = cause instanceof Error ? cause.message : '保存失败'
           saveFailedRef.current = true
           setError(message)
@@ -107,7 +117,7 @@ export function useGamePersistence({
     if (!enabled || !game || !state || !leaseToken) return
     const nextSignature = signature(state)
     if (nextSignature === savedSignatureRef.current) return
-    pendingRef.current = state
+    pendingRef.current = { state, clientMutationId: crypto.randomUUID() }
     setStatus('dirty')
     void flush().catch(() => undefined)
   }, [enabled, flush, game, leaseToken, state])

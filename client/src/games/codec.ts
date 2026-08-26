@@ -179,5 +179,10 @@ export function encodeGameDocument(game: GameDocument): StoredGameDocument {
 }
 
 export function decodeGameDocument(game: StoredGameDocument): GameDocument {
-  return { ...game, state: decodeGameState(game.state, game.mode) }
+  return {
+    ...game,
+    ownerUserId: game.ownerUserId ?? null,
+    clientMutationId: game.clientMutationId ?? null,
+    state: decodeGameState(game.state, game.mode),
+  }
 }

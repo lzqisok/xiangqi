@@ -33,6 +33,7 @@ export interface CreateGameInput {
   mode: LiveGameMode
   config: GameConfig
   state: StoredGameState
+  clientMutationId?: string
 }
 
 export class JsonGameRepository {
@@ -100,8 +101,10 @@ export class JsonGameRepository {
       const now = Date.now()
       const game: GameDocument = {
         id: randomUUID(),
+        ownerUserId: null,
         schemaVersion: 2,
         revision: 0,
+        clientMutationId: input.clientMutationId || null,
         name: input.name?.trim().slice(0, 100) || this.defaultName(input.mode, now),
         mode: input.mode,
         config: structuredClone(input.config),
@@ -228,8 +231,10 @@ export class JsonGameRepository {
           const game = structuredClone({
             ...source,
             id,
+            ownerUserId: null,
             schemaVersion: 2 as const,
             revision: 0,
+            clientMutationId: null,
             updatedAt: Date.now(),
           })
           await this.writeGame(game)
@@ -262,6 +267,7 @@ export class JsonGameRepository {
   private summary(game: GameDocument): GameSummary {
     return {
       id: game.id,
+      ownerUserId: game.ownerUserId ?? null,
       revision: game.revision,
       name: game.name,
       mode: game.mode,
@@ -316,7 +322,13 @@ export class JsonGameRepository {
   private async readGame(file: string, id: string): Promise<GameDocument | null> {
     try {
       const parsed = JSON.parse(await readFile(file, 'utf8')) as unknown
-      return isGameDocument(parsed) && parsed.id === id ? parsed : null
+      return isGameDocument(parsed) && parsed.id === id
+        ? {
+            ...parsed,
+            ownerUserId: parsed.ownerUserId ?? null,
+            clientMutationId: parsed.clientMutationId ?? null,
+          }
+        : null
     } catch {
       return null
     }

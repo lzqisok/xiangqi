@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import { createGameRouter } from './games/routes.js'
 import { JsonGameRepository } from './games/repository.js'
+import { MySqlGameRepository } from './games/mysqlRepository.js'
 import { GameLeaseManager } from './games/leases.js'
 import { RoomRepository } from './rooms/repository.js'
 import { RoomManager } from './rooms/manager.js'
@@ -57,6 +58,10 @@ import {
   MySqlRateLimitStore,
   rateLimitErrorMiddleware,
 } from './platform/rateLimit.js'
+import { createUserDocumentRouter } from './documents/routes.js'
+import { userDocumentDefinition } from './documents/registry.js'
+import { MySqlUserDocumentRepository } from './repositories/userDocuments.js'
+import { createAccountDataRouter, MySqlAccountDataService } from './auth/accountData.js'
 
 const app = express()
 const server = createServer(app)
@@ -94,6 +99,7 @@ const authRuntime = database
       clientIp: (request) => clientIp(request, trustedProxies),
     })
   : null
+const accountDataService = database ? new MySqlAccountDataService(database) : null
 const socketActors = new WeakMap<object, UserActor>()
 const wss = new WebSocketServer({ noServer: true, maxPayload: platformConfig.wsMaxPayloadBytes })
 const gomokuWss = new WebSocketServer({
@@ -179,6 +185,18 @@ const serverDirectory = fileURLToPath(new URL('../', import.meta.url))
 const gameRepository = new JsonGameRepository(
   process.env.XIANGQI_DATA_DIR || path.resolve(serverDirectory, '../data/games'),
 )
+const cloudGameRepository = database ? new MySqlGameRepository(database) : null
+const jieqiSeatRecordDefinition = userDocumentDefinition('jieqi-seat-records')!
+const jieqiSeatRecordRepository = database
+  ? new MySqlUserDocumentRepository<Record<string, unknown>>(
+      database,
+      jieqiSeatRecordDefinition.resource,
+      jieqiSeatRecordDefinition.schemaVersion,
+      jieqiSeatRecordDefinition.validate,
+      jieqiSeatRecordDefinition.maxDocuments,
+      jieqiSeatRecordDefinition.logicalKey,
+    )
+  : null
 const roomRepository = new RoomRepository(
   process.env.XIANGQI_ROOM_DIR || path.resolve(serverDirectory, '../data/rooms'),
 )
@@ -237,6 +255,32 @@ if (authRuntime) {
   app.use('/api/auth', authRuntime.router)
   app.use('/api/account', authRuntime.accountRouter)
   app.use('/api/me', authRuntime.meRouter)
+  app.use(
+    '/api/me',
+    createAccountDataRouter(accountDataService!, {
+      requireUser: (response) => authRuntime.requireUser(response),
+    }),
+  )
+  app.use(
+    '/api/me/documents',
+    createUserDocumentRouter(database!, {
+      requireUser: (response) => authRuntime.requireUser(response),
+      requireCsrf: (request, response) => authRuntime.requireCsrf(request, response),
+    }),
+  )
+}
+if (accountDataService) {
+  void accountDataService
+    .cleanupDue()
+    .catch((error) => logRuntimeError('account_deletion_cleanup_failed', error))
+  const accountDeletionCleanupTimer = setInterval(
+    () =>
+      void accountDataService
+        .cleanupDue()
+        .catch((error) => logRuntimeError('account_deletion_cleanup_failed', error)),
+    60 * 60 * 1000,
+  )
+  accountDeletionCleanupTimer.unref()
 }
 if (LAN_MODE) {
   app.get('/api/network-info', (_req, res) => {
@@ -246,6 +290,7 @@ if (LAN_MODE) {
 app.use(
   '/api/games',
   (req, res, next) => {
+    if (res.locals.auth?.actor?.kind === 'user' && cloudGameRepository) return next()
     const address = req.socket.remoteAddress || ''
     if (
       isLocalGameLibraryRequest(
@@ -258,7 +303,14 @@ app.use(
     }
     res.status(403).json({ error: '本机对局库只允许从回环地址访问' })
   },
-  createGameRouter(gameRepository, gameLeases),
+  createGameRouter(gameRepository, gameLeases, {
+    cloudRepository: cloudGameRepository || undefined,
+    currentUserId: (response) =>
+      response.locals.auth?.actor?.kind === 'user' ? response.locals.auth.actor.userId : null,
+    requireCsrf: (request, response) => {
+      authRuntime?.requireCsrf(request, response)
+    },
+  }),
 )
 
 const INITIAL_FEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'
@@ -464,6 +516,7 @@ const onlineService =
     ? new OnlineMatchService(new MySqlOnlineMatchRepository(database), {
         rateLimitStore: rateLimitStore || undefined,
         maxActiveMatchesPerUser: platformConfig.maxActiveMatchesPerUser,
+        jieqiSeatRecords: jieqiSeatRecordRepository || undefined,
       })
     : null
 const onlineManager = onlineService
@@ -679,7 +732,20 @@ wss.on('connection', async (ws, request) => {
       switch (msg.type) {
         case 'claim-game':
         case 'takeover-game': {
-          const result = gameLeases.claim(msg.gameId!, ws, msg.type === 'takeover-game')
+          try {
+            if (actor && cloudGameRepository)
+              await cloudGameRepository.get(actor.userId, msg.gameId!)
+            else gameRepository.get(msg.gameId!)
+          } catch {
+            sendError(ws, '对局不存在或无权访问', msg.requestId, 'game_not_found')
+            break
+          }
+          const result = gameLeases.claim(
+            msg.gameId!,
+            ws,
+            msg.type === 'takeover-game',
+            actor ? `user:${actor.userId}` : 'local',
+          )
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(
               JSON.stringify({
@@ -694,7 +760,7 @@ wss.on('connection', async (ws, request) => {
         }
 
         case 'release-game': {
-          gameLeases.release(msg.gameId!, ws)
+          gameLeases.release(msg.gameId!, ws, actor ? `user:${actor.userId}` : 'local')
           break
         }
 

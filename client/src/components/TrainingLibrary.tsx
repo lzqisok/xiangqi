@@ -164,7 +164,10 @@ export default function TrainingLibrary({
                   <span>{TRAINING_STATUS_LABELS[task.status]}</span>
                   <b>{task.category === 'blunder' ? '严重失误' : '错着'}</b>
                 </div>
-                <p>来源：{task.source.name}</p>
+                <p>
+                  来源：{task.source.name}
+                  {task.source.available === false ? '（链接已失效，题目快照仍可训练）' : ''}
+                </p>
                 <code>{task.positionFen}</code>
                 <span>
                   已练 {task.attempts} 次
@@ -181,7 +184,11 @@ export default function TrainingLibrary({
                   {task.attempts > 0 ? '再练一次' : '开始训练'}
                 </button>
                 <button
-                  disabled={task.source.type === 'snapshot' || !task.source.id}
+                  disabled={
+                    task.source.type === 'snapshot' ||
+                    !task.source.id ||
+                    task.source.available === false
+                  }
                   onClick={() => onOpenSource(task)}
                 >
                   查看来源

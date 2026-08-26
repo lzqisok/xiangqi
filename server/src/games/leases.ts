@@ -11,48 +11,55 @@ export class GameLeaseManager {
     gameId: string,
     ws: WebSocket,
     force = false,
+    scope = 'local',
   ): { status: 'granted' | 'readonly'; leaseToken?: string } {
-    const current = this.leases.get(gameId)
+    const key = this.key(scope, gameId)
+    const current = this.leases.get(key)
     if (current?.ws === ws) return { status: 'granted', leaseToken: current.token }
     if (current && !force) return { status: 'readonly' }
     if (current) {
-      this.detach(gameId, current.ws)
+      this.detach(key, current.ws)
       if (current.ws.readyState === WebSocket.OPEN) {
         current.ws.send(JSON.stringify({ type: 'game-lease-lost', gameId }))
       }
     }
     const token = randomUUID()
-    this.leases.set(gameId, { ws, token })
+    this.leases.set(key, { ws, token })
     const games = this.gamesBySocket.get(ws) || new Set<string>()
-    games.add(gameId)
+    games.add(key)
     this.gamesBySocket.set(ws, games)
     return { status: 'granted', leaseToken: token }
   }
 
-  release(gameId: string, ws: WebSocket): void {
-    if (this.leases.get(gameId)?.ws !== ws) return
-    this.leases.delete(gameId)
-    this.detach(gameId, ws)
+  release(gameId: string, ws: WebSocket, scope = 'local'): void {
+    const key = this.key(scope, gameId)
+    if (this.leases.get(key)?.ws !== ws) return
+    this.leases.delete(key)
+    this.detach(key, ws)
   }
 
   releaseSocket(ws: WebSocket): void {
-    for (const gameId of this.gamesBySocket.get(ws) || []) {
-      if (this.leases.get(gameId)?.ws === ws) this.leases.delete(gameId)
+    for (const key of this.gamesBySocket.get(ws) || []) {
+      if (this.leases.get(key)?.ws === ws) this.leases.delete(key)
     }
     this.gamesBySocket.delete(ws)
   }
 
-  hasLease(gameId: string): boolean {
-    return this.leases.has(gameId)
+  hasLease(gameId: string, scope = 'local'): boolean {
+    return this.leases.has(this.key(scope, gameId))
   }
 
-  validates(gameId: string, token: string | undefined): boolean {
-    return Boolean(token) && this.leases.get(gameId)?.token === token
+  validates(gameId: string, token: string | undefined, scope = 'local'): boolean {
+    return Boolean(token) && this.leases.get(this.key(scope, gameId))?.token === token
   }
 
   private detach(gameId: string, ws: WebSocket): void {
     const games = this.gamesBySocket.get(ws)
     games?.delete(gameId)
     if (games?.size === 0) this.gamesBySocket.delete(ws)
+  }
+
+  private key(scope: string, gameId: string): string {
+    return `${scope}:${gameId}`
   }
 }

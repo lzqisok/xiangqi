@@ -1,6 +1,9 @@
 import { FormEvent, useState } from 'react'
 import {
+  AccountDeletionImpact,
   AccountApiError,
+  accountDeletionImpact,
+  downloadAccountData,
   recoverAccount,
   register,
   requestPasswordReset,
@@ -9,7 +12,7 @@ import {
 import { useAuth } from './AuthContext'
 import './auth.css'
 
-type Mode = 'login' | 'register' | 'reset-request' | 'reset' | 'recover' | 'profile'
+type Mode = 'login' | 'register' | 'reset-request' | 'reset' | 'recover' | 'profile' | 'delete'
 
 const ERROR_TEXT: Record<string, string> = {
   invalid_credentials: '邮箱或密码不正确',
@@ -42,6 +45,7 @@ export default function AccountEntry() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [deletionImpact, setDeletionImpact] = useState<AccountDeletionImpact | null>(null)
 
   const chooseMode = (next: Mode) => {
     setMode(next)
@@ -79,9 +83,12 @@ export default function AccountEntry() {
         await recoverAccount(token)
         setMessage('账号已恢复，请重新登录。')
         setMode('login')
-      } else {
+      } else if (mode === 'profile') {
         await auth.updateProfile(displayName)
         setMessage('昵称已更新。')
+      } else {
+        await auth.deleteAccount(password)
+        setOpen(false)
       }
     } catch (cause) {
       setError(errorText(cause))
@@ -171,18 +178,35 @@ export default function AccountEntry() {
                   />
                 </label>
               )}
-              {(mode === 'login' || mode === 'register' || mode === 'reset') && (
+              {(mode === 'login' ||
+                mode === 'register' ||
+                mode === 'reset' ||
+                mode === 'delete') && (
                 <label>
-                  {mode === 'reset' ? '新密码' : '密码'}
+                  {mode === 'reset' ? '新密码' : mode === 'delete' ? '当前密码' : '密码'}
                   <input
                     type="password"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     minLength={12}
-                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                    autoComplete={
+                      mode === 'login' || mode === 'delete' ? 'current-password' : 'new-password'
+                    }
                     required
                   />
                 </label>
+              )}
+              {mode === 'delete' && deletionImpact && (
+                <div className="account-deletion-impact">
+                  <strong>删除影响</strong>
+                  <p>
+                    {deletionImpact.privateDocumentTotal} 条私有数据将在恢复期后删除；
+                    {deletionImpact.sharedMatchesToAnonymize}{' '}
+                    盘共享对局会保留并将你的参与信息匿名化；
+                    {deletionImpact.activeSessionsToRevoke} 个有效会话会立即撤销。
+                  </p>
+                  <p>提交后有 {deletionImpact.recoveryDays} 天可通过邮件 token 恢复账号。</p>
+                </div>
               )}
               {error && (
                 <p className="account-error" role="alert">
@@ -199,19 +223,67 @@ export default function AccountEntry() {
               </button>
             </form>
             {auth.user ? (
-              <button
-                className="account-link account-logout"
-                type="button"
-                disabled={submitting}
-                onClick={() =>
-                  void auth
-                    .logout()
-                    .catch(() => undefined)
-                    .finally(() => setOpen(false))
-                }
-              >
-                退出当前账号
-              </button>
+              <div className="account-user-actions">
+                {mode !== 'delete' && (
+                  <>
+                    <button
+                      className="account-link"
+                      type="button"
+                      disabled={submitting}
+                      onClick={() => {
+                        setSubmitting(true)
+                        setError('')
+                        void downloadAccountData()
+                          .then(() => setMessage('账号数据已导出。'))
+                          .catch((cause) => setError(errorText(cause)))
+                          .finally(() => setSubmitting(false))
+                      }}
+                    >
+                      导出账号数据
+                    </button>
+                    <button
+                      className="account-link account-danger"
+                      type="button"
+                      disabled={submitting}
+                      onClick={() => {
+                        setSubmitting(true)
+                        setError('')
+                        void accountDeletionImpact()
+                          .then((impact) => {
+                            setDeletionImpact(impact)
+                            chooseMode('delete')
+                          })
+                          .catch((cause) => setError(errorText(cause)))
+                          .finally(() => setSubmitting(false))
+                      }}
+                    >
+                      删除账号
+                    </button>
+                  </>
+                )}
+                {mode === 'delete' && (
+                  <button
+                    className="account-link"
+                    type="button"
+                    onClick={() => chooseMode('profile')}
+                  >
+                    取消删除
+                  </button>
+                )}
+                <button
+                  className="account-link account-logout"
+                  type="button"
+                  disabled={submitting}
+                  onClick={() =>
+                    void auth
+                      .logout()
+                      .catch(() => undefined)
+                      .finally(() => setOpen(false))
+                  }
+                >
+                  退出当前账号
+                </button>
+              </div>
             ) : (
               <nav className="account-mode-links" aria-label="账号操作">
                 {mode !== 'login' && (
@@ -251,6 +323,7 @@ function title(mode: Mode): string {
     reset: '设置新密码',
     recover: '恢复账号',
     profile: '账号资料',
+    delete: '删除账号',
   }[mode]
 }
 
@@ -262,5 +335,6 @@ function actionLabel(mode: Mode): string {
     reset: '重置密码',
     recover: '恢复账号',
     profile: '保存资料',
+    delete: '确认进入删除恢复期',
   }[mode]
 }

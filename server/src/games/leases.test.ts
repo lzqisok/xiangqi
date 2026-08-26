@@ -28,3 +28,17 @@ test('game leases allow one writer and notify it when another tab takes over', (
   leases.releaseSocket(second)
   assert.equal(leases.hasLease('game-1'), false)
 })
+
+test('game leases isolate identical document ids across account scopes', () => {
+  const leases = new GameLeaseManager()
+  const first = socket([])
+  const second = socket([])
+
+  const firstLease = leases.claim('game-1', first, false, 'user:first')
+  const secondLease = leases.claim('game-1', second, false, 'user:second')
+
+  assert.equal(firstLease.status, 'granted')
+  assert.equal(secondLease.status, 'granted')
+  assert.equal(leases.validates('game-1', firstLease.leaseToken, 'user:first'), true)
+  assert.equal(leases.validates('game-1', firstLease.leaseToken, 'user:second'), false)
+})

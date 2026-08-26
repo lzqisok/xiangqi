@@ -25,6 +25,7 @@ import {
   RateLimitExceededError,
 } from '../platform/rateLimit.js'
 import { metrics } from '../platform/observability.js'
+import type { MySqlUserDocumentRepository } from '../repositories/userDocuments.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -147,6 +148,7 @@ export class OnlineMatchService {
     private readonly options: {
       rateLimitStore?: MySqlRateLimitStore
       maxActiveMatchesPerUser?: number
+      jieqiSeatRecords?: MySqlUserDocumentRepository<Record<string, unknown>>
     } = {},
   ) {}
 
@@ -635,6 +637,15 @@ export class OnlineMatchService {
         jieqiRecord = {
           ...buildJieqiRoomProjection(room, audience),
           recordId: `online-match:${record.match.id}:${audience}`,
+        }
+        if (viewer?.side && jieqiRecord.audience === viewer.side) {
+          void this.options.jieqiSeatRecords
+            ?.create(
+              userId,
+              jieqiRecord as unknown as Record<string, unknown>,
+              `online-match:${record.match.id}:${viewer.side}`,
+            )
+            .catch(() => metrics.increment('xiangqi_jieqi_record_sync_failures'))
         }
       } catch {
         // Invalid referee data fails closed and never falls back to a broader projection.

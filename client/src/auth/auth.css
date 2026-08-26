@@ -148,8 +148,31 @@
   text-decoration: underline;
 }
 .account-logout {
-  margin-top: 18px;
   color: #8b2d20;
+}
+.account-user-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+.account-user-actions .account-link {
+  width: 100%;
+}
+.account-link.account-danger {
+  color: #a03c32;
+}
+.account-deletion-impact {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid rgba(160, 60, 50, 0.24);
+  border-radius: 10px;
+  background: rgba(160, 60, 50, 0.06);
+  color: #5f443d;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.account-deletion-impact p {
+  margin: 5px 0 0;
 }
 @media (max-width: 540px) {
   .account-overlay {

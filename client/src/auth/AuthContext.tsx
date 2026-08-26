@@ -2,12 +2,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import {
   AccountApiError,
   AccountUser,
+  beginAccountDeletion,
   clearAccountCredentials,
   login as loginRequest,
   logout as logoutRequest,
   restoreSession,
   updateProfile as updateProfileRequest,
 } from './api'
+import { configureCloudDocumentScope } from '../sync/cloudDocuments'
 
 type AuthContextValue = {
   user: AccountUser | null
@@ -17,6 +19,7 @@ type AuthContextValue = {
   login(email: string, password: string): Promise<void>
   logout(): Promise<void>
   updateProfile(displayName: string): Promise<void>
+  deleteAccount(currentPassword: string): Promise<void>
   refresh(): Promise<void>
 }
 
@@ -31,6 +34,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const replaceUser = useCallback((next: AccountUser | null) => {
     setUser((previous) => {
       if (previous?.id !== next?.id) {
+        configureCloudDocumentScope(next?.id ?? null)
         setGeneration((value) => value + 1)
         window.dispatchEvent(
           new CustomEvent('xiangqi-auth-changed', {
@@ -82,6 +86,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       },
       async updateProfile(displayName) {
         replaceUser(await updateProfileRequest(displayName))
+      },
+      async deleteAccount(currentPassword) {
+        await beginAccountDeletion(currentPassword)
+        replaceUser(null)
       },
       refresh,
     }),

@@ -9,6 +9,7 @@ import type {
   JieqiPublicProjection,
   JieqiSeatProjection,
 } from './types'
+import { pullCloudDocuments, scopedStorageKey } from '../sync/cloudDocuments'
 
 const STORAGE_KEY = 'xiangqi.jieqi-seat-records.v1'
 const MAX_JIEQI_SEAT_RECORDS = 200
@@ -261,7 +262,7 @@ function normalizeRecords(records: readonly unknown[]): JieqiSeatProjection[] {
 export function loadJieqiSeatRecords(): JieqiSeatProjection[] {
   if (typeof window === 'undefined') return []
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const raw = window.localStorage.getItem(scopedStorageKey(STORAGE_KEY))
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     return Array.isArray(parsed) ? normalizeRecords(parsed) : []
@@ -276,11 +277,20 @@ export function saveJieqiSeatRecords(
   const normalized = normalizeRecords(records)
   if (typeof window === 'undefined') return normalized
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized))
+    window.localStorage.setItem(scopedStorageKey(STORAGE_KEY), JSON.stringify(normalized))
   } catch {
     // A full or unavailable localStorage must not break the finished-game screen.
   }
   return normalized
+}
+
+export async function syncJieqiSeatRecordsFromCloud(): Promise<JieqiSeatProjection[] | null> {
+  const pulled = await pullCloudDocuments<JieqiSeatProjection>(
+    'jieqi-seat-records',
+    (record) => record.recordId,
+  )
+  if (!pulled) return null
+  return saveJieqiSeatRecords(pulled)
 }
 
 export function upsertJieqiSeatRecord(record: JieqiSeatProjection): JieqiSeatProjection[] {

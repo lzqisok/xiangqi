@@ -4,7 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Database, Queryable } from './database.js'
 
-export const EXPECTED_SCHEMA_VERSION = 4
+export const EXPECTED_SCHEMA_VERSION = 5
 const MIGRATION_FILE = /^(\d{4})_([a-z0-9_]+)\.sql$/
 const MIGRATION_LOCK_NAME = 'xiangqi_platform_schema_migrations'
 

@@ -14,11 +14,20 @@ export type AccountUser = {
 type TokenResponse = { accepted: true; developmentToken?: string }
 type SessionResponse = { authenticated: false } | { authenticated: true; user: AccountUser }
 
+export type AccountDeletionImpact = {
+  privateDocuments: Record<string, number>
+  privateDocumentTotal: number
+  sharedMatchesToAnonymize: number
+  activeSessionsToRevoke: number
+  recoveryDays: number
+}
+
 export class AccountApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
     readonly retryAfterSeconds?: number,
+    readonly details?: unknown,
   ) {
     super(code)
     this.name = 'AccountApiError'
@@ -55,6 +64,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       response.status,
       payload?.error || 'request_failed',
       Number(response.headers.get('Retry-After')) || undefined,
+      payload,
     )
   }
   return payload as T
@@ -125,6 +135,34 @@ export async function updateProfile(displayName: string): Promise<AccountUser> {
 export async function logout(): Promise<void> {
   try {
     await request<void>('/api/auth/logout', { method: 'POST' })
+  } finally {
+    clearAccountCredentials()
+  }
+}
+
+export async function accountDeletionImpact(): Promise<AccountDeletionImpact> {
+  const result = await request<{ impact: AccountDeletionImpact }>('/api/me/deletion-impact')
+  return result.impact
+}
+
+export async function downloadAccountData(): Promise<void> {
+  const payload = await request<Record<string, unknown>>('/api/me/data-export')
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+  )
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `xiangqi-account-data-${new Date().toISOString().slice(0, 10)}.json`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+export async function beginAccountDeletion(currentPassword: string): Promise<void> {
+  try {
+    await request('/api/me/deletion', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword }),
+    })
   } finally {
     clearAccountCredentials()
   }

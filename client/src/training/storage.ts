@@ -1,6 +1,12 @@
 import { TrainingEvaluation, applyTrainingAttempt, trainingTaskDedupeKey } from './tasks'
 import { TrainingTask } from '../types'
 import { validateFenPosition } from '../engine/validation'
+import {
+  pullCloudDocuments,
+  queueCloudDelete,
+  queueCloudUpsert,
+  scopedStorageKey,
+} from '../sync/cloudDocuments'
 
 const STORAGE_KEY = 'xiangqi.training-tasks.v1'
 const MAX_TRAINING_TASKS = 1000
@@ -49,7 +55,7 @@ function isValidTrainingTask(value: unknown): value is TrainingTask {
 export function loadTrainingTasks(): TrainingTask[] {
   if (typeof window === 'undefined') return []
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const raw = window.localStorage.getItem(scopedStorageKey(STORAGE_KEY))
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     return Array.isArray(parsed)
@@ -61,8 +67,27 @@ export function loadTrainingTasks(): TrainingTask[] {
 }
 
 export function saveTrainingTasks(tasks: TrainingTask[]): void {
+  const previous = loadTrainingTasks()
+  const next = tasks.filter(isValidTrainingTask).slice(0, MAX_TRAINING_TASKS)
+  writeTrainingTasks(next)
+  const nextIds = new Set(next.map((task) => task.id))
+  for (const task of next) queueCloudUpsert('training-tasks', task.id, task)
+  for (const task of previous) {
+    if (!nextIds.has(task.id)) queueCloudDelete('training-tasks', task.id)
+  }
+}
+
+function writeTrainingTasks(tasks: TrainingTask[]): void {
   if (typeof window === 'undefined') return
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks.slice(0, MAX_TRAINING_TASKS)))
+  window.localStorage.setItem(scopedStorageKey(STORAGE_KEY), JSON.stringify(tasks))
+}
+
+export async function syncTrainingTasksFromCloud(): Promise<TrainingTask[] | null> {
+  const pulled = await pullCloudDocuments<TrainingTask>('training-tasks', (task) => task.id)
+  if (!pulled) return null
+  const valid = pulled.filter(isValidTrainingTask).slice(0, MAX_TRAINING_TASKS)
+  writeTrainingTasks(valid)
+  return valid
 }
 
 function mergeTaskProgress(preferred: TrainingTask, other: TrainingTask): TrainingTask {

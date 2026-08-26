@@ -1,4 +1,11 @@
 import { EndgameDefinition } from '../types'
+import { BUILTIN_ENDGAMES } from './builtin'
+import {
+  pullCloudDocuments,
+  queueCloudDelete,
+  queueCloudUpsert,
+  scopedStorageKey,
+} from '../sync/cloudDocuments'
 
 const STORAGE_KEY = 'xiangqi.custom-endgames.v1'
 const FAVORITES_KEY = 'xiangqi.favorite-endgames.v1'
@@ -26,7 +33,7 @@ export function loadCustomEndgames(): EndgameDefinition[] {
   if (typeof window === 'undefined') return []
 
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const raw = window.localStorage.getItem(scopedStorageKey(STORAGE_KEY))
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -37,11 +44,19 @@ export function loadCustomEndgames(): EndgameDefinition[] {
 }
 
 export function saveCustomEndgames(endgames: EndgameDefinition[]) {
+  const previous = loadCustomEndgames()
+  const next = endgames.filter(isValidEndgame)
+  writeCustomEndgames(next)
+  const nextIds = new Set(next.map((item) => item.id))
+  for (const item of next) queueCloudUpsert('custom-endgames', item.id, item)
+  for (const item of previous) {
+    if (!nextIds.has(item.id)) queueCloudDelete('custom-endgames', item.id)
+  }
+}
+
+function writeCustomEndgames(endgames: EndgameDefinition[]): void {
   if (typeof window === 'undefined') return
-  window.localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify(endgames.filter((item) => item.source === 'custom')),
-  )
+  window.localStorage.setItem(scopedStorageKey(STORAGE_KEY), JSON.stringify(endgames))
 }
 
 export function upsertCustomEndgame(endgame: EndgameDefinition): EndgameDefinition[] {
@@ -67,7 +82,7 @@ export function loadFavoriteEndgameIds(): string[] {
   if (typeof window === 'undefined') return []
 
   try {
-    const raw = window.localStorage.getItem(FAVORITES_KEY)
+    const raw = window.localStorage.getItem(scopedStorageKey(FAVORITES_KEY))
     if (!raw) return []
     const parsed = JSON.parse(raw)
     return Array.isArray(parsed)
@@ -79,8 +94,40 @@ export function loadFavoriteEndgameIds(): string[] {
 }
 
 export function saveFavoriteEndgameIds(ids: string[]) {
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(FAVORITES_KEY, JSON.stringify(Array.from(new Set(ids))))
+  const previous = loadFavoriteEndgameIds()
+  const next = Array.from(new Set(ids))
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(scopedStorageKey(FAVORITES_KEY), JSON.stringify(next))
+  }
+  const nextIds = new Set(next)
+  for (const id of next) queueCloudUpsert('favorite-endgames', id, { endgameId: id })
+  for (const id of previous) {
+    if (!nextIds.has(id)) queueCloudDelete('favorite-endgames', id)
+  }
+}
+
+export async function syncEndgamesFromCloud(): Promise<{
+  endgames: EndgameDefinition[]
+  favorites: string[]
+} | null> {
+  const [endgames, favoriteDocuments] = await Promise.all([
+    pullCloudDocuments<EndgameDefinition>('custom-endgames', (item) => item.id),
+    pullCloudDocuments<{ endgameId: string }>('favorite-endgames', (item) => item.endgameId),
+  ])
+  if (!endgames || !favoriteDocuments) return null
+  const validEndgames = endgames.filter(isValidEndgame)
+  const availableIds = new Set([...BUILTIN_ENDGAMES, ...validEndgames].map((item) => item.id))
+  const favorites = favoriteDocuments
+    .map((item) => item.endgameId)
+    .filter((id): id is string => typeof id === 'string' && availableIds.has(id))
+  for (const item of favoriteDocuments) {
+    if (!availableIds.has(item.endgameId)) queueCloudDelete('favorite-endgames', item.endgameId)
+  }
+  writeCustomEndgames(validEndgames)
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(scopedStorageKey(FAVORITES_KEY), JSON.stringify(favorites))
+  }
+  return { endgames: validEndgames, favorites }
 }
 
 export function toggleFavoriteEndgame(id: string): string[] {

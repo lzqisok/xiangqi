@@ -4341,6 +4341,17 @@ body {
   font-weight: 700;
 }
 
+.saved-games-storage-notice {
+  margin: 10px 0;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-color, #9b2f2f) 24%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-color, #9b2f2f) 6%, transparent);
+  color: var(--text-secondary, #665b50);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .saved-games-heading > div {
   display: flex;
   gap: 10px;

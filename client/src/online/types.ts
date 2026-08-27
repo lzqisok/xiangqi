@@ -41,6 +41,15 @@ export type OnlineMatchSnapshot = OnlineMatchSummary & {
   >
   board: Board | Array<Array<PieceColor | null>>
   turn: PieceColor
+  clock?: {
+    redRemainingMs: number
+    blackRemainingMs: number
+    incrementMs: number
+    delayMs: number
+    activeSide: PieceColor | null
+    deadlineAt: string | null
+    serverNow: string
+  }
   moves: Array<{
     uci: string
     color: PieceColor

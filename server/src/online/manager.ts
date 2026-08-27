@@ -3,6 +3,7 @@ import type { UserActor } from '../auth/types.js'
 import { OnlineMatchError, OnlineMatchService } from './service.js'
 import type { OnlineActor, OnlineMatchRecord } from './types.js'
 import { metrics, structuredLog } from '../platform/observability.js'
+import { authoritativeClockNow } from './clock.js'
 
 type Connection = {
   actor: OnlineActor
@@ -19,6 +20,7 @@ export class OnlineMatchManager {
   private readonly socketsByMatch = new Map<string, Set<WebSocket>>()
   private readonly playerSockets = new Map<string, WebSocket>()
   private readonly disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly clockTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly matchPhases = new Map<string, OnlineMatchRecord['match']['phase']>()
 
   constructor(
@@ -41,6 +43,7 @@ export class OnlineMatchManager {
     const records = await this.service.repository.recoverActiveMatches()
     for (const record of records) {
       this.matchPhases.set(record.match.id, record.match.phase)
+      this.scheduleClock(record)
       if (record.match.phase !== 'playing') continue
       const restartDeadline = new Date(Date.now() + this.disconnectGraceMs)
       for (const participant of record.participants) {
@@ -164,7 +167,9 @@ export class OnlineMatchManager {
 
   dispose() {
     for (const timer of this.disconnectTimers.values()) clearTimeout(timer)
+    for (const timer of this.clockTimers.values()) clearTimeout(timer)
     this.disconnectTimers.clear()
+    this.clockTimers.clear()
     this.connections.clear()
     this.socketsByMatch.clear()
     this.playerSockets.clear()
@@ -262,6 +267,7 @@ export class OnlineMatchManager {
   }
 
   private async broadcast(record: OnlineMatchRecord) {
+    this.scheduleClock(record)
     const previousPhase = this.matchPhases.get(record.match.id)
     this.matchPhases.set(record.match.id, record.match.phase)
     if (record.match.phase === 'finished' && previousPhase !== 'finished') {
@@ -311,6 +317,31 @@ export class OnlineMatchManager {
     )
     timer.unref()
     this.disconnectTimers.set(key, timer)
+  }
+
+  private scheduleClock(record: OnlineMatchRecord) {
+    clearTimeout(this.clockTimers.get(record.match.id))
+    this.clockTimers.delete(record.match.id)
+    const deadlineAt = record.state.clock?.deadlineAt
+    if (record.match.phase !== 'playing' || !deadlineAt) return
+    const timer = setTimeout(
+      () => {
+        this.clockTimers.delete(record.match.id)
+        void this.service.repository
+          .adjudicateClock(record.match.id, deadlineAt)
+          .then((finished) => {
+            if (!finished) return
+            metrics.increment('xiangqi_online_clock_timeouts', {
+              variant: finished.match.variant,
+            })
+            return this.broadcast(finished)
+          })
+          .catch(() => undefined)
+      },
+      Math.max(0, new Date(deadlineAt).getTime() - authoritativeClockNow().getTime()),
+    )
+    timer.unref()
+    this.clockTimers.set(record.match.id, timer)
   }
 
   private playerKey(matchId: string, userId: string) {

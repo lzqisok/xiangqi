@@ -30,6 +30,7 @@ import {
 import { MySqlGameRepository } from '../games/mysqlRepository.js'
 import { GameNotFoundError } from '../games/repository.js'
 import { OnlineMatchService } from '../online/service.js'
+import { readOnlineRefereeState } from '../online/state.js'
 import type { OnlineActor } from '../online/types.js'
 import { MySqlAccountDataService } from '../auth/accountData.js'
 import { USER_DOCUMENT_RESOURCES, userDocumentDefinition } from '../documents/registry.js'
@@ -556,6 +557,49 @@ test(
       })
       assert.equal(retriedMatchedRequest.record.match.id, matchId)
       assert.equal(retriedMatchedRequest.created, false)
+
+      const [timedFirst, timedSecond] = await Promise.all([
+        service.quickMatch(firstActor, {
+          variant: 'xiangqi',
+          clockPreset: '15m-10s',
+          requestKey: randomUUID(),
+        }),
+        service.quickMatch(secondActor, {
+          variant: 'xiangqi',
+          clockPreset: '15m-10s',
+          requestKey: randomUUID(),
+        }),
+      ])
+      assert.equal(timedFirst.record.match.id, timedSecond.record.match.id)
+      const timed = await service.get(firstActor, timedFirst.record.match.id)
+      assert.equal(timed.state.clock?.activeSide, 'red')
+      assert.equal(timed.state.clock?.incrementMs, 10_000)
+      const timedRedId = timed.participants.find((item) => item.side === 'red')!.userId
+      const timedRedActor = timedRedId === first.id ? firstActor : secondActor
+      const timedMoved = await service.move(timedRedActor, {
+        matchId: timed.match.id,
+        commandId: randomUUID(),
+        expectedRevision: timed.match.revision,
+        uci: 'a3a4',
+      })
+      assert.equal(timedMoved.record.state.clock?.activeSide, 'black')
+      assert.ok((timedMoved.record.state.clock?.redRemainingMs ?? 0) > 900_000)
+      assert.equal(
+        await repository.adjudicateClock(
+          timed.match.id,
+          timed.state.clock?.deadlineAt ?? 'invalid',
+        ),
+        null,
+      )
+      const persistedTimedState = await database.query<{ referee_state: unknown }>(
+        'SELECT referee_state FROM match_states WHERE match_id = ?',
+        [timed.match.id],
+      )
+      assert.equal(
+        readOnlineRefereeState(persistedTimedState.rows[0].referee_state, 'xiangqi').clock
+          ?.activeSide,
+        'black',
+      )
 
       const boundedQueue = new OnlineMatchService(repository, { maxMatchmakingQueueEntries: 1 })
       await boundedQueue.quickMatch(outsiderActor, {

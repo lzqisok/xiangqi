@@ -51,6 +51,7 @@ export default function OnlineApp() {
     game === 'gomoku' ? 'gomoku' : 'xiangqi',
   )
   const [gomokuRule, setGomokuRule] = useState<'freestyle' | 'renju'>('freestyle')
+  const [clockPreset, setClockPreset] = useState<'none' | '10m' | '15m-10s' | '30m'>('none')
   const [name, setName] = useState('棋友对局')
   const [visibility, setVisibility] = useState<'public' | 'invite'>('public')
   const [busy, setBusy] = useState(false)
@@ -62,7 +63,7 @@ export default function OnlineApp() {
   const setup: MatchSetup = {
     variant,
     ...(variant === 'gomoku' ? { gomokuRule } : {}),
-    clockPreset: 'none',
+    clockPreset,
   }
 
   useEffect(() => {
@@ -213,6 +214,20 @@ export default function OnlineApp() {
               </button>
             </div>
           )}
+          <label>
+            棋钟
+            <select
+              value={clockPreset}
+              onChange={(event) =>
+                setClockPreset(event.target.value as 'none' | '10m' | '15m-10s' | '30m')
+              }
+            >
+              <option value="none">无棋钟</option>
+              <option value="10m">10 分钟包干</option>
+              <option value="15m-10s">15 分钟，每步加 10 秒</option>
+              <option value="30m">30 分钟包干</option>
+            </select>
+          </label>
           <button
             className="primary"
             disabled={busy}
@@ -322,10 +337,22 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
   const [inviteUrl, setInviteUrl] = useState('')
   const [actionError, setActionError] = useState('')
   const [now, setNow] = useState(Date.now())
+  const [clockNow, setClockNow] = useState(() => performance.now())
+  const [clockAnchor, setClockAnchor] = useState({ revision: -1, receivedAt: performance.now() })
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    const timer = window.setInterval(() => {
+      setNow(Date.now())
+      setClockNow(performance.now())
+    }, 250)
     return () => clearInterval(timer)
   }, [])
+  useEffect(() => {
+    if (match?.clock) {
+      const receivedAt = performance.now()
+      setClockAnchor({ revision: match.revision, receivedAt })
+      setClockNow(receivedAt)
+    }
+  }, [match?.clock, match?.revision])
   const board = match?.variant === 'gomoku' ? null : (match?.board as XiangqiBoard | undefined)
   const legal = useMemo(
     () =>
@@ -396,6 +423,19 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
   const proposalSeconds = match.proposal
     ? Math.max(0, Math.ceil((new Date(match.proposal.deadline).getTime() - now) / 1_000))
     : 0
+  const remaining = (side: 'red' | 'black') => {
+    if (!match.clock) return 0
+    const snapshot = side === 'red' ? match.clock.redRemainingMs : match.clock.blackRemainingMs
+    const elapsed =
+      match.clock.activeSide === side && clockAnchor.revision === match.revision
+        ? Math.max(0, clockNow - clockAnchor.receivedAt)
+        : 0
+    return Math.max(0, snapshot - elapsed)
+  }
+  const clockText = (milliseconds: number) => {
+    const seconds = Math.ceil(milliseconds / 1_000)
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+  }
 
   return (
     <main className="lan-shell online-shell online-match-shell">
@@ -620,6 +660,20 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
               </button>
             )}
           </section>
+          {match.clock && (
+            <section className="card online-match-tools" aria-label="服务端权威棋钟">
+              <small>SERVER CLOCK</small>
+              <h2>棋钟</h2>
+              <div className="online-choice-row">
+                <strong>红方 {clockText(remaining('red'))}</strong>
+                <strong>黑方 {clockText(remaining('black'))}</strong>
+              </div>
+              <p>
+                服务端权威计时
+                {match.clock.incrementMs ? ` · 每步加 ${match.clock.incrementMs / 1_000} 秒` : ''}
+              </p>
+            </section>
+          )}
           <section className="card online-chat-card">
             <small>MATCH CHAT</small>
             <h2>对局聊天</h2>

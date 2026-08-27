@@ -7,6 +7,7 @@ import { executeGomokuMove, rebuildGomokuRoom } from '../rooms/gomokuCore.js'
 import type { MatchVariant } from '../repositories/contracts.js'
 import type { RoomMove } from '../rooms/types.js'
 import type { OnlinePublicState, OnlineRefereeState } from './types.js'
+import { readOnlineClock } from './clock.js'
 
 const LAYOUT_INVENTORY = [...'rraabbnnccppppp'].sort().join('')
 
@@ -53,6 +54,7 @@ export function readOnlineRefereeState(
     throw new Error('公网对局裁判状态格式无效')
   }
   const name = normalizeOnlineMatchName(value.name)
+  const clock = readOnlineClock(value.clock)
   if (value.moves.length > (variant === 'gomoku' ? 225 : 2000)) {
     throw new Error('公网对局走法数量超出上限')
   }
@@ -74,7 +76,7 @@ export function readOnlineRefereeState(
       moves.push(result.move)
       rebuilt = { board: result.board, turn: result.turn }
     }
-    return { schemaVersion: 1, name, moves }
+    return { schemaVersion: 1, name, moves, ...(clock ? { clock } : {}) }
   }
   const layout = value.initialLayout
   if (variant === 'jieqi') {
@@ -96,6 +98,7 @@ export function readOnlineRefereeState(
     name,
     ...(variant === 'jieqi' ? { initialLayout: layout as string } : {}),
     moves,
+    ...(clock ? { clock } : {}),
   }
 }
 

@@ -9,6 +9,7 @@ import type {
   RoomPiece,
   RoomStatusReason,
 } from '../rooms/types.js'
+import type { OnlineClockState } from './clock.js'
 
 export type OnlineActor = Pick<UserActor, 'userId' | 'sessionId' | 'ipKey' | 'capabilities'>
 
@@ -17,6 +18,7 @@ export type OnlineRefereeState = {
   name: string
   initialLayout?: string
   moves: RoomMove[]
+  clock?: OnlineClockState
 }
 
 export type OnlinePublicState = {
@@ -99,6 +101,15 @@ export type OnlineMatchSnapshot = OnlineMatchSummary & {
   >
   board: RoomBoard | Array<Array<RoomColor | null>>
   turn: RoomColor
+  clock?: {
+    redRemainingMs: number
+    blackRemainingMs: number
+    incrementMs: number
+    delayMs: number
+    activeSide: RoomColor | null
+    deadlineAt: string | null
+    serverNow: string
+  }
   moves: Array<{
     uci: string
     color: RoomColor

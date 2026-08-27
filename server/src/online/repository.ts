@@ -18,6 +18,7 @@ import type {
   OnlineProposal,
   OnlineRefereeState,
 } from './types.js'
+import { authoritativeClockNow, createOnlineClock, stopOnlineClock } from './clock.js'
 
 type MatchRow = {
   id: string
@@ -347,15 +348,24 @@ export class MySqlOnlineMatchRepository {
            WHERE match_id = ? AND left_at IS NULL AND side IS NOT NULL`,
           [waiting.id],
         )
-        const now = new Date()
+        const now = authoritativeClockNow()
+        const waitingState = await this.state(client, waiting, true)
+        const clock = createOnlineClock(input.clockPreset, now)
+        const startedState = clock ? { ...waitingState, clock } : waitingState
         await client.query(
           `UPDATE matches SET phase = 'playing', revision = revision + 1,
              started_at = ?, updated_at = ? WHERE id = ? AND phase = 'waiting'`,
           [now, now, waiting.id],
         )
         await client.query(
-          `UPDATE match_states SET revision = revision + 1, updated_at = ? WHERE match_id = ?`,
-          [now, waiting.id],
+          `UPDATE match_states SET revision = revision + 1, public_state = ?, referee_state = ?,
+             updated_at = ? WHERE match_id = ?`,
+          [
+            JSON.stringify(onlinePublicState(startedState)),
+            JSON.stringify(startedState),
+            now,
+            waiting.id,
+          ],
         )
         await client.query('DELETE FROM matchmaking_entries WHERE match_id = ?', [waiting.id])
         await client.query(
@@ -666,7 +676,7 @@ export class MySqlOnlineMatchRepository {
         throw new Error('当前账号不再占据原席位')
       }
       if (input.requireOwner && !actor.isOwner) throw new Error('只有房主可以执行此操作')
-      const currentState = await this.state(client, match)
+      const currentState = await this.state(client, match, true)
       if (
         JSON.stringify(currentState) !== JSON.stringify(input.commit.state) &&
         match.phase === 'finished'
@@ -979,6 +989,10 @@ export class MySqlOnlineMatchRepository {
           : 'red-wins'
       const reason: RoomStatusReason = bothOffline ? 'abandoned' : 'disconnect'
       const next = match.revision + 1
+      const state = await this.state(client, match, true)
+      const finishedState = state.clock
+        ? { ...state, clock: stopOnlineClock(state.clock, authoritativeClockNow()) }
+        : state
       await client.query(
         `UPDATE matches SET revision = ?, phase = 'finished', status = ?, status_reason = ?,
            finished_at = CURRENT_TIMESTAMP(6), updated_at = CURRENT_TIMESTAMP(6)
@@ -986,9 +1000,62 @@ export class MySqlOnlineMatchRepository {
         [next, status, reason, matchId, match.revision],
       )
       await client.query(
-        `UPDATE match_states SET revision = ?, updated_at = CURRENT_TIMESTAMP(6)
+        `UPDATE match_states SET revision = ?, public_state = ?, referee_state = ?,
+           updated_at = CURRENT_TIMESTAMP(6)
          WHERE match_id = ? AND revision = ?`,
-        [next, matchId, match.revision],
+        [
+          next,
+          JSON.stringify(onlinePublicState(finishedState)),
+          JSON.stringify(finishedState),
+          matchId,
+          match.revision,
+        ],
+      )
+      return this.requireRecord(client, matchId)
+    })
+  }
+
+  async adjudicateClock(matchId: string, deadlineAt: string): Promise<OnlineMatchRecord | null> {
+    return this.database.transaction(async (client) => {
+      const match = await this.requireMatch(client, matchId, true)
+      if (match.phase !== 'playing') return null
+      const state = await this.state(client, match, true)
+      const clock = state.clock
+      if (
+        !clock?.activeSide ||
+        clock.deadlineAt !== deadlineAt ||
+        new Date(deadlineAt).getTime() > authoritativeClockNow().getTime()
+      ) {
+        return null
+      }
+      const loser = clock.activeSide
+      const finishedState = {
+        ...state,
+        clock: {
+          ...stopOnlineClock(clock, new Date(deadlineAt)),
+          ...(loser === 'red' ? { redRemainingMs: 0 } : { blackRemainingMs: 0 }),
+        },
+      }
+      const next = match.revision + 1
+      const updated = await client.query(
+        `UPDATE matches SET revision = ?, phase = 'finished', status = ?,
+           status_reason = 'timeout', finished_at = CURRENT_TIMESTAMP(6),
+           updated_at = CURRENT_TIMESTAMP(6)
+         WHERE id = ? AND revision = ? AND phase = 'playing'`,
+        [next, loser === 'red' ? 'black-wins' : 'red-wins', matchId, match.revision],
+      )
+      if (updated.rowCount !== 1) return null
+      await client.query(
+        `UPDATE match_states SET revision = ?, public_state = ?, referee_state = ?,
+           updated_at = CURRENT_TIMESTAMP(6)
+         WHERE match_id = ? AND revision = ?`,
+        [
+          next,
+          JSON.stringify(onlinePublicState(finishedState)),
+          JSON.stringify(finishedState),
+          matchId,
+          match.revision,
+        ],
       )
       return this.requireRecord(client, matchId)
     })
@@ -1117,19 +1184,27 @@ export class MySqlOnlineMatchRepository {
     return result
   }
 
-  private async state(client: Queryable, match: MatchEntity): Promise<OnlineRefereeState> {
+  private async state(
+    client: Queryable,
+    match: MatchEntity,
+    lock = false,
+  ): Promise<OnlineRefereeState> {
     const result = await client.query<StateRow>(
-      'SELECT referee_state, revision FROM match_states WHERE match_id = ?',
+      `SELECT referee_state, revision FROM match_states WHERE match_id = ?${lock ? ' FOR UPDATE' : ''}`,
       [match.id],
     )
     if (!result.rows[0] || Number(result.rows[0].revision) !== match.revision) {
       throw new Error('公网对局状态 revision 不一致')
     }
-    return readOnlineRefereeState(
+    const state = readOnlineRefereeState(
       json(result.rows[0].referee_state),
       match.variant,
       match.gomokuRule,
     )
+    if (state.clock && state.clock.preset !== match.clockPreset) {
+      throw new Error('公网棋钟档位与对局不一致')
+    }
+    return state
   }
 
   private async pendingProposal(client: Queryable, id: string): Promise<OnlineProposal | null> {

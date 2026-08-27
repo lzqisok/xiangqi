@@ -27,6 +27,14 @@ import {
 } from '../platform/rateLimit.js'
 import { metrics } from '../platform/observability.js'
 import type { MySqlUserDocumentRepository } from '../repositories/userDocuments.js'
+import {
+  advanceOnlineClock,
+  authoritativeClockNow,
+  createOnlineClock,
+  projectOnlineClock,
+  retargetOnlineClock,
+  stopOnlineClock,
+} from './clock.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -343,6 +351,8 @@ export class OnlineMatchService {
       (item) => item.userId !== actor.userId && item.side && item.ready,
     )
     const start = ready && otherReady
+    const startedAt = authoritativeClockNow()
+    const clock = start ? createOnlineClock(record.match.clockPreset, startedAt) : undefined
     return this.repository.commitCommand({
       userId: actor.userId,
       matchId,
@@ -353,7 +363,16 @@ export class OnlineMatchService {
       commit: {
         ...commandBase(record),
         participantReady: ready,
-        ...(start ? { phase: 'playing', startedAt: new Date() } : {}),
+        ...(start
+          ? {
+              phase: 'playing',
+              startedAt,
+              state: {
+                ...record.state,
+                ...(clock ? { clock } : {}),
+              },
+            }
+          : {}),
       },
     })
   }
@@ -369,6 +388,28 @@ export class OnlineMatchService {
     const player = requirePlayer(record, actor.userId)
     if (record.match.phase !== 'playing' || record.match.status !== 'playing') {
       throw new OnlineMatchError('match_not_playing')
+    }
+    const receivedAt = authoritativeClockNow()
+    const clockResult = record.state.clock
+      ? advanceOnlineClock(record.state.clock, player.side, receivedAt)
+      : undefined
+    if (clockResult?.timedOut) {
+      return this.repository.commitCommand({
+        userId: actor.userId,
+        matchId,
+        commandId: id,
+        commandType: 'timeout',
+        expectedRevision: revision,
+        expectedSide: player.side,
+        commit: {
+          ...commandBase(record),
+          state: { ...record.state, clock: clockResult.clock },
+          phase: 'finished',
+          status: player.side === 'red' ? 'black-wins' : 'red-wins',
+          statusReason: 'timeout',
+          finishedAt: receivedAt,
+        },
+      })
     }
     const result =
       record.match.variant === 'gomoku'
@@ -388,6 +429,15 @@ export class OnlineMatchService {
             player.side,
           )
     const finished = result.detail.status !== 'playing'
+    const nextState = {
+      ...record.state,
+      moves: [...record.state.moves, result.move],
+      ...(clockResult
+        ? {
+            clock: finished ? stopOnlineClock(clockResult.clock, receivedAt) : clockResult.clock,
+          }
+        : {}),
+    }
     return this.repository.commitCommand({
       userId: actor.userId,
       matchId,
@@ -397,10 +447,10 @@ export class OnlineMatchService {
       expectedSide: player.side,
       commit: {
         ...commandBase(record),
-        state: { ...record.state, moves: [...record.state.moves, result.move] },
+        state: nextState,
         status: result.detail.status,
         ...(result.detail.reason ? { statusReason: result.detail.reason } : {}),
-        ...(finished ? { phase: 'finished', finishedAt: new Date() } : {}),
+        ...(finished ? { phase: 'finished', finishedAt: receivedAt } : {}),
       },
     })
   }
@@ -424,6 +474,14 @@ export class OnlineMatchService {
       expectedSide: player.side,
       commit: {
         ...commandBase(record),
+        ...(record.state.clock
+          ? {
+              state: {
+                ...record.state,
+                clock: stopOnlineClock(record.state.clock, authoritativeClockNow()),
+              },
+            }
+          : {}),
         phase: 'finished',
         status: player.side === 'red' ? 'black-wins' : 'red-wins',
         statusReason: 'resignation',
@@ -483,12 +541,29 @@ export class OnlineMatchService {
       proposal: { action: 'resolve', id: active.id, status: accept ? 'accepted' : 'rejected' },
     }
     if (accept && active.kind === 'undo') {
-      commit.state = { ...record.state, moves: record.state.moves.slice(0, -1) }
+      const moves = record.state.moves.slice(0, -1)
+      const turn =
+        record.match.variant === 'gomoku'
+          ? rebuildGomokuRoom(moves).turn
+          : rebuildRoomBoard(record.match.variant, record.state.initialLayout, moves).turn
+      commit.state = {
+        ...record.state,
+        moves,
+        ...(record.state.clock
+          ? { clock: retargetOnlineClock(record.state.clock, turn, authoritativeClockNow()) }
+          : {}),
+      }
       commit.phase = 'playing'
       commit.status = 'playing'
       delete commit.statusReason
       delete commit.finishedAt
     } else if (accept && active.kind === 'draw') {
+      if (record.state.clock) {
+        commit.state = {
+          ...record.state,
+          clock: stopOnlineClock(record.state.clock, authoritativeClockNow()),
+        }
+      }
       commit.phase = 'finished'
       commit.status = 'draw'
       commit.statusReason = 'agreement'
@@ -684,6 +759,9 @@ export class OnlineMatchService {
       ),
       board: gomokuState ? gomokuState.board : projectBoard(xiangqiState!.board),
       turn: gomokuState?.turn ?? xiangqiState!.turn,
+      ...(record.state.clock
+        ? { clock: projectOnlineClock(record.state.clock, authoritativeClockNow()) }
+        : {}),
       moves: record.state.moves.map((move) => ({
         uci: move.uci,
         color: move.color,

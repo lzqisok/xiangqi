@@ -41,3 +41,29 @@ test('online referee state rejects illegal replays and variant-crossing secret f
   )
   assert.match(createOnlineRefereeState('jieqi', '揭棋测试').initialLayout || '', /^[rabncp]{30}$/)
 })
+
+test('online referee state validates a persisted authoritative clock without exposing it publicly', () => {
+  const state = readOnlineRefereeState(
+    {
+      schemaVersion: 1,
+      name: '计时棋局',
+      moves: [],
+      clock: {
+        preset: '10m',
+        redRemainingMs: 600_000,
+        blackRemainingMs: 600_000,
+        incrementMs: 0,
+        delayMs: 0,
+        activeSide: 'red',
+        deadlineAt: '2026-08-27T12:10:00.000Z',
+      },
+    },
+    'xiangqi',
+  )
+  assert.equal(state.clock?.activeSide, 'red')
+  assert.deepEqual(onlinePublicState(state), {
+    schemaVersion: 1,
+    name: '计时棋局',
+    moveCount: 0,
+  })
+})

@@ -16,6 +16,7 @@ export type RoomStatusReason =
   | 'five'
   | 'forbidden'
   | 'full-board'
+  | 'timeout'
 
 export type RoomChatMessage = {
   id: string

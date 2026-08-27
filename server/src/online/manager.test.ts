@@ -84,6 +84,7 @@ function fakeService(records: OnlineMatchRecord[]) {
     deadline?: Date
   }> = []
   const byId = new Map(records.map((item) => [item.match.id, item]))
+  const clockAdjudications: Array<{ matchId: string; deadlineAt: string }> = []
   const repository = {
     recoverActiveMatches: async () => records,
     setPresence: async (matchId: string, userId: string, connected: boolean, deadline?: Date) => {
@@ -91,6 +92,18 @@ function fakeService(records: OnlineMatchRecord[]) {
       return true
     },
     adjudicateDisconnect: async () => null,
+    adjudicateClock: async (matchId: string, deadlineAt: string) => {
+      clockAdjudications.push({ matchId, deadlineAt })
+      const current = byId.get(matchId)
+      if (!current) return null
+      current.match.phase = 'finished'
+      current.match.status = 'black-wins'
+      current.match.statusReason = 'timeout'
+      current.state.clock = current.state.clock
+        ? { ...current.state.clock, redRemainingMs: 0, activeSide: null, deadlineAt: null }
+        : undefined
+      return current
+    },
   }
   const service = {
     repository,
@@ -99,7 +112,7 @@ function fakeService(records: OnlineMatchRecord[]) {
     chatHistory: async () => [],
     snapshot: (item: OnlineMatchRecord, userId: string) => ({ id: item.match.id, userId }),
   } as unknown as OnlineMatchService
-  return { service, presence }
+  return { service, presence, clockAdjudications }
 }
 
 test('a newer account connection takes over the seat and the stale socket cannot mark it offline', async () => {
@@ -199,5 +212,29 @@ test('spectator quota rejects excess subscriptions with a retryable stable error
       'retryAfterSeconds' in error &&
       error.retryAfterSeconds === 30,
   )
+  manager.dispose()
+})
+
+test('restart recovery reschedules a persisted deadline and adjudicates timeout once', async () => {
+  const source = record('00000000-0000-4000-8000-000000000106')
+  const deadlineAt = new Date(Date.now() + 10).toISOString()
+  source.match.clockPreset = '10m'
+  source.state.clock = {
+    preset: '10m',
+    redRemainingMs: 10,
+    blackRemainingMs: 600_000,
+    incrementMs: 0,
+    delayMs: 0,
+    activeSide: 'red',
+    deadlineAt,
+  }
+  const { service, clockAdjudications } = fakeService([source])
+  const manager = new OnlineMatchManager(service, 60_000)
+
+  await manager.restore()
+  await new Promise((resolve) => setTimeout(resolve, 30))
+
+  assert.deepEqual(clockAdjudications, [{ matchId: source.match.id, deadlineAt }])
+  assert.equal(source.match.statusReason, 'timeout')
   manager.dispose()
 })

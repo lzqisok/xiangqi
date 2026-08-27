@@ -581,6 +581,22 @@ export class MySqlOnlineMatchRepository {
     })
   }
 
+  async findParticipating(matchId: string, userId: string): Promise<OnlineMatchRecord | null> {
+    return this.database.connection(async (client) => {
+      const match = await this.findMatch(client, matchId)
+      if (!match || !(await this.findParticipant(client, matchId, userId))) return null
+      return this.requireRecord(client, matchId)
+    })
+  }
+
+  async findPublicReplay(matchId: string): Promise<OnlineMatchRecord | null> {
+    return this.database.connection(async (client) => {
+      const match = await this.findMatch(client, matchId)
+      if (!match || match.visibility !== 'public' || match.phase !== 'finished') return null
+      return this.requireRecord(client, matchId)
+    })
+  }
+
   async listLobby(
     input: {
       variant?: MatchVariant
@@ -946,6 +962,85 @@ export class MySqlOnlineMatchRepository {
           targetUserId,
         ])
       }
+    })
+  }
+
+  async cleanupUserActivityForDeletion(userId: string): Promise<OnlineMatchRecord[]> {
+    return this.database.transaction(async (client) => {
+      const now = authoritativeClockNow()
+      await client.query('DELETE FROM matchmaking_entries WHERE user_id = ?', [userId])
+      await client.query('DELETE FROM matchmaking_requests WHERE user_id = ?', [userId])
+      const active = await client.query<{ match_id: string }>(
+        `SELECT p.match_id FROM match_participants p
+         JOIN matches m ON m.id = p.match_id
+         WHERE p.user_id = ? AND p.left_at IS NULL AND m.phase IN ('waiting', 'playing')
+         ORDER BY p.match_id FOR UPDATE`,
+        [userId],
+      )
+      const changed: OnlineMatchRecord[] = []
+      for (const row of active.rows) {
+        const match = await this.requireMatch(client, row.match_id, true)
+        const actor = await this.findParticipant(client, row.match_id, userId, true)
+        if (!actor) continue
+        if (match.phase === 'waiting') {
+          if (actor.isOwner || match.matchmaking) {
+            await client.query("DELETE FROM matches WHERE id = ? AND phase = 'waiting'", [match.id])
+            continue
+          }
+          await client.query(
+            `UPDATE match_participants
+             SET side = NULL, is_owner = false, ready = false, left_at = ?,
+                 disconnected_at = NULL, disconnect_deadline = NULL
+             WHERE id = ? AND left_at IS NULL`,
+            [now, actor.id],
+          )
+          changed.push(await this.requireRecord(client, match.id))
+          continue
+        }
+        if (!actor.side) {
+          await client.query(
+            `UPDATE match_participants SET left_at = ?, is_owner = false, ready = false,
+               disconnected_at = NULL, disconnect_deadline = NULL
+             WHERE id = ? AND left_at IS NULL`,
+            [now, actor.id],
+          )
+          changed.push(await this.requireRecord(client, match.id))
+          continue
+        }
+        const state = await this.state(client, match, true)
+        const finishedState = state.clock
+          ? { ...state, clock: stopOnlineClock(state.clock, now) }
+          : state
+        const next = match.revision + 1
+        const status: MatchEntity['status'] = actor.side === 'red' ? 'black-wins' : 'red-wins'
+        const updated = await client.query(
+          `UPDATE matches SET revision = ?, phase = 'finished', status = ?,
+             status_reason = 'disconnect', finished_at = ?, updated_at = ?
+           WHERE id = ? AND revision = ? AND phase = 'playing'`,
+          [next, status, now, now, match.id, match.revision],
+        )
+        if (updated.rowCount !== 1) throw new RepositoryRevisionConflictError()
+        const stateUpdated = await client.query(
+          `UPDATE match_states SET revision = ?, public_state = ?, referee_state = ?, updated_at = ?
+           WHERE match_id = ? AND revision = ?`,
+          [
+            next,
+            JSON.stringify(onlinePublicState(finishedState)),
+            JSON.stringify(finishedState),
+            now,
+            match.id,
+            match.revision,
+          ],
+        )
+        if (stateUpdated.rowCount !== 1) throw new RepositoryRevisionConflictError()
+        await client.query(
+          `UPDATE match_participants SET disconnected_at = ?, disconnect_deadline = ?
+           WHERE id = ? AND left_at IS NULL`,
+          [now, now, actor.id],
+        )
+        changed.push(await this.requireRecord(client, match.id))
+      }
+      return changed
     })
   }
 

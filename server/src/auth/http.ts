@@ -98,6 +98,7 @@ export type AuthRuntime = {
   errorMiddleware: ErrorRequestHandler
   authenticateUpgrade(request: IncomingMessage): Promise<UserActor | null>
   bindSocket(actor: UserActor, socket: WebSocket): void
+  currentActor(response: Response): PublicActor
   requireUser(response: Response): UserActor
   requireCsrf(request: Request, response: Response): UserActor
 }
@@ -468,6 +469,9 @@ export function createAuthRuntime(
       const timeout = setTimeout(() => socket.close(1008, 'Session expired'), remaining)
       timeout.unref()
       socket.once('close', () => clearTimeout(timeout))
+    },
+    currentActor(response: Response): PublicActor {
+      return authLocals(response).actor
     },
     requireUser,
     requireCsrf,

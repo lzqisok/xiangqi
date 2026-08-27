@@ -120,6 +120,17 @@ export function register(
   })
 }
 
+export function verifyEmail(token: string): Promise<{ verified: true }> {
+  return request('/api/auth/verify-email', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  })
+}
+
+export function resendVerification(): Promise<TokenResponse> {
+  return request('/api/auth/verification/resend', { method: 'POST' })
+}
+
 export function requestPasswordReset(email: string): Promise<TokenResponse> {
   return request('/api/auth/password/reset-request', {
     method: 'POST',

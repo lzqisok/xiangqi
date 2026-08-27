@@ -168,9 +168,9 @@ test(
   integration,
   async () => {
     await withTestDatabase(async (database) => {
-      assert.deepEqual(await migrate(database), [1, 2, 3, 4, 5])
+      assert.deepEqual(await migrate(database), [1, 2, 3, 4, 5, 6])
       assert.deepEqual(await migrate(database), [])
-      assert.equal((await migrationStatus(database)).currentVersion, 5)
+      assert.equal((await migrationStatus(database)).currentVersion, 6)
 
       const accounts = new MySqlAccountRepository(database)
       const sessions = new MySqlSessionRepository(database)
@@ -352,6 +352,20 @@ test(
       assert.deepEqual((await matches.getStateForReferee(createdMatch.id))?.publicState, {
         turn: 'black',
       })
+      await database.query(
+        `UPDATE matches SET phase = 'finished', status = 'red-wins', status_reason = 'timeout'
+         WHERE id = ?`,
+        [createdMatch.id],
+      )
+      assert.equal(
+        (
+          await database.query<{ status_reason: string }>(
+            'SELECT status_reason FROM matches WHERE id = ?',
+            [createdMatch.id],
+          )
+        ).rows[0].status_reason,
+        'timeout',
+      )
 
       const waiting = await matches.create({
         variant: 'gomoku',
@@ -705,6 +719,16 @@ test(
         outsiderHistory.matches.some((item) => item.id === matchId),
         false,
       )
+      const restrictedFirstActor: OnlineActor = {
+        ...firstActor,
+        capabilities: ['online:history'],
+      }
+      const restrictedOutsiderActor: OnlineActor = {
+        ...outsiderActor,
+        capabilities: ['online:history'],
+      }
+      assert.equal((await service.read(restrictedFirstActor, matchId)).match.id, matchId)
+      await assert.rejects(service.read(restrictedOutsiderActor, matchId), { code: 'not_found' })
       assert.equal(
         (await service.history(firstActor, { from: '2999-01-01T00:00:00.000Z' })).matches.length,
         0,
@@ -828,6 +852,38 @@ test(
       assert.equal(
         (await repository.recoverActiveMatches()).some((item) => item.match.id === matchId),
         true,
+      )
+      const deletionChanges = await repository.cleanupUserActivityForDeletion(first.id)
+      assert.equal(
+        deletionChanges.some(
+          (item) => item.match.phase === 'finished' && item.match.statusReason === 'disconnect',
+        ),
+        true,
+      )
+      assert.equal(
+        Number(
+          (
+            await database.query<{ count: string }>(
+              `SELECT COUNT(*) AS count FROM match_participants p
+               JOIN matches m ON m.id = p.match_id
+               WHERE p.user_id = ? AND p.left_at IS NULL
+                 AND m.phase IN ('waiting', 'playing')`,
+              [first.id],
+            )
+          ).rows[0].count,
+        ),
+        0,
+      )
+      assert.equal(
+        Number(
+          (
+            await database.query<{ count: string }>(
+              'SELECT COUNT(*) AS count FROM matchmaking_entries WHERE user_id = ?',
+              [first.id],
+            )
+          ).rows[0].count,
+        ),
+        0,
       )
     })
   },
@@ -962,6 +1018,8 @@ test(
        WHERE id = ?`,
         [new Date(due.getTime() - 1_000), due, account.id],
       )
+      assert.deepEqual(await service.pendingDeletionUserIds(null, 1), [account.id])
+      assert.deepEqual(await service.pendingDeletionUserIds(account.id, 1), [])
       assert.equal(await service.cleanupDue(new Date()), 1)
       assert.equal(await service.cleanupDue(new Date()), 0)
       assert.equal(
@@ -1176,7 +1234,7 @@ test('a database at migration 0001 upgrades to the current version', integration
         [first.version, first.name, first.checksum],
       )
     })
-    assert.deepEqual(await migrate(database), [2, 3, 4, 5])
-    assert.equal((await migrationStatus(database)).currentVersion, 5)
+    assert.deepEqual(await migrate(database), [2, 3, 4, 5, 6])
+    assert.equal((await migrationStatus(database)).currentVersion, 6)
   })
 })

@@ -76,6 +76,8 @@ if (platformConfig.publicOnlineEnabled && !databaseConfig.enabled) {
   throw new PlatformConfigError('PUBLIC_ONLINE_ENABLED requires ONLINE_DATABASE_ENABLED')
 }
 const database = databaseConfig.enabled ? new Database(databaseConfig) : null
+const onlineRepository =
+  database && platformConfig.publicOnlineEnabled ? new MySqlOnlineMatchRepository(database) : null
 const rateLimitStore = database ? new MySqlRateLimitStore(database) : null
 const connectionQuota = new ConnectionQuota(platformConfig.maxWsPerIp, platformConfig.maxWsPerUser)
 const engineGovernor = new EngineResourceGovernor(
@@ -102,6 +104,8 @@ const authRuntime = database
     })
   : null
 const accountDataService = database ? new MySqlAccountDataService(database) : null
+let reconcilePendingDeletionActivity: (() => Promise<void>) | undefined
+let accountDeletionCleanupTimer: NodeJS.Timeout | undefined
 const socketActors = new WeakMap<object, UserActor>()
 const wss = new WebSocketServer({ noServer: true, maxPayload: platformConfig.wsMaxPayloadBytes })
 const gomokuWss = new WebSocketServer({
@@ -274,19 +278,6 @@ if (authRuntime) {
       requireCsrf: (request, response) => authRuntime.requireCsrf(request, response),
     }),
   )
-}
-if (accountDataService) {
-  void accountDataService
-    .cleanupDue()
-    .catch((error) => logRuntimeError('account_deletion_cleanup_failed', error))
-  const accountDeletionCleanupTimer = setInterval(
-    () =>
-      void accountDataService
-        .cleanupDue()
-        .catch((error) => logRuntimeError('account_deletion_cleanup_failed', error)),
-    60 * 60 * 1000,
-  )
-  accountDeletionCleanupTimer.unref()
 }
 if (LAN_MODE) {
   app.get('/api/network-info', (_req, res) => {
@@ -520,15 +511,14 @@ const roomCleanupTimer = setInterval(
 )
 roomCleanupTimer.unref()
 if (LAN_MODE) app.use('/api/rooms', createRoomRouter(roomManager))
-const onlineService =
-  database && platformConfig.publicOnlineEnabled
-    ? new OnlineMatchService(new MySqlOnlineMatchRepository(database), {
-        rateLimitStore: rateLimitStore || undefined,
-        maxActiveMatchesPerUser: platformConfig.maxActiveMatchesPerUser,
-        maxMatchmakingQueueEntries: platformConfig.maxMatchmakingQueueEntries,
-        jieqiSeatRecords: jieqiSeatRecordRepository || undefined,
-      })
-    : null
+const onlineService = onlineRepository
+  ? new OnlineMatchService(onlineRepository, {
+      rateLimitStore: rateLimitStore || undefined,
+      maxActiveMatchesPerUser: platformConfig.maxActiveMatchesPerUser,
+      maxMatchmakingQueueEntries: platformConfig.maxMatchmakingQueueEntries,
+      jieqiSeatRecords: jieqiSeatRecordRepository || undefined,
+    })
+  : null
 const onlineManager = onlineService
   ? new OnlineMatchManager(
       onlineService,
@@ -537,6 +527,39 @@ const onlineManager = onlineService
       platformConfig.maxPlayerConnectionsPerUser,
     )
   : null
+if (authRuntime && onlineRepository && onlineManager) {
+  reconcilePendingDeletionActivity = async () => {
+    if (!accountDataService) return
+    let afterUserId: string | null = null
+    while (true) {
+      const userIds = await accountDataService.pendingDeletionUserIds(afterUserId)
+      for (const userId of userIds) {
+        await onlineManager.publish(await onlineRepository.cleanupUserActivityForDeletion(userId))
+      }
+      if (userIds.length < 100) break
+      afterUserId = userIds.at(-1)!
+    }
+  }
+  authRuntime.service.setAccountDeletionHandler(async (userId) => {
+    const changed = await onlineRepository.cleanupUserActivityForDeletion(userId)
+    await onlineManager.publish(changed)
+  })
+}
+if (accountDataService) {
+  const cleanupAccounts = async () => {
+    await reconcilePendingDeletionActivity?.()
+    await accountDataService.cleanupDue()
+  }
+  void cleanupAccounts().catch((error) => logRuntimeError('account_deletion_cleanup_failed', error))
+  accountDeletionCleanupTimer = setInterval(
+    () =>
+      void cleanupAccounts().catch((error) =>
+        logRuntimeError('account_deletion_cleanup_failed', error),
+      ),
+    60 * 60 * 1000,
+  )
+  accountDeletionCleanupTimer.unref()
+}
 if (onlineService && authRuntime) {
   const onlineRollout = {
     mode: platformConfig.publicOnlineMode,
@@ -1271,6 +1294,7 @@ function shutdown() {
   structuredLog('info', 'shutdown_started', { graceMs: platformConfig.shutdownGraceMs })
   clearInterval(heartbeatTimer)
   clearInterval(roomCleanupTimer)
+  if (accountDeletionCleanupTimer) clearInterval(accountDeletionCleanupTimer)
   for (const client of wss.clients) client.close(1012, 'Server restarting')
   for (const client of gomokuWss.clients) client.close(1012, 'Server restarting')
   const coreSocketsClosed = new Promise<void>((resolve) => wss.close(() => resolve()))

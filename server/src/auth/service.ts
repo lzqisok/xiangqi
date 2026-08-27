@@ -66,21 +66,27 @@ export class AuthConnectionRegistry {
 }
 
 function capabilities(status: UserActor['status']): readonly string[] {
-  if (status === 'active') return ['account:read', 'profile:write', 'online:play', 'online:watch']
+  if (status === 'active')
+    return ['account:read', 'profile:write', 'online:play', 'online:watch', 'online:history']
   if (status === 'pending_verification')
     return ['account:read', 'profile:write', 'verification:resend']
-  return ['account:read', 'profile:write']
+  return ['account:read', 'profile:write', 'online:history']
 }
 
 export class AuthService {
   readonly connections = new AuthConnectionRegistry()
   private readonly loginLimiter = new AuthRateLimiter(5, 15 * 60_000)
+  private accountDeletionHandler?: (userId: string) => Promise<void>
 
   constructor(
     private readonly accounts: MySqlAccountRepository,
     private readonly repository: MySqlAuthRepository,
     private readonly delivery: AuthTokenDelivery,
   ) {}
+
+  setAccountDeletionHandler(handler: (userId: string) => Promise<void>): void {
+    this.accountDeletionHandler = handler
+  }
 
   async register(input: {
     email: unknown
@@ -351,6 +357,17 @@ export class AuthService {
     const sessions = await this.repository.listSessions(actor.userId)
     await this.repository.beginDeletion(actor.userId, new Date(), new Date(Date.now() + 30 * DAY))
     this.connections.closeSessions(sessions, 'Account pending deletion')
+    if (this.accountDeletionHandler) {
+      try {
+        await this.accountDeletionHandler(actor.userId)
+      } catch {
+        await this.record({
+          userId: actor.userId,
+          type: 'account_deletion_activity_cleanup',
+          result: 'retry_required',
+        })
+      }
+    }
     return token
   }
 

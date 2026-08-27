@@ -5,7 +5,7 @@ import {
   type Request,
   type Response,
 } from 'express'
-import type { UserActor } from '../auth/types.js'
+import type { PublicActor, UserActor } from '../auth/types.js'
 import { RepositoryError } from '../db/errors.js'
 import { onlineMatchSummary } from './repository.js'
 import { OnlineMatchError, OnlineMatchService } from './service.js'
@@ -16,6 +16,7 @@ import {
 } from '../platform/rollout.js'
 
 type Authorize = {
+  currentActor(response: Response): PublicActor
   requireUser(response: Response): UserActor
   requireCsrf(request: Request, response: Response): UserActor
 }
@@ -54,16 +55,29 @@ export function createOnlineRouters(
     }
     return actor
   }
+  const publicReadEnabled = rollout.mode === 'open' || rollout.mode === 'drain'
 
   router.get(
     '/lobby',
     asyncRoute(async (request, response) => {
-      const actor = requireRolloutAccess(authorize.requireUser(response))
+      const actor = authorize.currentActor(response)
+      if (actor.kind === 'user') requireRolloutAccess(actor)
+      else if (!publicReadEnabled) throw new OnlineMatchError('controlled_rollout', 403)
       response.json({
-        matches: await service.safe(() =>
-          service.lobby(actor, { variant: request.query.variant, limit: request.query.limit }),
-        ),
+        matches: await service.safe(() => {
+          const input = { variant: request.query.variant, limit: request.query.limit }
+          return actor.kind === 'user' ? service.lobby(actor, input) : service.publicLobby(input)
+        }),
       })
+    }),
+  )
+
+  router.get(
+    '/public/matches/:id',
+    asyncRoute(async (request, response) => {
+      if (!publicReadEnabled) throw new OnlineMatchError('controlled_rollout', 403)
+      const record = await service.safe(() => service.publicReplay(String(request.params.id)))
+      response.json({ match: service.snapshot(record, null, new Set()) })
     }),
   )
 
@@ -102,7 +116,7 @@ export function createOnlineRouters(
     '/matches/:id',
     asyncRoute(async (request, response) => {
       const actor = requireRolloutAccess(authorize.requireUser(response))
-      const record = await service.safe(() => service.get(actor, String(request.params.id)))
+      const record = await service.safe(() => service.read(actor, String(request.params.id)))
       response.json({ match: service.snapshot(record, actor.userId, new Set()) })
     }),
   )

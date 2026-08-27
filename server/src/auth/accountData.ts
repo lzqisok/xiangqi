@@ -40,6 +40,15 @@ export type AccountDeletionImpact = {
 export class MySqlAccountDataService {
   constructor(private readonly database: Database) {}
 
+  async pendingDeletionUserIds(afterUserId: string | null = null, limit = 100): Promise<string[]> {
+    const result = await this.database.query<{ id: string }>(
+      `SELECT id FROM users WHERE status = 'pending_deletion' AND (? IS NULL OR id > ?)
+       ORDER BY id LIMIT ?`,
+      [afterUserId, afterUserId, Math.max(1, Math.min(1000, Math.floor(limit)))],
+    )
+    return result.rows.map((row) => row.id)
+  }
+
   async deletionImpact(userId: string): Promise<AccountDeletionImpact> {
     const [documents, matches, sessions] = await Promise.all([
       this.database.query<CountRow>(

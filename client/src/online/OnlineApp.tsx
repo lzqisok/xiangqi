@@ -67,21 +67,27 @@ export default function OnlineApp() {
   }
 
   useEffect(() => {
-    if (!user || user.status !== 'active' || matchId) return
+    if (matchId || (user && user.status !== 'active')) return
     let disposed = false
-    Promise.all([
-      listOnlineLobby(game === 'gomoku' ? 'gomoku' : undefined),
-      listMyMatches(game === 'gomoku' ? 'gomoku' : undefined),
-    ])
-      .then(([nextLobby, nextHistory]) => {
-        if (!disposed) {
-          setLobby(nextLobby)
-          setHistory(nextHistory.matches)
-        }
-      })
+    listOnlineLobby(game === 'gomoku' ? 'gomoku' : undefined)
+      .then((nextLobby) => !disposed && setLobby(nextLobby))
       .catch(
         (cause) =>
           !disposed && setError(cause instanceof Error ? cause.message : '无法加载公网大厅'),
+      )
+    return () => {
+      disposed = true
+    }
+  }, [game, matchId, user])
+
+  useEffect(() => {
+    if (!user || !['active', 'restricted'].includes(user.status) || matchId) return
+    let disposed = false
+    listMyMatches(game === 'gomoku' ? 'gomoku' : undefined)
+      .then((result) => !disposed && setHistory(result.matches))
+      .catch(
+        (cause) =>
+          !disposed && setError(cause instanceof Error ? cause.message : '无法加载本人对局历史'),
       )
     return () => {
       disposed = true
@@ -102,6 +108,11 @@ export default function OnlineApp() {
   }, [inviteToken, matchId, user])
 
   if (matchId && user?.status === 'active') return <OnlineMatchRoom matchId={matchId} game={game} />
+  if (matchId && user?.status === 'restricted') {
+    return <OnlineMatchRoom matchId={matchId} game={game} readOnly="history" />
+  }
+  if (matchId && !loading)
+    return <OnlineMatchRoom matchId={matchId} game={game} readOnly="public" />
 
   if (loading) {
     return <ProductState kind="loading" title="正在恢复账号" description="正在确认公网对局身份。" />
@@ -114,11 +125,46 @@ export default function OnlineApp() {
           <p>
             {!available
               ? '当前服务未启用公网账号能力。'
-              : user
-                ? '验证邮箱后即可进入快速匹配、邀请对局和跨设备历史。'
-                : '登录已验证账号后即可进入公网大厅。'}
+              : user?.status === 'restricted'
+                ? '当前账号受限，可只读查看本人公网对局历史。'
+                : user
+                  ? '验证邮箱后即可进入快速匹配、邀请对局和跨设备历史。'
+                  : '登录已验证账号后即可进入公网大厅。'}
           </p>
           <AccountEntry />
+          {!user && (
+            <section className="card online-list-section">
+              <h2>公开大厅</h2>
+              {lobby.length ? (
+                lobby.map((match) => (
+                  <p key={match.id}>
+                    <strong>{match.name}</strong> · {variantName(match)} · 登录后可加入
+                  </p>
+                ))
+              ) : (
+                <p>暂无公开等待对局。</p>
+              )}
+            </section>
+          )}
+          {user?.status === 'restricted' && (
+            <section className="card online-list-section">
+              <h2>本人对局历史（只读）</h2>
+              {history.length ? (
+                history.map((match) => (
+                  <a
+                    className="online-history-link"
+                    href={onlineRoomUrl(location.href, match.id, game)}
+                    key={match.id}
+                  >
+                    <strong>{match.name}</strong> · {variantName(match)} · {phaseName(match)} ·{' '}
+                    {match.moveCount} 手
+                  </a>
+                ))
+              ) : (
+                <p>账号下还没有公网对局。</p>
+              )}
+            </section>
+          )}
           <a className="home-back-link" href={game === 'gomoku' ? '?type=gomoku' : '?type=xiangqi'}>
             ← 返回棋类控制台
           </a>
@@ -330,12 +376,25 @@ function uciPositions(uci: string) {
   }
 }
 
-function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' | 'gomoku' }) {
-  const { match, messages, connected, pending, error, send, sendChat } = useOnlineMatch(matchId)
+function OnlineMatchRoom({
+  matchId,
+  game,
+  readOnly = null,
+}: {
+  matchId: string
+  game: 'xiangqi' | 'gomoku'
+  readOnly?: 'public' | 'history' | null
+}) {
+  const { user } = useAuth()
+  const { match, messages, connected, pending, error, send, sendChat } = useOnlineMatch(
+    matchId,
+    readOnly,
+  )
   const [selected, setSelected] = useState<Position | null>(null)
   const [chat, setChat] = useState('')
   const [inviteUrl, setInviteUrl] = useState('')
   const [actionError, setActionError] = useState('')
+  const [mutedUserIds, setMutedUserIds] = useState<Set<string>>(() => new Set())
   const [now, setNow] = useState(Date.now())
   const [clockNow, setClockNow] = useState(() => performance.now())
   const [clockAnchor, setClockAnchor] = useState({ revision: -1, receivedAt: performance.now() })
@@ -444,8 +503,15 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
           <small>ACCOUNT MATCH</small>
           <h1>{match.name}</h1>
           <p>
-            {variantName(match)} · {connected ? '实时连接正常' : '正在重连'} · revision{' '}
-            {match.revision}
+            {variantName(match)} ·{' '}
+            {readOnly === 'public'
+              ? '公开只读回放'
+              : readOnly === 'history'
+                ? '本人历史只读视图'
+                : connected
+                  ? '实时连接正常'
+                  : '正在重连'}{' '}
+            · revision {match.revision}
           </p>
         </div>
         <a href={`?online=1&game=${game}`}>返回公网大厅</a>
@@ -487,22 +553,24 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
                         : '席位空缺'
                     }
                     current={mine}
-                    disabled={!mine || match.phase !== 'waiting' || pending}
+                    disabled={Boolean(readOnly) || !mine || match.phase !== 'waiting' || pending}
                     actionLabel={
-                      mine
-                        ? player?.ready
-                          ? '取消准备'
-                          : '准备开局'
-                        : player
-                          ? '已就座'
-                          : '等待加入'
+                      readOnly
+                        ? '只读'
+                        : mine
+                          ? player?.ready
+                            ? '取消准备'
+                            : '准备开局'
+                          : player
+                            ? '已就座'
+                            : '等待加入'
                     }
                     onAction={() => mine && send('match-ready', { ready: !player?.ready })}
                   />
                 )
               })}
             </div>
-            {match.isOwner && match.phase === 'waiting' && !match.matchmaking && (
+            {!readOnly && match.isOwner && match.phase === 'waiting' && !match.matchmaking && (
               <div className="online-invite-actions">
                 <button onClick={invite}>创建一次性邀请链接</button>
                 {inviteUrl && (
@@ -514,7 +582,7 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
                 )}
               </div>
             )}
-            {match.isOwner && match.phase === 'waiting' && match.matchmaking && (
+            {!readOnly && match.isOwner && match.phase === 'waiting' && match.matchmaking && (
               <button
                 className="danger"
                 disabled={pending}
@@ -575,7 +643,7 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
         </div>
 
         <aside className="online-side-column">
-          {match.proposal && (
+          {match.proposal && !readOnly && (
             <section className="card online-proposal-strip">
               <strong>
                 {match.proposal.kind === 'draw'
@@ -624,7 +692,7 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
           <section className="card online-match-tools">
             <small>MATCH ACTIONS</small>
             <h2>对局操作</h2>
-            {color && match.phase === 'playing' && (
+            {color && match.phase === 'playing' && !readOnly && (
               <div className="online-choice-row">
                 <button
                   disabled={pending || !match.moves.length}
@@ -637,12 +705,12 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
                 </button>
               </div>
             )}
-            {color && match.phase === 'playing' && (
+            {color && match.phase === 'playing' && !readOnly && (
               <button className="danger" disabled={pending} onClick={() => send('match-resign')}>
                 认输并结束本局
               </button>
             )}
-            {match.phase === 'finished' && (
+            {match.phase === 'finished' && !readOnly && (
               <button
                 className="primary"
                 onClick={() => {
@@ -683,6 +751,42 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
                   <p key={message.id}>
                     <strong>{message.nickname}</strong>
                     <span>{message.content}</span>
+                    {!readOnly && (match.isOwner || message.authorUserId === user?.id) && (
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => send('match-chat-delete', { messageId: message.id })}
+                      >
+                        删除
+                      </button>
+                    )}
+                    {!readOnly &&
+                      match.isOwner &&
+                      message.authorUserId &&
+                      message.authorUserId !== user?.id && (
+                        <button
+                          type="button"
+                          disabled={pending}
+                          onClick={() => {
+                            const muted = !mutedUserIds.has(message.authorUserId!)
+                            if (
+                              send('match-chat-mute', {
+                                targetUserId: message.authorUserId,
+                                muted,
+                              })
+                            ) {
+                              setMutedUserIds((current) => {
+                                const next = new Set(current)
+                                if (muted) next.add(message.authorUserId!)
+                                else next.delete(message.authorUserId!)
+                                return next
+                              })
+                            }
+                          }}
+                        >
+                          {mutedUserIds.has(message.authorUserId) ? '解除禁言' : '禁言'}
+                        </button>
+                      )}
                   </p>
                 ))
               ) : (
@@ -699,13 +803,17 @@ function OnlineMatchRoom({ matchId, game }: { matchId: string; game: 'xiangqi' |
                 value={chat}
                 maxLength={200}
                 rows={3}
-                disabled={match.phase === 'finished'}
+                disabled={Boolean(readOnly) || match.phase === 'finished'}
                 onChange={(event) => setChat(event.target.value)}
-                placeholder={match.phase === 'finished' ? '历史聊天只读' : '发送给本局棋友'}
+                placeholder={
+                  readOnly || match.phase === 'finished' ? '历史聊天只读' : '发送给本局棋友'
+                }
               />
               <button
                 className="primary"
-                disabled={!chat.trim() || pending || match.phase === 'finished'}
+                disabled={
+                  !chat.trim() || pending || Boolean(readOnly) || match.phase === 'finished'
+                }
               >
                 发送
               </button>

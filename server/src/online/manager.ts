@@ -178,6 +178,10 @@ export class OnlineMatchManager {
     metrics.gauge('xiangqi_online_active_matches', 0)
   }
 
+  async publish(records: readonly OnlineMatchRecord[]): Promise<void> {
+    for (const record of records) await this.broadcast(record)
+  }
+
   private async subscribe(socket: WebSocket, connection: Connection, matchId: string) {
     const record = await this.service.safe(() => this.service.get(connection.actor, matchId))
     if (connection.matchId && connection.matchId !== matchId) await this.leave(socket, connection)

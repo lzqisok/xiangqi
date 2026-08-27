@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createLanCommandId } from '../lan/browser'
 import type { OnlineChatMessage, OnlineMatchSnapshot } from './types'
 import { mergeOnlineChat } from './model'
+import { getMyOnlineMatch, getPublicOnlineReplay } from './api'
 
 const COMMAND_TIMEOUT = 10_000
 
-export function useOnlineMatch(matchId: string) {
+export function useOnlineMatch(matchId: string, readOnly: 'public' | 'history' | null = null) {
   const [match, setMatch] = useState<OnlineMatchSnapshot | null>(null)
   const [messages, setMessages] = useState<OnlineChatMessage[]>([])
   const [connected, setConnected] = useState(false)
@@ -25,6 +26,19 @@ export function useOnlineMatch(matchId: string) {
 
   useEffect(() => {
     let disposed = false
+    if (readOnly) {
+      const load = readOnly === 'history' ? getMyOnlineMatch : getPublicOnlineReplay
+      void load(matchId)
+        .then((result) => {
+          if (!disposed) setMatch(result.match)
+        })
+        .catch((cause) => {
+          if (!disposed) setError(cause instanceof Error ? cause.message : '公开回放不可用')
+        })
+      return () => {
+        disposed = true
+      }
+    }
     const connect = () => {
       if (disposed) return
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -85,13 +99,14 @@ export function useOnlineMatch(matchId: string) {
       finish()
       socketRef.current?.close()
     }
-  }, [finish, matchId])
+  }, [finish, matchId, readOnly])
 
   const send = useCallback(
     (type: string, payload: Record<string, unknown> = {}) => {
       const socket = socketRef.current
       const current = matchRef.current
-      if (!socket || socket.readyState !== WebSocket.OPEN || !current || pending) return false
+      if (readOnly || !socket || socket.readyState !== WebSocket.OPEN || !current || pending)
+        return false
       socket.send(
         JSON.stringify({
           type,
@@ -111,7 +126,7 @@ export function useOnlineMatch(matchId: string) {
       }, COMMAND_TIMEOUT)
       return true
     },
-    [matchId, pending],
+    [matchId, pending, readOnly],
   )
 
   return {

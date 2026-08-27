@@ -102,7 +102,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [available, generation, loading, refresh, replaceUser, user],
   )
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={value}>
+      {loading ? (
+        <main className="home-screen">
+          <div className="account-entry account-entry-loading">正在恢复账号与本机数据范围…</div>
+        </main>
+      ) : (
+        children
+      )}
+    </AuthContext.Provider>
+  )
 }
 
 export function useAuth(): AuthContextValue {

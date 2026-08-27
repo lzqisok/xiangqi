@@ -10,9 +10,11 @@ import {
   listAccountSessions,
   recoverAccount,
   register,
+  resendVerification,
   requestPasswordReset,
   resetPassword,
   revokeAccountSession,
+  verifyEmail,
 } from './api'
 import { useAuth } from './AuthContext'
 import {
@@ -35,7 +37,15 @@ import type { OnlineMatchSummary } from '../online/types'
 import './auth.css'
 
 type Mode =
-  'login' | 'register' | 'reset-request' | 'reset' | 'recover' | 'profile' | 'password' | 'delete'
+  | 'login'
+  | 'register'
+  | 'verify'
+  | 'reset-request'
+  | 'reset'
+  | 'recover'
+  | 'profile'
+  | 'password'
+  | 'delete'
 
 const ERROR_TEXT: Record<string, string> = {
   invalid_credentials: '邮箱或密码不正确',
@@ -59,13 +69,14 @@ function errorText(error: unknown): string {
 
 export default function AccountEntry() {
   const auth = useAuth()
-  const [open, setOpen] = useState(false)
-  const [mode, setMode] = useState<Mode>('login')
+  const verificationToken = new URLSearchParams(window.location.search).get('verify-email') || ''
+  const [open, setOpen] = useState(Boolean(verificationToken))
+  const [mode, setMode] = useState<Mode>(verificationToken ? 'verify' : 'login')
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
-  const [token, setToken] = useState('')
+  const [token, setToken] = useState(verificationToken)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -110,11 +121,23 @@ export default function AccountEntry() {
         setOpen(false)
       } else if (mode === 'register') {
         const result = await register(email, password, displayName)
+        if (result.developmentToken) {
+          setToken(result.developmentToken)
+          setMode('verify')
+        }
         setMessage(
           result.developmentToken
-            ? `注册已受理。本地验证 token：${result.developmentToken}`
+            ? '注册已受理，请提交本地验证 token。'
             : '注册已受理，请查收验证邮件。',
         )
+      } else if (mode === 'verify') {
+        await verifyEmail(token)
+        const url = new URL(window.location.href)
+        url.searchParams.delete('verify-email')
+        window.history.replaceState(null, '', url)
+        await auth.refresh()
+        setMessage('邮箱已验证，可以使用公网功能。')
+        setMode(auth.user ? 'profile' : 'login')
       } else if (mode === 'reset-request') {
         const result = await requestPasswordReset(email)
         setToken(result.developmentToken || '')
@@ -219,7 +242,7 @@ export default function AccountEntry() {
                   />
                 </label>
               )}
-              {(mode === 'reset' || mode === 'recover') && (
+              {(mode === 'verify' || mode === 'reset' || mode === 'recover') && (
                 <label>
                   一次性 token
                   <textarea
@@ -304,6 +327,33 @@ export default function AccountEntry() {
                   <p className="account-readonly-notice">
                     当前账号受限：云端私有数据和对局历史保持只读，账号安全与数据导出仍可使用。
                   </p>
+                )}
+                {!auth.user.emailVerified && (
+                  <button
+                    className="account-link"
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => {
+                      setSubmitting(true)
+                      setError('')
+                      void resendVerification()
+                        .then((result) => {
+                          if (result.developmentToken) {
+                            setToken(result.developmentToken)
+                            setMode('verify')
+                          }
+                          setMessage(
+                            result.developmentToken
+                              ? '验证邮件已重发，请提交本地验证 token。'
+                              : '验证邮件已重发，请检查邮箱。',
+                          )
+                        })
+                        .catch((cause) => setError(errorText(cause)))
+                        .finally(() => setSubmitting(false))
+                    }}
+                  >
+                    重发验证邮件
+                  </button>
                 )}
                 <p>
                   云端私有数据 {overview.resources.reduce((sum, item) => sum + item.count, 0)} 项；
@@ -612,6 +662,7 @@ function title(mode: Mode): string {
   return {
     login: '登录账号',
     register: '注册账号',
+    verify: '验证邮箱',
     'reset-request': '找回密码',
     reset: '设置新密码',
     recover: '恢复账号',
@@ -625,6 +676,7 @@ function actionLabel(mode: Mode): string {
   return {
     login: '登录',
     register: '提交注册',
+    verify: '确认验证邮箱',
     'reset-request': '发送重置邮件',
     reset: '重置密码',
     recover: '恢复账号',

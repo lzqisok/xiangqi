@@ -19,6 +19,18 @@ export function listOnlineLobby(variant?: OnlineVariant) {
   )
 }
 
+export function getPublicOnlineReplay(matchId: string) {
+  return accountRequest<{ match: OnlineMatchSnapshot }>(
+    `/api/online/public/matches/${encodeURIComponent(matchId)}`,
+  )
+}
+
+export function getMyOnlineMatch(matchId: string) {
+  return accountRequest<{ match: OnlineMatchSnapshot }>(
+    `/api/online/matches/${encodeURIComponent(matchId)}`,
+  )
+}
+
 export function listMyMatches(variant?: OnlineVariant) {
   const query = variant ? `?variant=${variant}` : ''
   return accountRequest<{ matches: OnlineMatchSummary[]; nextCursor?: string }>(

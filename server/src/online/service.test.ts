@@ -107,6 +107,7 @@ test('Jieqi online snapshots derive red, black, spectator and unseated-owner pro
   const black = service.snapshot(source, 'black-user', online)
   const spectator = service.snapshot(source, 'spectator-user', online)
   const owner = service.snapshot(source, 'owner-user', online)
+  const anonymous = service.snapshot(source, null, online)
 
   assert.ok(red.moves[4].captured)
   assert.equal(black.moves[4].captured, null)
@@ -118,7 +119,10 @@ test('Jieqi online snapshots derive red, black, spectator and unseated-owner pro
   assert.equal(black.jieqiRecord?.audience, 'black')
   assert.equal(spectator.jieqiRecord?.audience, 'public')
   assert.equal(owner.jieqiRecord?.audience, 'public')
-  for (const snapshot of [red, black, spectator, owner]) {
+  assert.equal(anonymous.role, 'spectator')
+  assert.equal(anonymous.side, null)
+  assert.equal(anonymous.jieqiRecord?.audience, 'public')
+  for (const snapshot of [red, black, spectator, owner, anonymous]) {
     const serialized = JSON.stringify(snapshot)
     assert.equal(serialized.includes(layout), false)
     assert.equal(serialized.includes('referee_state'), false)

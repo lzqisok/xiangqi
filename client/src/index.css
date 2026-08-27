@@ -65,6 +65,12 @@
   margin: 4px 0 10px;
 }
 
+.online-history-link {
+  display: block;
+  margin-top: 8px;
+  color: inherit;
+}
+
 .online-create-card,
 .online-create-card label,
 .online-side-column,

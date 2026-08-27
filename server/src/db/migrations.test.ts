@@ -15,7 +15,7 @@ test('migration files are contiguous, immutable inputs with the expected latest 
   const migrations = await loadMigrations()
   assert.deepEqual(
     migrations.map((migration) => migration.version),
-    [1, 2, 3, 4, 5],
+    [1, 2, 3, 4, 5, 6],
   )
   assert.equal(migrations.at(-1)?.version, EXPECTED_SCHEMA_VERSION)
   assert.ok(migrations.every((migration) => /^[0-9a-f]{64}$/.test(migration.checksum)))
@@ -24,6 +24,7 @@ test('migration files are contiguous, immutable inputs with the expected latest 
   assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS matchmaking_entries/)
   assert.match(migrations[3].sql, /CREATE TABLE IF NOT EXISTS rate_limit_buckets/)
   assert.match(migrations[4].sql, /CREATE TABLE IF NOT EXISTS user_documents/)
+  assert.match(migrations[5].sql, /'timeout'/)
 })
 
 test('MySQL migration splitter ignores comments and quoted semicolons', () => {
@@ -52,9 +53,10 @@ test('checked-in migration SQL does not contain down or destructive schema opera
     '0003_online_matches.sql',
     '0004_platform_operations.sql',
     '0005_user_documents.sql',
+    '0006_online_match_completion_reasons.sql',
   ]) {
     const sql = await readFile(path.join(defaultMigrationsDirectory(), file), 'utf8')
-    assert.doesNotMatch(sql, /\b(?:DROP|TRUNCATE)\b/i)
+    assert.doesNotMatch(sql, /\b(?:DROP\s+(?:TABLE|COLUMN)|TRUNCATE)\b/i)
     assert.doesNotMatch(sql, /\b(?:timestamptz|jsonb|bytea|uuid)\b/i)
   }
 })

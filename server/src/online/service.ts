@@ -106,6 +106,15 @@ function requireWatch(actor: OnlineActor): void {
   }
 }
 
+function requireHistory(actor: OnlineActor): void {
+  if (
+    !actor.capabilities.includes('online:history') &&
+    !actor.capabilities.includes('online:watch')
+  ) {
+    throw new OnlineMatchError('online_history_not_allowed', 403, '当前账号不可查看公网对局历史')
+  }
+}
+
 function requireParticipant(record: OnlineMatchRecord, userId: string) {
   const participant = record.participants.find((item) => item.userId === userId)
   if (!participant) throw new OnlineMatchError('not_found', 404, '对局不存在')
@@ -271,6 +280,14 @@ export class OnlineMatchService {
     return record
   }
 
+  async read(actor: OnlineActor, matchId: string): Promise<OnlineMatchRecord> {
+    if (actor.capabilities.includes('online:watch')) return this.get(actor, matchId)
+    requireHistory(actor)
+    const record = await this.repository.findParticipating(matchId, actor.userId)
+    if (!record) throw new OnlineMatchError('not_found', 404, '对局不存在')
+    return record
+  }
+
   lobby(
     actor: OnlineActor,
     input: { variant?: unknown; limit?: unknown },
@@ -282,8 +299,21 @@ export class OnlineMatchService {
     })
   }
 
+  publicLobby(input: { variant?: unknown; limit?: unknown }): Promise<OnlineLobbyMatch[]> {
+    return this.repository.listLobby({
+      ...(input.variant ? { variant: variant(input.variant) } : {}),
+      limit: Number(input.limit) || 20,
+    })
+  }
+
+  async publicReplay(matchId: string): Promise<OnlineMatchRecord> {
+    const record = await this.repository.findPublicReplay(matchId)
+    if (!record) throw new OnlineMatchError('not_found', 404, '公开回放不存在')
+    return record
+  }
+
   history(actor: OnlineActor, input: Record<string, unknown>): Promise<OnlineHistoryPage> {
-    requireWatch(actor)
+    requireHistory(actor)
     const parseDate = (value: unknown, code: string): Date | undefined => {
       if (value === undefined || value === '') return undefined
       if (typeof value !== 'string') throw new OnlineMatchError(code)
@@ -662,10 +692,10 @@ export class OnlineMatchService {
 
   snapshot(
     record: OnlineMatchRecord,
-    userId: string,
+    userId: string | null,
     onlineUsers: ReadonlySet<string>,
   ): OnlineMatchSnapshot {
-    const viewer = record.participants.find((item) => item.userId === userId)
+    const viewer = userId ? record.participants.find((item) => item.userId === userId) : undefined
     const role = viewer?.side ?? (viewer?.isOwner ? 'owner' : 'spectator')
     const audience = viewer?.side ?? 'public'
     const gomoku = record.match.variant === 'gomoku'
@@ -719,7 +749,7 @@ export class OnlineMatchService {
         if (viewer?.side && jieqiRecord.audience === viewer.side) {
           void this.options.jieqiSeatRecords
             ?.create(
-              userId,
+              viewer.userId!,
               jieqiRecord as unknown as Record<string, unknown>,
               `online-match:${record.match.id}:${viewer.side}`,
             )

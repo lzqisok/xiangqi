@@ -141,6 +141,7 @@ test('a newer account connection takes over the seat and the stale socket cannot
   manager.disconnect(first as unknown as WebSocket)
   assert.equal(presence.filter((item) => !item.connected).length, 0)
   manager.disconnect(second as unknown as WebSocket)
+  await eventually(() => presence.some((item) => !item.connected))
   assert.equal(presence.filter((item) => !item.connected).length, 1)
   manager.dispose()
 })
@@ -237,4 +238,183 @@ test('restart recovery reschedules a persisted deadline and adjudicates timeout 
   assert.deepEqual(clockAdjudications, [{ matchId: source.match.id, deadlineAt }])
   assert.equal(source.match.statusReason, 'timeout')
   manager.dispose()
+})
+
+async function eventually(check: () => boolean) {
+  const end = Date.now() + 1000
+  while (!check() && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.ok(check(), 'background recovery did not complete')
+}
+
+function expiredClock(source: OnlineMatchRecord) {
+  source.match.clockPreset = '10m'
+  source.state.clock = {
+    preset: '10m',
+    redRemainingMs: 0,
+    blackRemainingMs: 600000,
+    incrementMs: 0,
+    delayMs: 0,
+    activeSide: 'red',
+    deadlineAt: new Date(Date.now() - 100).toISOString(),
+  }
+}
+
+test('deadline database outage retries and completes without client requests exactly once', async () => {
+  const source = record('outage')
+  expiredClock(source)
+  const { service, clockAdjudications } = fakeService([source])
+  const commit = service.repository.adjudicateClock.bind(service.repository)
+  let attempts = 0
+  service.repository.adjudicateClock = async (...args) => {
+    if (++attempts <= 2) throw new Error('database unavailable')
+    if (source.match.phase === 'finished') return null
+    return commit(...args)
+  }
+  const manager = new OnlineMatchManager(service, 60000, 50, 2, 20, 5)
+  try {
+    await manager.restore()
+    await eventually(() => source.match.phase === 'finished')
+    await manager.restore()
+    assert.equal(clockAdjudications.length, 1)
+    assert.ok(attempts >= 3)
+  } finally {
+    manager.dispose()
+  }
+})
+
+test('startup database failure is retried and expired disconnect is recovered without requests', async () => {
+  const source = record('restart-outage')
+  source.participants.forEach((p) => (p.disconnectDeadline = new Date(Date.now() - 100)))
+  const { service } = fakeService([source])
+  let reads = 0,
+    finishes = 0
+  service.repository.recoverActiveMatches = async () => {
+    if (++reads < 3) throw new Error('offline')
+    return source.match.phase === 'playing' ? [source] : []
+  }
+  service.repository.adjudicateDisconnect = async () => {
+    if (source.match.phase !== 'playing') return null
+    source.match.phase = 'finished'
+    finishes++
+    return source
+  }
+  const manager = new OnlineMatchManager(service, 60000, 50, 2, 20, 5)
+  try {
+    await manager.restore()
+    await eventually(() => finishes === 1)
+    assert.ok(reads >= 3)
+  } finally {
+    manager.dispose()
+  }
+})
+
+test('failed offline persistence retries with the original deadline', async () => {
+  const source = record('presence-outage'),
+    { service } = fakeService([source])
+  const deadlines: number[] = []
+  let attempts = 0
+  service.repository.setPresence = async (_id, _user, connected, deadline) => {
+    if (connected) return true
+    deadlines.push(deadline!.getTime())
+    if (++attempts === 1) throw new Error('offline')
+    return true
+  }
+  const manager = new OnlineMatchManager(service, 60000, 50, 2, 10000, 5)
+  const socket = new FakeSocket() as unknown as WebSocket
+  try {
+    manager.bind(socket, actor('red-user'))
+    await manager.handle(socket, { type: 'match-subscribe', matchId: source.match.id })
+    manager.disconnect(socket)
+    await eventually(() => attempts === 2)
+    assert.equal(deadlines[0], deadlines[1])
+  } finally {
+    manager.dispose()
+  }
+})
+
+test('reconnect waits for an in-flight offline write and cancels its retry', async () => {
+  const source = record('presence-race'),
+    { service } = fakeService([source])
+  let release!: () => void
+  const blocked = new Promise<void>((resolve) => (release = resolve))
+  const writes: boolean[] = []
+  service.repository.setPresence = async (_id, _user, connected) => {
+    if (!connected) await blocked
+    writes.push(connected)
+    return true
+  }
+  const manager = new OnlineMatchManager(service, 60000, 50, 2, 10000, 5)
+  const first = new FakeSocket() as unknown as WebSocket,
+    second = new FakeSocket() as unknown as WebSocket
+  try {
+    manager.bind(first, actor('red-user'))
+    await manager.handle(first, { type: 'match-subscribe', matchId: source.match.id })
+    manager.disconnect(first)
+    await new Promise((resolve) => setImmediate(resolve))
+    manager.bind(second, actor('red-user'))
+    const reconnect = manager.handle(second, { type: 'match-subscribe', matchId: source.match.id })
+    release()
+    await reconnect
+    assert.deepEqual(writes, [true, false, true])
+  } finally {
+    release()
+    manager.dispose()
+  }
+})
+
+test('old timeout retry cannot replace a move with a new deadline', async () => {
+  const source = record('move-race')
+  expiredClock(source)
+  const { service } = fakeService([source])
+  const old = source.state.clock!.deadlineAt
+  let calls = 0,
+    finishes = 0
+  service.repository.adjudicateClock = async (_id, deadline) => {
+    calls++
+    if (calls === 1) {
+      source.state.clock!.deadlineAt = new Date(Date.now() + 60000).toISOString()
+      throw new Error('concurrent move committed')
+    }
+    if (deadline !== source.state.clock!.deadlineAt) return null
+    finishes++
+    return source
+  }
+  const manager = new OnlineMatchManager(service, 60000, 50, 2, 10000, 5)
+  try {
+    await manager.restore()
+    await eventually(() => calls >= 2)
+    assert.notEqual(source.state.clock!.deadlineAt, old)
+    assert.equal(finishes, 0)
+  } finally {
+    manager.dispose()
+  }
+})
+
+test('a reconnected socket is not adjudicated by its old deadline while online persistence retries', async () => {
+  const source = record('reconnect-db-outage')
+  source.participants[0].disconnectDeadline = new Date(Date.now() - 1)
+  const { service } = fakeService([source])
+  let connectedWrites = 0,
+    adjudications = 0
+  service.repository.setPresence = async (_id, _user, connected) => {
+    if (connected && ++connectedWrites === 1)
+      throw new Error('transient online persistence failure')
+    return true
+  }
+  service.repository.adjudicateDisconnect = async () => {
+    adjudications++
+    throw new Error('database unavailable at disconnect deadline')
+  }
+  const manager = new OnlineMatchManager(service, 60000, 50, 2, 10000, 50)
+  const socket = new FakeSocket() as unknown as WebSocket
+  try {
+    await manager.restore()
+    await eventually(() => adjudications === 1)
+    manager.bind(socket, actor('red-user'))
+    await manager.handle(socket, { type: 'match-subscribe', matchId: source.match.id })
+    await eventually(() => connectedWrites === 2)
+    assert.equal(adjudications, 1)
+  } finally {
+    manager.dispose()
+  }
 })

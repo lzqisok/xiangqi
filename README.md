@@ -1,8 +1,8 @@
 # 棋境：象棋与五子棋（Web）
 
-一个以本地 [Pikafish](https://github.com/official-pikafish/Pikafish) 为象棋棋力核心的 Web 棋类应用，覆盖普通象棋、揭棋、残局训练、错着训练、局面研究、变招管理与整局复盘，并提供完全独立的本地五子棋模块。前端使用 React + Canvas，象棋后端通过 WebSocket 和 UCI 协议管理本地 Pikafish 进程；实时象棋对局保存在服务端本地 JSON 文件，研究与训练数据保存在浏览器本地。
+一个以本地 [Pikafish](https://github.com/official-pikafish/Pikafish) 为象棋棋力核心的 Web 棋类应用，覆盖普通象棋、揭棋、残局训练、错着训练、局面研究、变招管理与整局复盘，并提供独立的五子棋规则与 AI 模块。前端使用 React + Canvas，象棋后端通过 WebSocket 和 UCI 协议管理本地 Pikafish 进程。项目同时支持本地/LAN 存储与基于 MySQL 的账号、个人数据云同步、权威在线对战及等级分结算；公网入口默认关闭，开放前仍须完成排位公平规则和实际环境验收。
 
-![Node](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=white)
+![Node](https://img.shields.io/badge/Node.js-22.22.0-339933?logo=node.js&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-9.15.9-F69220?logo=pnpm&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=1f2937)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
@@ -35,6 +35,17 @@
 - 房主、棋手和观众可在房间内聊天；消息独立持久化并保留最近 100 条，房主可删除消息、按成员或全员禁言，并设置房间敏感词。
 - 无人在线的等待房间和双方离线的进行中房间保留 24 小时，结束对局保留 30 天，之后自动清理本地 JSON。
 - LAN 模式仅适合可信内网，请勿配置公网端口映射；本机原有对局库仅允许通过回环地址访问。
+
+### 账号与公网在线对战
+
+- 基于 MySQL 8.0.16+ 的注册、验证、登录、会话撤销、密码恢复和账号注销；HTTP 与 WebSocket 使用同一服务端账号身份。
+- 个人对局、研究、训练、残局、揭棋席位记录、五子棋历史和设置按账号隔离；旧本地数据由用户主动预览并导入，切换账号时隔离浏览器缓存。
+- 普通象棋、揭棋和五子棋支持账号匹配、邀请、观战、聊天、重连及本人对局历史；三棋类公网对局命令统一使用 `/ws`，`/gomoku-ws` 用于 Rapfi 引擎。
+- 服务端持有权威局面、revision 与棋钟，走子、终局和等级分更新受事务约束；揭棋公开与本人席位视图按权限投影，裁判状态不直接下发。
+- Elo 等级分按普通象棋、揭棋、自由五子棋和 Renju 四个分池独立结算，支持幂等结算和作废补偿。断线计分、防刷分及账号级实战辅助限制仍属于下一阶段，详见 [积分策略](docs/online-rating-policy.md)。
+- 自动棋钟超时、掉线裁决和 presence 写入失败时记录日志并退避重试，每 30 秒执行补偿扫描；数据库恢复后无需新客户端请求也能继续裁决。重连会取代旧的离线写入，过期任务沿用数据库截止时间和事务约束。
+
+A 阶段的可靠性代码与本地验收已完成。后续按 B 排位公平性、C 实际环境验收、D 产品闭环推进；真实 staging 容量、备份恢复和发布回滚演练尚不能用本地测试结果代替。参见 [当前待办](TODO.md)、[A 阶段验收说明](docs/online-reliability-acceptance.md) 和 [本次验证报告](docs/reports/2026-09-07-reliability.md)。
 
 ### 对弈
 
@@ -114,7 +125,8 @@
 浏览器 React 应用
   ├─ 本地规则、棋盘、记谱、研究与训练状态
   ├─ HTTP 对局读取、自动保存与 JSON 导入导出
-  ├─ /ws：象棋引擎计算 + 单写者编辑租约
+  ├─ /api/auth、/api/me、/api/online：账号、个人数据与在线对局
+  ├─ /ws：象棋引擎计算 + 单写者编辑租约 + 三棋类公网对局
   └─ /gomoku-ws：五子棋 Rapfi 计算
              │
              ▼
@@ -122,6 +134,8 @@ Node.js / Express / ws 服务
   ├─ 协议与局面校验
   ├─ data/games/index.json 轻量索引
   ├─ data/games/<id>.json 单局原子持久化与备份恢复
+  ├─ MySQL：账号、个人文档、权威对局、积分结算与流水
+  ├─ 后台退避重试、到期裁决补偿扫描与恢复一致性校验
   ├─ 请求隔离、取消和过期结果丢弃
   ├─ 象棋会话按变体独立管理 Pikafish 进程（UCI）
   └─ 五子棋会话独立管理 Rapfi 进程（Piskvork）
@@ -148,6 +162,8 @@ Node.js / Express / ws 服务
 - `stop` 按会话和请求标识处理，分析任务不会无条件取消正在进行的对局请求。
 
 ### 对局持久化
+
+启用账号数据库后，个人数据通过账号接口写入 MySQL，在线对局的状态、参与者、聊天、棋钟与积分由数据库事务维护；账号删除后的共享对局按匿名化策略保留。下面的 JSON 机制用于本地模式，不承担公网账号存储。
 
 - 人机、双人、AI 对战和揭棋分别保存到 `data/games/<id>.json`，`data/games/index.json` 仅保存列表摘要；更新一盘棋不会重写其他对局。
 - 单局写入采用紧凑 JSON 和临时文件替换，并在对应的 `<id>.json.bak` 保留该局上一份有效数据。
@@ -176,7 +192,14 @@ xiangqi/
 │       ├── training/        # 残局提示和训练反馈
 │       └── variations/      # 变招树
 ├── server/
+│   ├── migrations/         # MySQL 版本化迁移
+│   ├── scripts/            # 备份恢复、staging 负载与故障工具
 │   └── src/
+│       ├── auth/            # 账号、会话、恢复与注销
+│       ├── db/              # 数据库连接、事务与恢复一致性检查
+│       ├── online/          # 权威对局、棋钟、积分与后台补偿
+│       ├── platform/        # 灰度、限流、健康检查与可观测性
+│       ├── repositories/    # 账号与个人文档存储
 │       ├── engine.ts        # Pikafish 进程、UCI、搜索队列与超时
 │       ├── gomoku/          # Rapfi 进程、Piskvork 协议与独立 WebSocket
 │       ├── index.ts         # WebSocket 会话和消息分发
@@ -190,8 +213,9 @@ xiangqi/
 
 ## 运行环境
 
-- Node.js 18+
+- Node.js 22.22.0（由 `.nvmrc` 固定，与部署预检一致）
 - pnpm 9.15.9（由根目录 `package.json#packageManager` 固定）
+- 使用账号与公网模式时需要 MySQL 8.0.16+；本地/LAN 模式默认不启用数据库
 - 与当前系统/CPU 匹配的 Pikafish 可执行文件
 - 与该 Pikafish 版本兼容的 `pikafish.nnue`
 - 使用揭棋时还需要官方 `jieqi_old` 分支编译出的 `pikafish-jieqi`
@@ -268,6 +292,17 @@ pnpm dev
 - 象棋 WebSocket：ws://localhost:3001/ws
 - 五子棋 Rapfi WebSocket：ws://localhost:3001/gomoku-ws
 
+### 4. 可选：账号数据库与受控公网环境
+
+按 `server/.env.example` 准备本机配置或外部环境变量，设置 `ONLINE_DATABASE_ENABLED=true`、`DATABASE_URL` 和对应 TLS 模式，然后运行：
+
+```bash
+pnpm --filter server db:migrate
+pnpm --filter server db:check
+```
+
+数据库迁移不会自动打开公网入口。`PUBLIC_ONLINE_MODE` 支持 `off`、`controlled`、`drain`、`open`；受控环境配置允许的用户 ID，前端构建配套设置 `VITE_PUBLIC_ONLINE_ENABLED`。`PUBLIC_ONLINE_ENABLED` 仅在未设置 MODE 时作为旧配置回退。邮件投递、来源校验、TLS、限流和发布门禁见 [部署手册](docs/online-production-runbook.md)，数据库操作见 [MySQL 手册](docs/mysql-operations.md)。
+
 ## 开发命令
 
 ```bash
@@ -284,7 +319,18 @@ pnpm --filter server build       # 服务端构建
 pnpm --filter server start       # 运行已构建服务端
 pnpm --filter server platform:preflight # 校验生产配置、版本和引擎制品
 pnpm --filter server staging:smoke      # staging HTTPS/账号只读冒烟
+pnpm --filter server staging:read-load  # 校验认证与响应语义的读负载
+pnpm --filter server staging:business-load # 隔离账号完整业务负载
+pnpm --filter server staging:faults     # 数据库短断、慢查询、连接压力与应用重启
+pnpm --filter server test:acceptance-tools # 验收工具 HTTP/WS/TCP/子进程回归
+pnpm --filter server db:restore:verify  # 隔离空库恢复与一致性验证
+pnpm contract:check                   # API/WebSocket 契约标记检查
+pnpm format:check                     # 格式检查
 ```
+
+验收与恢复命令需要显式配置环境和凭据，不能直接对生产执行。负载报告按操作记录 p50/p95/p99、错误率与限流比例；认证失败、错误响应语义、容量目标未达成或故障断言失败均返回非零退出码。恢复验证检查账号、对局状态、揭棋投影以及积分余额/结算/流水一致性。参数、隔离代理、应用重启适配器与报告命令统一维护在 [A 阶段验收说明](docs/online-reliability-acceptance.md)。
+
+真实 MySQL 测试需要 `TEST_DATABASE_URL`，只接受本机且名称含 `test` 的数据库连接，测试账号须能创建和删除隔离测试库。缺少配置时会显示 skip，不等同于集成验收通过。
 
 ## 难度与引擎设置
 
@@ -338,7 +384,7 @@ pnpm --filter server staging:smoke      # staging HTTPS/账号只读冒烟
 
 ## 本地数据
 
-目前没有账号或云端数据库，以下内容保存在浏览器 `localStorage`：
+未登录本地模式仍使用浏览器 `localStorage`，以下为旧本地数据的 key；登录账号模式使用账号隔离的缓存与云端接口，导入旧数据需要用户主动确认：
 
 | 内容             | Key                            |
 | ---------------- | ------------------------------ |
@@ -348,7 +394,7 @@ pnpm --filter server staging:smoke      # staging HTTPS/账号只读冒烟
 | 最近 FEN         | `xiangqi_recent_fens`          |
 | 引擎设置         | `xiangqi_engine_settings`      |
 
-清除浏览器站点数据会删除这些内容。重要的残局和研究请先导出 JSON 备份；回放链接 v2 可携带当前研究的完整变招树，但受 300 节点和 120KB 原始载荷限制，也不等同于研究库 JSON 备份。
+清除浏览器站点数据会删除尚未导入账号的本地内容和浏览器缓存，但不会删除已成功同步的云端数据。重要的残局和研究请先导出 JSON 备份；回放链接 v2 可携带当前研究的完整变招树，但受 300 节点和 120KB 原始载荷限制，也不等同于研究库 JSON 备份。
 
 ## 常见问题
 
@@ -398,7 +444,7 @@ pnpm --filter server start
 - 普通象棋的三次重复局面会按长将、长捉、将捉交替和双方责任自动裁定；普通重复作和，单方禁止着法判责任方负。揭棋继续使用独立规则，不进入该裁定器。
 - 分享功能采用 URL 内嵌的完整变招树回放 v2，暂不提供云端短链、封面、访问权限或过期失效。
 - 研究分析和复盘结果已绑定到变招节点；支持分析当前节点/分支、停止与同配置缓存复用，并可只读比较两条分支的胜率、分值、推荐变化和主要分歧。
-- 当前有小型开局名称目录，但没有供引擎走棋的大型统计开局库。账号与数据库权威公网对局已实现，公网入口默认关闭；只有 staging 发布、回滚和备份恢复门禁留有证据后，才同时开启服务端 `PUBLIC_ONLINE_ENABLED` 与前端 `VITE_PUBLIC_ONLINE_ENABLED`。个人研究、训练、残局和设置的账号云同步仍在后续批次。
+- 当前有小型开局名称目录，但没有供引擎走棋的大型统计开局库。账号、个人数据云同步、数据库权威对局和等级分底座已实现，A 阶段可靠性与验收工具已补齐。公网入口仍默认关闭，后续先完成 B 排位公平规则与 C 现场发布/恢复/容量门禁，再按受控灰度逐步开放；历史分页展示、完整账号导出、数据保留与最小治理能力继续按 D 阶段推进。
 
 完整优先级见 [`TODO.md`](./TODO.md)，变招树的数据模型与迁移说明见 [`docs/variation-tree-design.md`](./docs/variation-tree-design.md)。
 
@@ -408,7 +454,10 @@ pnpm --filter server start
 
 ```bash
 pnpm test
+pnpm --filter server test:acceptance-tools
 pnpm build
+pnpm contract:check
+pnpm format:check
 git diff --check
 ```
 

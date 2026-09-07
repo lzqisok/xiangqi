@@ -85,4 +85,4 @@ ALLOW_RESTORE_VERIFY=1 \
 pnpm --filter server db:restore:verify
 ```
 
-恢复后会验证 migration 版本、账号/对局可读、participant 外键、match/state revision 和揭棋 JSON 基本结构。上线前仍须用真实备份执行一次并记录 RPO/RTO、样本对局投影结果和操作者；没有实际执行记录时不得勾选 TODO 的恢复演练项。
+恢复后会验证 migration 版本、账号关联、缺失状态与 revision、参与者匿名化、积分余额/结算/流水，并重放裁判状态核对精确公开投影；任何失败均非零退出。具体检查及负载工具见 [A 阶段验收说明](online-reliability-acceptance.md)。上线前仍须用真实备份执行一次并记录 RPO/RTO、样本对局投影结果和操作者；没有实际执行记录时不得勾选 TODO 的恢复演练项。

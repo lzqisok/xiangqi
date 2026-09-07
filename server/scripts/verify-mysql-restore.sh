@@ -37,26 +37,11 @@ NODE_ENV=development \
 DATABASE_SSL_MODE="${DATABASE_SSL_MODE:-disable}" \
 pnpm --filter server db:check
 
-mysql --defaults-extra-file="$options_file" --batch --skip-column-names "$database_name" <<'SQL'
-SELECT COUNT(*) >= 0 AS users_readable FROM users;
-SELECT COUNT(*) >= 0 AS matches_readable FROM matches;
-SELECT COUNT(*) = 0 AS match_revision_mismatches
-FROM matches m
-JOIN match_states s ON s.match_id = m.id
-WHERE m.revision <> s.revision;
-SELECT COUNT(*) = 0 AS orphan_participants
-FROM match_participants p
-LEFT JOIN matches m ON m.id = p.match_id
-WHERE m.id IS NULL;
-SELECT COUNT(*) = 0 AS participants_missing_anonymization
-FROM match_participants
-WHERE user_id IS NULL AND anonymized_at IS NULL;
-SELECT COUNT(*) = 0 AS invalid_jieqi_states
-FROM matches m
-JOIN match_states s ON s.match_id = m.id
-WHERE m.variant = 'jieqi'
-  AND (JSON_TYPE(s.public_state) <> 'OBJECT' OR JSON_TYPE(s.referee_state) <> 'OBJECT');
-SQL
+DATABASE_URL="$DATABASE_RESTORE_URL" \
+ONLINE_DATABASE_ENABLED=true \
+NODE_ENV=development \
+DATABASE_SSL_MODE="${DATABASE_SSL_MODE:-disable}" \
+pnpm exec tsx src/db/restore-verify-cli.ts
 
 rm -f "$options_file"
 trap - EXIT

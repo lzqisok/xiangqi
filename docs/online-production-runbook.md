@@ -41,7 +41,7 @@ LOAD_CONCURRENCY=10 LOAD_ROUNDS=10 \
 pnpm --filter server staging:read-load
 ```
 
-写负载使用一次性账号和对局，逐步增加到目标并发。覆盖两个账号并发匹配、第三账号观战、双方聊天、准备/走子、完成后历史查询；使用唯一 `commandId/requestKey`，结束后撤销 session。记录 p50/p95/p99、429 比例、5xx、DB pool pressure、WS 断开和引擎拒绝。不得对生产执行写负载。
+写负载使用 `pnpm --filter server staging:business-load`，故障场景使用 `staging:faults`；参数、容量目标、隔离代理及阻断规则见 [A 阶段验收说明](online-reliability-acceptance.md)。写负载使用一次性账号和对局，逐步增加到目标并发。覆盖两个账号并发匹配、第三账号观战、双方聊天、准备/走子、完成后历史查询；使用唯一 `commandId/requestKey`，结束后撤销 session。记录 p50/p95/p99、429 比例、5xx、DB pool pressure、WS 断开和引擎拒绝。不得对生产执行写负载。
 
 ## 故障与资源门禁
 

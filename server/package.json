@@ -14,7 +14,10 @@
     "staging:smoke": "node scripts/staging-smoke.mjs",
     "staging:read-load": "node scripts/staging-read-load.mjs",
     "start": "node dist/index.js",
-    "test": "tsx --test \"src/**/*.test.ts\""
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "staging:business-load": "node scripts/staging-business-load.mjs",
+    "staging:faults": "node scripts/staging-faults.mjs",
+    "test:acceptance-tools": "node --test scripts/acceptance-tools.test.mjs"
   },
   "dependencies": {
     "argon2": "^0.45.1",

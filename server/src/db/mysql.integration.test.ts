@@ -1,5 +1,6 @@
 import '../env.js'
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import test from 'node:test'
@@ -30,6 +31,8 @@ import {
 import { MySqlGameRepository } from '../games/mysqlRepository.js'
 import { GameNotFoundError } from '../games/repository.js'
 import { OnlineMatchService } from '../online/service.js'
+import { OnlineMatchManager } from '../online/manager.js'
+import { verifyRestoredDatabase } from './restoreVerification.js'
 import { readOnlineRefereeState } from '../online/state.js'
 import type { OnlineActor } from '../online/types.js'
 import { MySqlAccountDataService } from '../auth/accountData.js'
@@ -1334,3 +1337,171 @@ test('a database at migration 0001 upgrades to the current version', integration
     assert.equal((await migrationStatus(database)).currentVersion, 7)
   })
 })
+
+test(
+  'automatic rated timeout survives transaction failure and restore checker rejects corrupted data',
+  integration,
+  async () => {
+    await withTestDatabase(async (database) => {
+      await migrate(database)
+      const accounts = new MySqlAccountRepository(database)
+      const users = await Promise.all(
+        [1, 2].map((i) =>
+          accounts.create({
+            emailNormalized: `recovery-${i}@example.com`,
+            emailDisplay: `recovery-${i}@example.com`,
+            displayName: `恢复棋手${i}`,
+            passwordHash: '$argon2id$placeholder',
+            passwordHashVersion: 1,
+            verificationTokenHash: randomBytes(32),
+            verificationExpiresAt: new Date(Date.now() + 86400000),
+          }),
+        ),
+      )
+      await database.query("UPDATE users SET status='active'")
+      const actors = users.map(
+        (user) =>
+          ({
+            userId: user.id,
+            sessionId: randomUUID(),
+            ipKey: 'test',
+            capabilities: ['online:play', 'online:watch'],
+          }) as OnlineActor,
+      )
+      const repository = new MySqlOnlineMatchRepository(database),
+        service = new OnlineMatchService(repository)
+      const pair = await Promise.all(
+        actors.map((actor) =>
+          service.quickMatch(actor, {
+            variant: 'xiangqi',
+            competitionMode: 'rated',
+            clockPreset: '10m',
+            requestKey: randomUUID(),
+          }),
+        ),
+      )
+      const id = pair[0].record.match.id
+      const deadline = new Date(Date.now() - 100).toISOString()
+      await database.query(
+        "UPDATE match_states SET referee_state=JSON_SET(referee_state,'$.clock.deadlineAt',?) WHERE match_id=?",
+        [deadline, id],
+      )
+      const before = await repository.recoverActiveMatches()
+      await database.query(
+        `CREATE TRIGGER recovery_rating_fault BEFORE INSERT ON rating_ledger FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='injected settlement failure'`,
+      )
+      const manager = new OnlineMatchManager(service, 60000, 50, 2, 50, 10)
+      try {
+        await manager.restore()
+        await new Promise((resolve) => setTimeout(resolve, 60))
+        const rolledBack = await service.get(actors[0], id)
+        assert.equal(rolledBack.match.phase, 'playing')
+        assert.equal(rolledBack.match.revision, before[0].match.revision)
+        await database.query('DROP TRIGGER recovery_rating_fault')
+        const end = Date.now() + 3000
+        // Only the manager accesses the match during this wait; the assertion reads SQL metadata.
+        let finished = false
+        while (Date.now() < end) {
+          const result = await database.query<{ phase: string }>(
+            'SELECT phase FROM matches WHERE id=?',
+            [id],
+          )
+          if (result.rows[0].phase === 'finished') {
+            finished = true
+            break
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20))
+        }
+        assert.ok(finished)
+        const settled = await service.get(actors[0], id)
+        assert.equal(settled.match.revision, before[0].match.revision + 1)
+        await Promise.all([
+          repository.adjudicateClock(id, deadline),
+          repository.adjudicateDisconnect(id, users[0].id, new Date(0)),
+        ])
+        assert.equal((await service.get(actors[0], id)).match.revision, settled.match.revision)
+        assert.equal((await verifyRestoredDatabase(database)).ok, true)
+        const racePair = await Promise.all(
+          actors.map((actor) =>
+            service.quickMatch(actor, {
+              variant: 'xiangqi',
+              clockPreset: '10m',
+              requestKey: randomUUID(),
+            }),
+          ),
+        )
+        const raceId = racePair[0].record.match.id
+        const race = await service.get(actors[0], raceId)
+        const redId = race.participants.find((p) => p.side === 'red')!.userId
+        const redActor = actors.find((a) => a.userId === redId)!
+        await database.query(
+          "UPDATE match_states SET referee_state=JSON_SET(referee_state,'$.clock.deadlineAt',?) WHERE match_id=?",
+          [deadline, raceId],
+        )
+        const offline = new Date(Date.now() - 100)
+        await repository.setPresence(raceId, redActor.userId, false, offline)
+        await Promise.allSettled([
+          repository.adjudicateClock(raceId, deadline),
+          repository.adjudicateDisconnect(raceId, redActor.userId, offline),
+          service.move(redActor, {
+            matchId: raceId,
+            commandId: randomUUID(),
+            expectedRevision: race.match.revision,
+            uci: 'a0a1',
+          }),
+        ])
+        const raceFinished = await service.get(redActor, raceId)
+        assert.equal(raceFinished.match.phase, 'finished')
+        assert.equal(raceFinished.match.revision, race.match.revision + 1)
+        assert.equal(raceFinished.state.moves.length, 0)
+        assert.equal((await verifyRestoredDatabase(database)).ok, true)
+
+        await database.query('UPDATE user_ratings SET rating=rating+1 WHERE user_id=?', [
+          users[0].id,
+        ])
+        await assert.rejects(verifyRestoredDatabase(database), /rating_balances/)
+        await new Promise<void>((resolve, reject) => {
+          execFile(
+            process.execPath,
+            ['--import', 'tsx', 'src/db/restore-verify-cli.ts'],
+            {
+              env: {
+                ...process.env,
+                DATABASE_URL: database.config.connectionString,
+                ONLINE_DATABASE_ENABLED: 'true',
+                NODE_ENV: 'development',
+                DATABASE_SSL_MODE: 'disable',
+              },
+            },
+            (error, stdout, stderr) => {
+              try {
+                assert.equal(error?.code, 1)
+                assert.equal(stdout, '')
+                assert.match(stderr, /Restore consistency verification failed/)
+                resolve()
+              } catch (failure) {
+                reject(failure)
+              }
+            },
+          )
+        })
+        await database.query('UPDATE user_ratings SET rating=rating-1 WHERE user_id=?', [
+          users[0].id,
+        ])
+        await database.query(
+          "UPDATE match_states SET public_state=JSON_SET(public_state,'$.initialLayout','leaked') WHERE match_id=?",
+          [id],
+        )
+        await assert.rejects(verifyRestoredDatabase(database), /projection/)
+        await database.query(
+          "UPDATE match_states SET public_state=JSON_REMOVE(public_state,'$.initialLayout') WHERE match_id=?",
+          [id],
+        )
+        await database.query('DELETE FROM match_states WHERE match_id=?', [id])
+        await assert.rejects(verifyRestoredDatabase(database), /match_states/)
+      } finally {
+        manager.dispose()
+      }
+    })
+  },
+)

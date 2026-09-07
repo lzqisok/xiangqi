@@ -1060,10 +1060,18 @@ export class MySqlOnlineMatchRepository {
     deadline?: Date,
   ): Promise<boolean> {
     return this.database.transaction(async (client) => {
+      const match = await this.requireMatch(client, matchId, true)
+      if (match.phase === 'finished') return false
+      // A retry may happen after the original deadline; keep the persisted interval valid.
       const result = await client.query(
         `UPDATE match_participants SET disconnected_at = ?, disconnect_deadline = ?
          WHERE match_id = ? AND user_id = ? AND left_at IS NULL AND side IS NOT NULL`,
-        [connected ? null : new Date(), connected ? null : (deadline ?? null), matchId, userId],
+        [
+          connected ? null : new Date(Math.min(Date.now(), deadline?.getTime() ?? Date.now())),
+          connected ? null : (deadline ?? null),
+          matchId,
+          userId,
+        ],
       )
       return result.rowCount === 1
     })

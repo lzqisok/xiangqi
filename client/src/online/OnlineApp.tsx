@@ -16,12 +16,13 @@ import {
   joinOnlineInvite,
   joinOnlineMatch,
   listMyMatches,
+  listMyRatings,
   listOnlineLobby,
   previewOnlineInvite,
   quickMatchOnline,
   type MatchSetup,
 } from './api'
-import type { OnlineLobbyMatch, OnlineMatchSummary } from './types'
+import type { OnlineLobbyMatch, OnlineMatchSummary, OnlineRating } from './types'
 import { onlineRoomUrl } from './model'
 import { useOnlineMatch } from './useOnlineMatch'
 
@@ -39,7 +40,19 @@ function phaseName(match: OnlineMatchSummary) {
   return match.status === 'red-wins' ? '红方胜' : '黑方胜'
 }
 
+function ratingPoolName(pool: OnlineRating['pool']) {
+  if (pool === 'xiangqi') return '普通象棋'
+  if (pool === 'jieqi') return '揭棋'
+  if (pool === 'gomoku-renju') return '五子棋 · 黑方禁手'
+  return '标准五子棋'
+}
+
 export default function OnlineApp() {
+  const { user } = useAuth()
+  return <OnlineAccountApp key={user?.id ?? 'anonymous'} />
+}
+
+function OnlineAccountApp() {
   const { user, loading, available } = useAuth()
   const search = new URLSearchParams(location.search)
   const game = search.get('game') === 'gomoku' ? 'gomoku' : 'xiangqi'
@@ -47,11 +60,13 @@ export default function OnlineApp() {
   const inviteToken = search.get('invite') || ''
   const [lobby, setLobby] = useState<OnlineLobbyMatch[]>([])
   const [history, setHistory] = useState<OnlineMatchSummary[]>([])
+  const [ratings, setRatings] = useState<OnlineRating[]>([])
   const [variant, setVariant] = useState<'xiangqi' | 'jieqi' | 'gomoku'>(
     game === 'gomoku' ? 'gomoku' : 'xiangqi',
   )
   const [gomokuRule, setGomokuRule] = useState<'freestyle' | 'renju'>('freestyle')
   const [clockPreset, setClockPreset] = useState<'none' | '10m' | '15m-10s' | '30m'>('none')
+  const [competitionMode, setCompetitionMode] = useState<'casual' | 'rated'>('casual')
   const [name, setName] = useState('棋友对局')
   const [visibility, setVisibility] = useState<'public' | 'invite'>('public')
   const [busy, setBusy] = useState(false)
@@ -79,6 +94,20 @@ export default function OnlineApp() {
       disposed = true
     }
   }, [game, matchId, user])
+
+  useEffect(() => {
+    if (!user || !['active', 'restricted'].includes(user.status) || matchId) return
+    let disposed = false
+    listMyRatings()
+      .then((result) => !disposed && setRatings(result))
+      .catch(
+        (cause) =>
+          !disposed && setError(cause instanceof Error ? cause.message : '无法加载本人等级分'),
+      )
+    return () => {
+      disposed = true
+    }
+  }, [matchId, user])
 
   useEffect(() => {
     if (!user || !['active', 'restricted'].includes(user.status) || matchId) return
@@ -200,6 +229,27 @@ export default function OnlineApp() {
 
       {error && <div className="lan-status error">{error}</div>}
 
+      {ratings.length > 0 && (
+        <section className="card online-list-section">
+          <div className="online-section-title">
+            <div>
+              <small>RATING</small>
+              <h2>我的等级分</h2>
+            </div>
+            <span>初始 1500</span>
+          </div>
+          <div className="lan-room-list">
+            {ratings.map((rating) => (
+              <p key={rating.pool}>
+                <strong>{ratingPoolName(rating.pool)}</strong> · {rating.rating} 分
+                {rating.provisional ? '（暂定）' : ''} · {rating.gamesPlayed} 局 · {rating.wins} 胜
+                {rating.draws} 和 {rating.losses} 负
+              </p>
+            ))}
+          </div>
+        </section>
+      )}
+
       {invitePreview && (
         <section className="card online-invite-preview">
           <small>INVITATION</small>
@@ -229,6 +279,23 @@ export default function OnlineApp() {
           <small>QUICK MATCH</small>
           <h2>快速匹配</h2>
           <p>按棋类、规则和棋钟档位原子匹配；重复点击或多标签页不会重复占位。</p>
+          <div className="online-choice-row">
+            <button
+              className={competitionMode === 'casual' ? 'active' : ''}
+              onClick={() => setCompetitionMode('casual')}
+            >
+              休闲
+            </button>
+            <button
+              className={competitionMode === 'rated' ? 'active' : ''}
+              onClick={() => {
+                setCompetitionMode('rated')
+                if (clockPreset === 'none') setClockPreset('10m')
+              }}
+            >
+              排位
+            </button>
+          </div>
           {game === 'xiangqi' ? (
             <div className="online-choice-row">
               <button
@@ -268,7 +335,9 @@ export default function OnlineApp() {
                 setClockPreset(event.target.value as 'none' | '10m' | '15m-10s' | '30m')
               }
             >
-              <option value="none">无棋钟</option>
+              <option value="none" disabled={competitionMode === 'rated'}>
+                无棋钟
+              </option>
               <option value="10m">10 分钟包干</option>
               <option value="15m-10s">15 分钟，每步加 10 秒</option>
               <option value="30m">30 分钟包干</option>
@@ -277,9 +346,11 @@ export default function OnlineApp() {
           <button
             className="primary"
             disabled={busy}
-            onClick={() => run(() => quickMatchOnline(setup, createLanCommandId()))}
+            onClick={() =>
+              run(() => quickMatchOnline({ ...setup, competitionMode }, createLanCommandId()))
+            }
           >
-            {busy ? '正在匹配…' : '开始休闲匹配'}
+            {busy ? '正在匹配…' : competitionMode === 'rated' ? '开始排位匹配' : '开始休闲匹配'}
           </button>
         </article>
 
@@ -352,7 +423,7 @@ export default function OnlineApp() {
               <LanRoomCard
                 key={match.id}
                 name={match.name}
-                meta={`${variantName(match)} · ${phaseName(match)}`}
+                meta={`${variantName(match)} · ${match.competitionMode === 'rated' ? '排位 · ' : ''}${phaseName(match)}`}
                 details={`${match.moveCount} 手 · ${new Date(match.updatedAt).toLocaleString()}`}
                 actionLabel={match.phase === 'finished' ? '查看历史' : '恢复对局'}
                 onOpen={() => {

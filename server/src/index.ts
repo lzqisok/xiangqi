@@ -568,6 +568,7 @@ if (onlineService && authRuntime) {
   const onlineRouters = createOnlineRouters(onlineService, authRuntime, onlineRollout)
   app.use('/api/online', onlineRouters.router)
   app.use('/api/me/matches', onlineRouters.meMatchesRouter)
+  app.use('/api/me/ratings', onlineRouters.meRatingsRouter)
   app.use(onlineRouters.errorMiddleware)
   void onlineManager
     ?.restore()

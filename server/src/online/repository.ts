@@ -16,9 +16,17 @@ import type {
   OnlineMatchSummary,
   OnlineParticipant,
   OnlineProposal,
+  OnlineRating,
   OnlineRefereeState,
 } from './types.js'
 import { authoritativeClockNow, createOnlineClock, stopOnlineClock } from './clock.js'
+import {
+  calculateRating,
+  isRatedMatchEligible,
+  ratingPolicy,
+  ratingPool,
+  type RatingPool,
+} from './rating.js'
 
 type MatchRow = {
   id: string
@@ -781,6 +789,7 @@ export class MySqlOnlineMatchRepository {
          VALUES (?, ?, ?, ?, ?)`,
         [input.matchId, input.userId, input.commandId, input.commandType, nextRevision],
       )
+      await this.settleRatedMatch(client, input.matchId)
       return { record: await this.requireRecord(client, input.matchId), duplicate: false }
     })
   }
@@ -1152,7 +1161,131 @@ export class MySqlOnlineMatchRepository {
           match.revision,
         ],
       )
+      await this.settleRatedMatch(client, matchId)
       return this.requireRecord(client, matchId)
+    })
+  }
+
+  async listRatings(userId: string): Promise<OnlineRating[]> {
+    return this.database.connection(async (client) => {
+      const result = await client.query<{
+        pool_key: RatingPool
+        rating: number
+        games_played: number
+        wins: number
+        draws: number
+        losses: number
+        updated_at: Date
+      }>(
+        `SELECT pool_key, rating, games_played, wins, draws, losses, updated_at
+         FROM user_ratings WHERE user_id = ? ORDER BY pool_key`,
+        [userId],
+      )
+      return result.rows.map((row) => ({
+        pool: row.pool_key,
+        rating: Number(row.rating),
+        gamesPlayed: Number(row.games_played),
+        wins: Number(row.wins),
+        draws: Number(row.draws),
+        losses: Number(row.losses),
+        provisional: Number(row.games_played) < ratingPolicy.provisionalGames,
+        updatedAt: row.updated_at.toISOString(),
+      }))
+    })
+  }
+
+  async voidRatingSettlement(matchId: string, reason: string): Promise<boolean> {
+    const normalizedReason = reason.trim()
+    if (!normalizedReason || Array.from(normalizedReason).length > 200) {
+      throw new Error('作废原因必须为 1 至 200 字')
+    }
+    return this.database.transaction(async (client) => {
+      const result = await client.query<{
+        pool_key: RatingPool
+        red_user_id: string | null
+        black_user_id: string | null
+        red_rating_before: number
+        red_rating_after: number
+        black_rating_before: number
+        black_rating_after: number
+        result: MatchEntity['status']
+        voided_at: Date | null
+      }>(
+        `SELECT pool_key, red_user_id, black_user_id, red_rating_before, red_rating_after,
+                black_rating_before, black_rating_after, result, voided_at
+         FROM match_rating_settlements WHERE match_id = ? FOR UPDATE`,
+        [matchId],
+      )
+      const settlement = result.rows[0]
+      if (!settlement) return false
+      if (settlement.voided_at) return false
+      if (!settlement.red_user_id || !settlement.black_user_id) {
+        throw new Error('账号已删除，不能自动补偿等级分')
+      }
+      const ratings = await client.query<{
+        user_id: string
+        rating: number
+        games_played: number
+      }>(
+        `SELECT user_id, rating, games_played FROM user_ratings
+         WHERE pool_key = ? AND user_id IN (?, ?) ORDER BY user_id FOR UPDATE`,
+        [settlement.pool_key, settlement.red_user_id, settlement.black_user_id],
+      )
+      const byUser = new Map(ratings.rows.map((row) => [row.user_id, row]))
+      const red = byUser.get(settlement.red_user_id)
+      const black = byUser.get(settlement.black_user_id)
+      if (!red || !black || Number(red.games_played) < 1 || Number(black.games_played) < 1) {
+        throw new Error('等级分状态无法补偿')
+      }
+      const redDelta = Number(settlement.red_rating_before) - Number(settlement.red_rating_after)
+      const blackDelta =
+        Number(settlement.black_rating_before) - Number(settlement.black_rating_after)
+      const redAfter = Number(red.rating) + redDelta
+      const blackAfter = Number(black.rating) + blackDelta
+      if (redAfter < 100 || blackAfter < 100) throw new Error('补偿后等级分低于下限')
+      const counters = (side: 'red' | 'black') => {
+        const won = settlement.result === `${side}-wins`
+        const draw = settlement.result === 'draw'
+        return [won ? 1 : 0, draw ? 1 : 0, !won && !draw ? 1 : 0]
+      }
+      const redCounters = counters('red')
+      const blackCounters = counters('black')
+      await client.query(
+        `UPDATE user_ratings SET rating = ?, games_played = games_played - 1,
+           wins = wins - ?, draws = draws - ?, losses = losses - ?,
+           updated_at = CURRENT_TIMESTAMP(6) WHERE user_id = ? AND pool_key = ?`,
+        [redAfter, ...redCounters, settlement.red_user_id, settlement.pool_key],
+      )
+      await client.query(
+        `UPDATE user_ratings SET rating = ?, games_played = games_played - 1,
+           wins = wins - ?, draws = draws - ?, losses = losses - ?,
+           updated_at = CURRENT_TIMESTAMP(6) WHERE user_id = ? AND pool_key = ?`,
+        [blackAfter, ...blackCounters, settlement.black_user_id, settlement.pool_key],
+      )
+      await client.query(
+        `UPDATE match_rating_settlements SET voided_at = CURRENT_TIMESTAMP(6), void_reason = ?
+         WHERE match_id = ? AND voided_at IS NULL`,
+        [normalizedReason, matchId],
+      )
+      await this.insertRatingLedger(client, {
+        matchId,
+        userId: settlement.red_user_id,
+        pool: settlement.pool_key,
+        entryType: 'void',
+        before: Number(red.rating),
+        after: redAfter,
+        reason: normalizedReason,
+      })
+      await this.insertRatingLedger(client, {
+        matchId,
+        userId: settlement.black_user_id,
+        pool: settlement.pool_key,
+        entryType: 'void',
+        before: Number(black.rating),
+        after: blackAfter,
+        reason: normalizedReason,
+      })
+      return true
     })
   }
 
@@ -1163,6 +1296,137 @@ export class MySqlOnlineMatchRepository {
       )
       return Promise.all(matches.rows.map((row) => this.requireRecord(client, row.id)))
     })
+  }
+
+  private async settleRatedMatch(client: Queryable, matchId: string): Promise<void> {
+    const match = await this.requireMatch(client, matchId, true)
+    if (!isRatedMatchEligible(match)) return
+    const settled = await client.query<{ present: number }>(
+      `SELECT EXISTS(
+         SELECT 1 FROM match_rating_settlements WHERE match_id = ?
+       ) AS present`,
+      [matchId],
+    )
+    if (Number(settled.rows[0]?.present) === 1) return
+    const participants = await this.participants(client, matchId, true)
+    const redUserId = participants.find((item) => item.side === 'red')?.userId
+    const blackUserId = participants.find((item) => item.side === 'black')?.userId
+    if (!redUserId || !blackUserId || redUserId === blackUserId) {
+      throw new Error('排位对局缺少有效双方账号')
+    }
+    const pool = ratingPool(match.variant, match.gomokuRule)
+    const orderedUsers = [redUserId, blackUserId].sort()
+    await client.query(
+      `INSERT INTO user_ratings (user_id, pool_key) VALUES (?, ?), (?, ?)
+       ON DUPLICATE KEY UPDATE updated_at = updated_at`,
+      [orderedUsers[0], pool, orderedUsers[1], pool],
+    )
+    const ratings = await client.query<{
+      user_id: string
+      rating: number
+      games_played: number
+    }>(
+      `SELECT user_id, rating, games_played FROM user_ratings
+       WHERE pool_key = ? AND user_id IN (?, ?) ORDER BY user_id FOR UPDATE`,
+      [pool, redUserId, blackUserId],
+    )
+    const byUser = new Map(ratings.rows.map((row) => [row.user_id, row]))
+    const red = byUser.get(redUserId)
+    const black = byUser.get(blackUserId)
+    if (!red || !black) throw new Error('等级分初始化失败')
+    const calculation = calculateRating({
+      redRating: Number(red.rating),
+      blackRating: Number(black.rating),
+      redGames: Number(red.games_played),
+      blackGames: Number(black.games_played),
+      status: match.status,
+    })
+    const counters = (side: 'red' | 'black') => {
+      const won = match.status === `${side}-wins`
+      const draw = match.status === 'draw'
+      return [won ? 1 : 0, draw ? 1 : 0, !won && !draw ? 1 : 0]
+    }
+    const redCounters = counters('red')
+    const blackCounters = counters('black')
+    await client.query(
+      `INSERT INTO match_rating_settlements
+        (match_id, pool_key, model, red_user_id, black_user_id, result, k_factor,
+         red_rating_before, red_rating_after, black_rating_before, black_rating_after)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        matchId,
+        pool,
+        ratingPolicy.model,
+        redUserId,
+        blackUserId,
+        match.status,
+        calculation.kFactor,
+        Number(red.rating),
+        calculation.redAfter,
+        Number(black.rating),
+        calculation.blackAfter,
+      ],
+    )
+    await client.query(
+      `UPDATE user_ratings SET rating = ?, games_played = games_played + 1,
+         wins = wins + ?, draws = draws + ?, losses = losses + ?,
+         updated_at = CURRENT_TIMESTAMP(6) WHERE user_id = ? AND pool_key = ?`,
+      [calculation.redAfter, ...redCounters, redUserId, pool],
+    )
+    await client.query(
+      `UPDATE user_ratings SET rating = ?, games_played = games_played + 1,
+         wins = wins + ?, draws = draws + ?, losses = losses + ?,
+         updated_at = CURRENT_TIMESTAMP(6) WHERE user_id = ? AND pool_key = ?`,
+      [calculation.blackAfter, ...blackCounters, blackUserId, pool],
+    )
+    await this.insertRatingLedger(client, {
+      matchId,
+      userId: redUserId,
+      pool,
+      entryType: 'settlement',
+      before: Number(red.rating),
+      after: calculation.redAfter,
+      reason: match.statusReason!,
+    })
+    await this.insertRatingLedger(client, {
+      matchId,
+      userId: blackUserId,
+      pool,
+      entryType: 'settlement',
+      before: Number(black.rating),
+      after: calculation.blackAfter,
+      reason: match.statusReason!,
+    })
+  }
+
+  private async insertRatingLedger(
+    client: Queryable,
+    input: {
+      matchId: string
+      userId: string
+      pool: RatingPool
+      entryType: 'settlement' | 'void'
+      before: number
+      after: number
+      reason: string
+    },
+  ): Promise<void> {
+    await client.query(
+      `INSERT INTO rating_ledger
+        (id, match_id, user_id, pool_key, entry_type, rating_before, rating_after, delta, reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        randomUUID(),
+        input.matchId,
+        input.userId,
+        input.pool,
+        input.entryType,
+        input.before,
+        input.after,
+        input.after - input.before,
+        input.reason,
+      ],
+    )
   }
 
   private async insertState(client: Queryable, matchId: string, state: OnlineRefereeState) {

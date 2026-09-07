@@ -168,9 +168,9 @@ test(
   integration,
   async () => {
     await withTestDatabase(async (database) => {
-      assert.deepEqual(await migrate(database), [1, 2, 3, 4, 5, 6])
+      assert.deepEqual(await migrate(database), [1, 2, 3, 4, 5, 6, 7])
       assert.deepEqual(await migrate(database), [])
-      assert.equal((await migrationStatus(database)).currentVersion, 6)
+      assert.equal((await migrationStatus(database)).currentVersion, 7)
 
       const accounts = new MySqlAccountRepository(database)
       const sessions = new MySqlSessionRepository(database)
@@ -613,6 +613,102 @@ test(
         readOnlineRefereeState(persistedTimedState.rows[0].referee_state, 'xiangqi').clock
           ?.activeSide,
         'black',
+      )
+
+      const [ratedFirst, ratedSecond] = await Promise.all([
+        service.quickMatch(firstActor, {
+          variant: 'xiangqi',
+          competitionMode: 'rated',
+          clockPreset: '10m',
+          requestKey: randomUUID(),
+        }),
+        service.quickMatch(secondActor, {
+          variant: 'xiangqi',
+          competitionMode: 'rated',
+          clockPreset: '10m',
+          requestKey: randomUUID(),
+        }),
+      ])
+      assert.equal(ratedFirst.record.match.id, ratedSecond.record.match.id)
+      const rated = await service.get(firstActor, ratedFirst.record.match.id)
+      const ratedRedId = rated.participants.find((item) => item.side === 'red')!.userId
+      const ratedRedActor = ratedRedId === first.id ? firstActor : secondActor
+      const ratedResignCommand = randomUUID()
+      // A ledger write failure must roll back the outcome, balances and command receipt together.
+      await database.query(
+        `CREATE TRIGGER reject_test_rating BEFORE INSERT ON rating_ledger
+         FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'test rating rollback'`,
+      )
+      try {
+        await assert.rejects(
+          service.resign(ratedRedActor, {
+            matchId: rated.match.id,
+            commandId: ratedResignCommand,
+            expectedRevision: rated.match.revision,
+          }),
+        )
+        const rolledBack = await service.get(firstActor, rated.match.id)
+        assert.equal(rolledBack.match.phase, 'playing')
+        assert.equal(rolledBack.match.revision, rated.match.revision)
+        assert.deepEqual(await service.ratings(ratedRedActor), [])
+        assert.equal(
+          await repository.findCommand(rated.match.id, ratedRedActor.userId, ratedResignCommand),
+          null,
+        )
+      } finally {
+        await database.query('DROP TRIGGER reject_test_rating')
+      }
+      const ratedFinished = await service.resign(ratedRedActor, {
+        matchId: rated.match.id,
+        commandId: ratedResignCommand,
+        expectedRevision: rated.match.revision,
+      })
+      assert.equal(ratedFinished.record.match.status, 'black-wins')
+      const redRating = (await service.ratings(ratedRedActor)).find(
+        (item) => item.pool === 'xiangqi',
+      )!
+      const ratedBlackActor = ratedRedId === first.id ? secondActor : firstActor
+      const blackRating = (await service.ratings(ratedBlackActor)).find(
+        (item) => item.pool === 'xiangqi',
+      )!
+      assert.deepEqual(
+        [redRating.rating, redRating.gamesPlayed, redRating.losses, redRating.provisional],
+        [1480, 1, 1, true],
+      )
+      assert.deepEqual(
+        [blackRating.rating, blackRating.gamesPlayed, blackRating.wins, blackRating.provisional],
+        [1520, 1, 1, true],
+      )
+      const repeatedRatedFinish = await service.resign(ratedRedActor, {
+        matchId: rated.match.id,
+        commandId: ratedResignCommand,
+        expectedRevision: rated.match.revision,
+      })
+      assert.equal(repeatedRatedFinish.duplicate, true)
+      const ratedRematch = await service.rematch(ratedRedActor, rated.match.id)
+      assert.equal(ratedRematch.match.competitionMode, 'casual')
+      assert.equal(ratedRematch.match.matchmaking, false)
+      assert.equal((await service.ratings(ratedRedActor))[0]?.gamesPlayed, 1)
+      const voidResults = await Promise.all([
+        repository.voidRatingSettlement(rated.match.id, '集成测试作废'),
+        repository.voidRatingSettlement(rated.match.id, '并发作废'),
+      ])
+      assert.deepEqual(voidResults.sort(), [false, true])
+      assert.equal(await repository.voidRatingSettlement(rated.match.id, '重复作废'), false)
+      assert.deepEqual(
+        (await service.ratings(ratedRedActor)).map((item) => [item.rating, item.gamesPlayed]),
+        [[1500, 0]],
+      )
+      assert.equal(
+        Number(
+          (
+            await database.query<{ count: string }>(
+              'SELECT COUNT(*) AS count FROM rating_ledger WHERE match_id = ?',
+              [rated.match.id],
+            )
+          ).rows[0].count,
+        ),
+        4,
       )
 
       const boundedQueue = new OnlineMatchService(repository, { maxMatchmakingQueueEntries: 1 })
@@ -1234,7 +1330,7 @@ test('a database at migration 0001 upgrades to the current version', integration
         [first.version, first.name, first.checksum],
       )
     })
-    assert.deepEqual(await migrate(database), [2, 3, 4, 5, 6])
-    assert.equal((await migrationStatus(database)).currentVersion, 6)
+    assert.deepEqual(await migrate(database), [2, 3, 4, 5, 6, 7])
+    assert.equal((await migrationStatus(database)).currentVersion, 7)
   })
 })

@@ -24,6 +24,7 @@ type Authorize = {
 export type OnlineRouters = {
   router: Router
   meMatchesRouter: Router
+  meRatingsRouter: Router
   errorMiddleware: ErrorRequestHandler
 }
 
@@ -42,6 +43,7 @@ export function createOnlineRouters(
 ): OnlineRouters {
   const router = Router()
   const meMatchesRouter = Router()
+  const meRatingsRouter = Router()
   const requireRolloutAccess = (actor: UserActor) => {
     if (!canAccessPublicOnline(rollout, actor)) {
       throw new OnlineMatchError('controlled_rollout', 403, '当前账号未进入公网灰度范围')
@@ -197,6 +199,14 @@ export function createOnlineRouters(
     }),
   )
 
+  meRatingsRouter.get(
+    '/',
+    asyncRoute(async (_request, response) => {
+      const actor = requireRolloutAccess(authorize.requireUser(response))
+      response.json({ ratings: await service.safe(() => service.ratings(actor)) })
+    }),
+  )
+
   const errorMiddleware: ErrorRequestHandler = (error, _request, response, next) => {
     if (response.headersSent) return next(error)
     if (error instanceof OnlineMatchError) {
@@ -226,5 +236,5 @@ export function createOnlineRouters(
     next(error)
   }
 
-  return { router, meMatchesRouter, errorMiddleware }
+  return { router, meMatchesRouter, meRatingsRouter, errorMiddleware }
 }

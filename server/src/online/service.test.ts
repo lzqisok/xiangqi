@@ -154,3 +154,23 @@ test('matchmaking partition capacity becomes a stable retryable online error', a
       error.retryAfterSeconds === 30,
   )
 })
+
+test('rated matchmaking requires a server-authoritative clock before repository access', async () => {
+  const service = new OnlineMatchService({} as MySqlOnlineMatchRepository)
+  await assert.rejects(
+    service.quickMatch(
+      {
+        userId: 'rated-user',
+        sessionId: 'rated-session',
+        ipKey: 'rated-ip',
+        capabilities: ['online:play'],
+      },
+      {
+        variant: 'xiangqi',
+        competitionMode: 'rated',
+        requestKey: '00000000-0000-4000-8000-000000000001',
+      },
+    ),
+    { code: 'rated_clock_required' },
+  )
+})

@@ -85,3 +85,14 @@ export type OnlineChatMessage = {
   content: string
   createdAt: string
 }
+
+export type OnlineRating = {
+  pool: 'xiangqi' | 'jieqi' | 'gomoku-freestyle' | 'gomoku-renju'
+  rating: number
+  gamesPlayed: number
+  wins: number
+  draws: number
+  losses: number
+  provisional: boolean
+  updatedAt: string
+}

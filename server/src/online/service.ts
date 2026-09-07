@@ -72,6 +72,10 @@ function side(value: unknown, fallback?: RoomColor): RoomColor {
   return value
 }
 
+function clockPreset(value: unknown): MatchEntity['clockPreset'] {
+  return value === '10m' || value === '15m-10s' || value === '30m' ? value : 'none'
+}
+
 function commandId(value: unknown): string {
   if (typeof value !== 'string' || !UUID.test(value)) {
     throw new OnlineMatchError('invalid_command_id', 400, '命令 ID 无效')
@@ -188,12 +192,7 @@ export class OnlineMatchService {
       visibility,
       side: side(input.side, 'red'),
       competitionMode: 'casual',
-      clockPreset:
-        input.clockPreset === '10m' ||
-        input.clockPreset === '15m-10s' ||
-        input.clockPreset === '30m'
-          ? input.clockPreset
-          : 'none',
+      clockPreset: clockPreset(input.clockPreset),
       maxActiveMatches: this.options.maxActiveMatchesPerUser,
     })
   }
@@ -201,20 +200,17 @@ export class OnlineMatchService {
   async quickMatch(actor: OnlineActor, input: Record<string, unknown>) {
     requirePlay(actor)
     const selectedVariant = variant(input.variant)
-    if (input.competitionMode === 'rated') {
-      throw new OnlineMatchError('rated_not_available', 400, '排位匹配将在棋钟与等级分批次开放')
+    const competitionMode = input.competitionMode === 'rated' ? 'rated' : 'casual'
+    const selectedClock = clockPreset(input.clockPreset)
+    if (competitionMode === 'rated' && selectedClock === 'none') {
+      throw new OnlineMatchError('rated_clock_required', 400, '排位匹配必须选择棋钟')
     }
     const result = await this.repository.quickMatch({
       userId: actor.userId,
       variant: selectedVariant,
       gomokuRule: gomokuRule(input.gomokuRule, selectedVariant),
-      competitionMode: 'casual',
-      clockPreset:
-        input.clockPreset === '10m' ||
-        input.clockPreset === '15m-10s' ||
-        input.clockPreset === '30m'
-          ? input.clockPreset
-          : 'none',
+      competitionMode,
+      clockPreset: selectedClock,
       requestKey: commandId(input.requestKey),
       maxActiveMatches: this.options.maxActiveMatchesPerUser,
       maxQueueEntries: this.options.maxMatchmakingQueueEntries,
@@ -231,6 +227,11 @@ export class OnlineMatchService {
       )
     }
     return result
+  }
+
+  ratings(actor: OnlineActor) {
+    requireHistory(actor)
+    return this.repository.listRatings(actor.userId)
   }
 
   cancelMatchmaking(actor: OnlineActor) {
@@ -360,7 +361,7 @@ export class OnlineMatchService {
       visibility: previous.match.visibility,
       side: player.side,
       previousMatchId: previous.match.id,
-      competitionMode: previous.match.competitionMode,
+      competitionMode: 'casual',
       clockPreset: previous.match.clockPreset,
       maxActiveMatches: this.options.maxActiveMatchesPerUser,
     })

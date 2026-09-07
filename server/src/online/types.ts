@@ -10,6 +10,7 @@ import type {
   RoomStatusReason,
 } from '../rooms/types.js'
 import type { OnlineClockState } from './clock.js'
+import type { RatingPool } from './rating.js'
 
 export type OnlineActor = Pick<UserActor, 'userId' | 'sessionId' | 'ipKey' | 'capabilities'>
 
@@ -151,4 +152,15 @@ export type OnlineChatMessage = {
 export type OnlineHistoryPage = {
   matches: OnlineMatchSummary[]
   nextCursor?: string
+}
+
+export type OnlineRating = {
+  pool: RatingPool
+  rating: number
+  gamesPlayed: number
+  wins: number
+  draws: number
+  losses: number
+  provisional: boolean
+  updatedAt: string
 }

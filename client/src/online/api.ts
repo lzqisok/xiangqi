@@ -3,6 +3,7 @@ import type {
   OnlineLobbyMatch,
   OnlineMatchSnapshot,
   OnlineMatchSummary,
+  OnlineRating,
   OnlineVariant,
 } from './types'
 
@@ -10,6 +11,7 @@ export type MatchSetup = {
   variant: OnlineVariant
   gomokuRule?: 'freestyle' | 'renju'
   clockPreset?: 'none' | '10m' | '15m-10s' | '30m'
+  competitionMode?: 'casual' | 'rated'
 }
 
 export function listOnlineLobby(variant?: OnlineVariant) {
@@ -38,6 +40,12 @@ export function listMyMatches(variant?: OnlineVariant) {
   )
 }
 
+export function listMyRatings() {
+  return accountRequest<{ ratings: OnlineRating[] }>('/api/me/ratings').then(
+    (result) => result.ratings,
+  )
+}
+
 export function createOnlineMatch(
   input: MatchSetup & {
     name: string
@@ -56,7 +64,11 @@ export function quickMatchOnline(input: MatchSetup, requestKey: string) {
     '/api/online/quick-match',
     {
       method: 'POST',
-      body: JSON.stringify({ ...input, competitionMode: 'casual', requestKey }),
+      body: JSON.stringify({
+        ...input,
+        competitionMode: input.competitionMode ?? 'casual',
+        requestKey,
+      }),
     },
   )
 }

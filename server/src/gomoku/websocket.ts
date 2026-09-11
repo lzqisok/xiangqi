@@ -48,9 +48,11 @@ export function registerRapfiWebSocketServer(
   wss: WebSocketServer,
   options: {
     liveEngines: Set<RapfiEngine>
+    createEngine?: () => RapfiEngine
     originAllowed?: (request: IncomingMessage) => boolean
     reserveProcess?: () => () => void
     reserveTask?: (owner: string) => () => void
+    canUseEngine?: (request: IncomingMessage) => Promise<boolean>
     taskOwner?: (request: IncomingMessage) => string
   },
 ): void {
@@ -66,7 +68,7 @@ export function registerRapfiWebSocketServer(
       ;(ws as RapfiWebSocket).isAlive = true
     })
 
-    const engine = new RapfiEngine()
+    const engine = options.createEngine?.() ?? new RapfiEngine()
     options.liveEngines.add(engine)
     const requestGate = new RapfiRequestGate()
     let releaseProcess: (() => void) | undefined
@@ -77,6 +79,7 @@ export function registerRapfiWebSocketServer(
       if (code !== null) metrics.increment('xiangqi_engine_exits', { kind: 'rapfi' })
     })
 
+    const connectionRequest = request
     const initialize = async () => {
       try {
         releaseProcess ??= options.reserveProcess?.()
@@ -116,6 +119,16 @@ export function registerRapfiWebSocketServer(
         return
       }
 
+      if (options.canUseEngine && !(await options.canUseEngine(connectionRequest))) {
+        send(ws, {
+          type: 'error',
+          code: 'online_match_analysis_forbidden',
+          requestId: 'requestId' in parsed.message ? parsed.message.requestId : undefined,
+          message: '活跃排位账号禁止使用分析和提示',
+        })
+        return
+      }
+
       if (parsed.message.type === 'init') {
         await initialize()
         return
@@ -140,13 +153,23 @@ export function registerRapfiWebSocketServer(
           return
         }
         const move = await engine.getBestMove(request)
-        if (requestGeneration === requestGate.currentGeneration) {
+        if (
+          requestGeneration === requestGate.currentGeneration &&
+          (!options.canUseEngine || (await options.canUseEngine(connectionRequest)))
+        ) {
           send(ws, {
             type: 'bestmove',
             requestId: request.requestId,
             move,
             elapsedMs: Date.now() - startedAt,
             engine: 'rapfi',
+          })
+        } else if (requestGeneration === requestGate.currentGeneration) {
+          send(ws, {
+            type: 'error',
+            code: 'online_match_analysis_forbidden',
+            requestId: request.requestId,
+            message: '排位期间禁止辅助，或暂时无法校验排位状态',
           })
         }
       } catch (error) {

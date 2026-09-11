@@ -207,6 +207,27 @@ export function createOnlineRouters(
     }),
   )
 
+  meRatingsRouter.get(
+    '/ledger',
+    asyncRoute(async (request, response) => {
+      const actor = requireRolloutAccess(authorize.requireUser(response))
+      response.json(
+        await service.safe(() =>
+          service.ratingLedger(actor, { limit: request.query.limit, cursor: request.query.cursor }),
+        ),
+      )
+    }),
+  )
+  meRatingsRouter.get(
+    '/matches/:id',
+    asyncRoute(async (request, response) => {
+      const actor = requireRolloutAccess(authorize.requireUser(response))
+      response.json(
+        await service.safe(() => service.ratingDetail(actor, String(request.params.id))),
+      )
+    }),
+  )
+
   const errorMiddleware: ErrorRequestHandler = (error, _request, response, next) => {
     if (response.headersSent) return next(error)
     if (error instanceof OnlineMatchError) {

@@ -1,3 +1,4 @@
+import { matchRatingDetail, ratingLedgerPage } from './ratingQueries.js'
 import { createHash, randomInt, randomUUID } from 'node:crypto'
 import type { Database, Queryable } from '../db/database.js'
 import {
@@ -27,6 +28,9 @@ import {
   ratingPool,
   type RatingPool,
 } from './rating.js'
+
+import { matchmakingPolicy, MatchmakingCooldownError } from './matchmakingPolicy.js'
+import { metrics } from '../platform/observability.js'
 
 type MatchRow = {
   id: string
@@ -277,6 +281,14 @@ export class MySqlOnlineMatchRepository {
   }): Promise<{ record: OnlineMatchRecord; created: boolean }> {
     return this.database.transaction(async (client) => {
       const profile = await this.requireActiveProfile(client, input.userId, true)
+      const partitionKey = `${input.variant}:${input.variant === 'gomoku' ? (input.gomokuRule ?? 'freestyle') : '-'}:${input.competitionMode}:${input.clockPreset}`
+      await client.query(
+        `INSERT INTO matchmaking_partitions (partition_key) VALUES ('__capacity__')
+         ON DUPLICATE KEY UPDATE updated_at = updated_at`,
+      )
+      await client.query(
+        "SELECT partition_key FROM matchmaking_partitions WHERE partition_key = '__capacity__' FOR UPDATE",
+      )
       const previousRequest = await client.query<{ match_id: string }>(
         `SELECT match_id FROM matchmaking_requests
          WHERE user_id = ? AND request_key = ?`,
@@ -288,14 +300,6 @@ export class MySqlOnlineMatchRepository {
           created: false,
         }
       }
-      const partitionKey = `${input.variant}:${input.variant === 'gomoku' ? (input.gomokuRule ?? 'freestyle') : '-'}:${input.competitionMode}:${input.clockPreset}`
-      await client.query(
-        `INSERT INTO matchmaking_partitions (partition_key) VALUES ('__capacity__')
-         ON DUPLICATE KEY UPDATE updated_at = updated_at`,
-      )
-      await client.query(
-        "SELECT partition_key FROM matchmaking_partitions WHERE partition_key = '__capacity__' FOR UPDATE",
-      )
       await client.query(
         `INSERT INTO matchmaking_partitions (partition_key) VALUES (?)
          ON DUPLICATE KEY UPDATE updated_at = updated_at`,
@@ -325,13 +329,43 @@ export class MySqlOnlineMatchRepository {
           created: true,
         }
       }
+      const cooldown = await client.query<{ retry_after: number }>(
+        `SELECT CEIL(TIMESTAMPDIFF(MICROSECOND, CURRENT_TIMESTAMP(6), blocked_until) / 1000000) AS retry_after
+         FROM matchmaking_cancellation_limits WHERE user_id = ? AND blocked_until > CURRENT_TIMESTAMP(6)`,
+        [input.userId],
+      )
+      if (cooldown.rows[0]) {
+        metrics.increment('xiangqi_matchmaking_protection', { reason: 'cancellation_cooldown' })
+        throw new MatchmakingCooldownError(Number(cooldown.rows[0].retry_after))
+      }
       if (input.maxActiveMatches !== undefined) {
         await this.assertActiveMatchCapacity(client, input.userId, input.maxActiveMatches)
       }
+      const repeatFilter =
+        input.competitionMode === 'rated'
+          ? `AND (
+        SELECT COUNT(*) FROM match_participants a
+        JOIN matches h ON h.id = a.match_id
+        JOIN match_participants b ON b.match_id = h.id AND b.user_id = q.user_id
+        WHERE a.user_id = ? AND a.side IS NOT NULL AND b.side IS NOT NULL
+          AND h.matchmaking = true AND h.competition_mode = 'rated'
+          AND h.variant = q.variant AND h.gomoku_rule <=> q.gomoku_rule
+          AND h.started_at > ?
+      ) < ?`
+          : ''
+      const repeatParameters =
+        input.competitionMode === 'rated'
+          ? [
+              input.userId,
+              new Date(Date.now() - matchmakingPolicy.repeatOpponentWindowMs),
+              matchmakingPolicy.repeatOpponentLimit,
+            ]
+          : []
       const candidate = await client.query<{ user_id: string; match_id: string }>(
-        `SELECT user_id, match_id FROM matchmaking_entries
+        `SELECT q.user_id, q.match_id FROM matchmaking_entries q
          WHERE user_id <> ? AND variant = ? AND gomoku_rule <=> ?
            AND competition_mode = ? AND clock_preset = ? AND expires_at > CURRENT_TIMESTAMP(6)
+         ${repeatFilter}
          ORDER BY created_at, match_id LIMIT 1 FOR UPDATE SKIP LOCKED`,
         [
           input.userId,
@@ -339,6 +373,7 @@ export class MySqlOnlineMatchRepository {
           input.variant === 'gomoku' ? (input.gomokuRule ?? 'freestyle') : null,
           input.competitionMode,
           input.clockPreset,
+          ...repeatParameters,
         ],
       )
       if (candidate.rows[0]) {
@@ -382,6 +417,21 @@ export class MySqlOnlineMatchRepository {
           [input.userId, input.requestKey, waiting.id],
         )
         return { record: await this.requireRecord(client, waiting.id), created: false }
+      }
+      if (input.competitionMode === 'rated') {
+        const blocked = await client.query(
+          `SELECT user_id FROM matchmaking_entries WHERE user_id <> ? AND variant = ?
+           AND gomoku_rule <=> ? AND competition_mode = 'rated' AND clock_preset = ?
+           AND expires_at > CURRENT_TIMESTAMP(6) LIMIT 1`,
+          [
+            input.userId,
+            input.variant,
+            input.variant === 'gomoku' ? (input.gomokuRule ?? 'freestyle') : null,
+            input.clockPreset,
+          ],
+        )
+        if (blocked.rowCount)
+          metrics.increment('xiangqi_matchmaking_protection', { reason: 'repeat_opponent_wait' })
       }
       if (input.maxQueueEntries !== undefined) {
         const queued = await client.query<{ count: string }>(
@@ -443,6 +493,13 @@ export class MySqlOnlineMatchRepository {
   async cancelMatchmaking(userId: string): Promise<{ cancelled: boolean; matchId?: string }> {
     return this.database.transaction(async (client) => {
       await this.requireActiveProfile(client, userId, true)
+      await client.query(
+        `INSERT INTO matchmaking_partitions (partition_key) VALUES ('__capacity__')
+         ON DUPLICATE KEY UPDATE updated_at = updated_at`,
+      )
+      await client.query(
+        "SELECT partition_key FROM matchmaking_partitions WHERE partition_key = '__capacity__' FOR UPDATE",
+      )
       const entry = await client.query<{ match_id: string }>(
         'SELECT match_id FROM matchmaking_entries WHERE user_id = ? FOR UPDATE',
         [userId],
@@ -450,6 +507,34 @@ export class MySqlOnlineMatchRepository {
       if (!entry.rows[0]) return { cancelled: false }
       const match = await this.requireMatch(client, entry.rows[0].match_id, true)
       if (match.phase === 'waiting') {
+        const nowResult = await client.query<{ now: Date }>('SELECT CURRENT_TIMESTAMP(6) AS now')
+        const now = nowResult.rows[0].now
+        const previous = await client.query<{
+          window_started_at: Date
+          cancellation_count: number
+        }>(
+          'SELECT window_started_at, cancellation_count FROM matchmaking_cancellation_limits WHERE user_id = ? FOR UPDATE',
+          [userId],
+        )
+        const current = previous.rows[0]
+        const inWindow =
+          current &&
+          now.getTime() - current.window_started_at.getTime() <
+            matchmakingPolicy.cancellationWindowMs
+        const count = inWindow ? current.cancellation_count + 1 : 1
+        await client.query(
+          `INSERT INTO matchmaking_cancellation_limits (user_id, window_started_at, cancellation_count, blocked_until)
+           VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE window_started_at = VALUES(window_started_at),
+           cancellation_count = VALUES(cancellation_count), blocked_until = VALUES(blocked_until)`,
+          [
+            userId,
+            inWindow ? current.window_started_at : now,
+            count,
+            count >= matchmakingPolicy.cancellationLimit
+              ? new Date(now.getTime() + matchmakingPolicy.cancellationCooldownMs)
+              : null,
+          ],
+        )
         await client.query("DELETE FROM matches WHERE id = ? AND phase = 'waiting'", [match.id])
         return { cancelled: true, matchId: match.id }
       }
@@ -1123,6 +1208,7 @@ export class MySqlOnlineMatchRepository {
           match.revision,
         ],
       )
+      await this.settleRatedMatch(client, matchId)
       return this.requireRecord(client, matchId)
     })
   }
@@ -1172,6 +1258,81 @@ export class MySqlOnlineMatchRepository {
       await this.settleRatedMatch(client, matchId)
       return this.requireRecord(client, matchId)
     })
+  }
+
+  ratingDetail(userId: string, matchId: string) {
+    return matchRatingDetail(this.database, userId, matchId)
+  }
+  ratingLedger(userId: string, limit: number, cursor?: string) {
+    return ratingLedgerPage(this.database, userId, limit, cursor)
+  }
+
+  async interruptMatch(
+    matchId: string,
+    source: 'service_restart' | 'service_failure' | 'admin_abort',
+    operator: string,
+    reason: string,
+  ): Promise<OnlineMatchRecord | null> {
+    if (
+      !['service_restart', 'service_failure', 'admin_abort'].includes(source) ||
+      !operator.trim() ||
+      operator.length > 100 ||
+      !reason.trim() ||
+      reason.length > 200
+    )
+      throw new Error('Invalid interruption audit')
+    return this.database.transaction(async (client) => {
+      const match = await this.requireMatch(client, matchId, true)
+      if (
+        match.phase !== 'playing' ||
+        (source !== 'admin_abort' && match.competitionMode !== 'rated')
+      )
+        return null
+      const state = await this.state(client, match, true)
+      const stopped = state.clock
+        ? { ...state, clock: stopOnlineClock(state.clock, authoritativeClockNow()) }
+        : state
+      await client.query(
+        `INSERT INTO match_interruptions (match_id, source, operator_name, reason) VALUES (?, ?, ?, ?)`,
+        [matchId, source, operator.trim(), reason.trim()],
+      )
+      await client.query(
+        `UPDATE matches SET phase = 'finished', status = 'draw', status_reason = 'abandoned', revision = revision + 1, finished_at = CURRENT_TIMESTAMP(6), updated_at = CURRENT_TIMESTAMP(6) WHERE id = ?`,
+        [matchId],
+      )
+      await client.query(
+        `UPDATE match_states SET revision = revision + 1, public_state = ?, referee_state = ?, updated_at = CURRENT_TIMESTAMP(6) WHERE match_id = ?`,
+        [JSON.stringify(onlinePublicState(stopped)), JSON.stringify(stopped), matchId],
+      )
+      await client.query(
+        "UPDATE match_proposals SET status = 'expired', resolved_at = CURRENT_TIMESTAMP(6) WHERE match_id = ? AND status = 'pending'",
+        [matchId],
+      )
+      return this.requireRecord(client, matchId)
+    })
+  }
+
+  async interruptRatedAfterRestart(): Promise<void> {
+    const matches = await this.database.query<{ id: string }>(
+      "SELECT id FROM matches WHERE phase = 'playing' AND competition_mode = 'rated'",
+    )
+    for (const match of matches.rows)
+      await this.interruptMatch(
+        match.id,
+        'service_restart',
+        'server-startup',
+        '服务重启，排位中止且不计分',
+      )
+  }
+
+  async hasActiveRatedMatch(userId: string): Promise<boolean> {
+    const result = await this.database.query(
+      `SELECT m.id FROM matches m JOIN match_participants p ON p.match_id = m.id
+       WHERE p.user_id = ? AND p.side IS NOT NULL AND p.left_at IS NULL
+         AND m.competition_mode = 'rated' AND m.phase = 'playing' LIMIT 1`,
+      [userId],
+    )
+    return result.rowCount > 0
   }
 
   async listRatings(userId: string): Promise<OnlineRating[]> {
@@ -1320,7 +1481,7 @@ export class MySqlOnlineMatchRepository {
     const redUserId = participants.find((item) => item.side === 'red')?.userId
     const blackUserId = participants.find((item) => item.side === 'black')?.userId
     if (!redUserId || !blackUserId || redUserId === blackUserId) {
-      throw new Error('排位对局缺少有效双方账号')
+      return
     }
     const pool = ratingPool(match.variant, match.gomokuRule)
     const orderedUsers = [redUserId, blackUserId].sort()

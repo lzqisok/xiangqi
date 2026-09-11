@@ -96,3 +96,25 @@ export type OnlineRating = {
   provisional: boolean
   updatedAt: string
 }
+
+export type MatchRatingDetail = {
+  matchId: string
+  state: 'pending' | 'settled' | 'voided' | 'unrated'
+  reason: string | null
+  before: number | null
+  after: number | null
+  delta: number | null
+  voidReason: string | null
+}
+export type RatingLedgerEntry = {
+  id: string
+  matchId: string
+  pool: OnlineRating['pool']
+  type: 'settlement' | 'void'
+  before: number
+  after: number
+  delta: number
+  reason: string
+  createdAt: string
+  voided: boolean
+}

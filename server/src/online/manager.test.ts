@@ -418,3 +418,42 @@ test('a reconnected socket is not adjudicated by its old deadline while online p
     manager.dispose()
   }
 })
+
+test('database-unavailable verdicts interrupt rated games without retrying a scored loss', async () => {
+  const { DatabaseUnavailableError } = await import('../db/errors.js')
+  const source = record('00000000-0000-4000-8000-000000000199')
+  source.match.competitionMode = 'rated'
+  source.state.clock = {
+    preset: '10m',
+    redRemainingMs: 1,
+    blackRemainingMs: 600000,
+    incrementMs: 0,
+    delayMs: 0,
+    activeSide: 'red',
+    deadlineAt: new Date(Date.now() - 50).toISOString(),
+  }
+  const { service } = fakeService([source])
+  let verdicts = 0,
+    interruptions = 0
+  service.repository.adjudicateClock = async () => {
+    verdicts++
+    throw new DatabaseUnavailableError()
+  }
+  service.repository.interruptMatch = async (_id, reason) => {
+    assert.equal(reason, 'service_failure')
+    interruptions++
+    source.match.phase = 'finished'
+    source.match.status = 'draw'
+    source.match.statusReason = 'abandoned'
+    return source
+  }
+  const manager = new OnlineMatchManager(service, 60000, 50, 2, 30000, 5)
+  try {
+    await manager.restore()
+    await eventually(() => source.match.phase === 'finished')
+    assert.equal(verdicts, 1)
+    assert.equal(interruptions, 1)
+  } finally {
+    manager.dispose()
+  }
+})

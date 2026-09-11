@@ -25,3 +25,11 @@ Contract-Version: 1
 - `server/src/protocol.test.ts`、在线路由/服务/管理器测试覆盖字段校验、revision、幂等、账号接管和 WebSocket 状态。
 - `client/src/online/model.test.ts` 与 API 测试覆盖客户端快照合并、账号边界和冲突处理。
 - 揭棋记录投影、ICCS PGN、象棋重复裁定与五子棋规则语料继续作为 CI 阻断测试，不因发布批次降级为非阻断检查。
+
+## B 阶段兼容扩展
+
+新增只读本人接口 `/api/me/ratings`、`/api/me/ratings/ledger`、`/api/me/ratings/matches/:id`，字段、分页、作废和 null 语义见 [积分策略](online-rating-policy.md)。这些查询不接受客户端指定所有者；错误游标/页大小为 400，非参与者或其他账号游标为 404。响应数字为 JSON number，未结算值为 null；读取受账号/IP/会话限流保护。
+
+`matchmaking_cooldown` 使用 HTTP 429、`retryAfter` 和 `Retry-After`；`rated_undo_forbidden` 拒绝排位悔棋，`online_match_analysis_forbidden` 拒绝引擎辅助。后者同时覆盖 `/ws` 和 `/gomoku-ws` 的账号活跃排位约束。新增查询和现有错误消息扩展保持版本 1 的字段结构，旧客户端仍由服务端强制公平规则。
+
+管理员中止无公共 HTTP/WS 路由。运维 CLI 中止使用既有 finished/draw/abandoned 快照，新的本人积分接口解释 service_restart/service_failure/admin_abort 原因。真实 HTTP 路由授权/分页与真实五子棋 WS 拦截测试分别在 `mysql.integration.test.ts`、`gomoku/websocket.test.ts`，不能以契约字符串检查替代这些测试。

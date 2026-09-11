@@ -1,3 +1,4 @@
+import { MatchmakingCooldownError } from './matchmakingPolicy.js'
 import { randomUUID } from 'node:crypto'
 import type { MatchEntity, MatchVariant } from '../repositories/contracts.js'
 import { RepositoryNotFoundError, RepositoryRevisionConflictError } from '../db/errors.js'
@@ -229,14 +230,37 @@ export class OnlineMatchService {
     return result
   }
 
+  async ratingDetail(actor: OnlineActor, matchId: string) {
+    requireHistory(actor)
+    if (!UUID.test(matchId)) throw new OnlineMatchError('invalid_match_id')
+    return this.repository.ratingDetail(actor.userId, matchId)
+  }
+
+  async ratingLedger(actor: OnlineActor, input: Record<string, unknown>) {
+    requireHistory(actor)
+    const limit = input.limit === undefined ? 20 : Number(input.limit)
+    if (
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 100 ||
+      (input.cursor !== undefined && (typeof input.cursor !== 'string' || !UUID.test(input.cursor)))
+    )
+      throw new OnlineMatchError('invalid_pagination')
+    return this.repository.ratingLedger(actor.userId, limit, input.cursor as string | undefined)
+  }
+
   ratings(actor: OnlineActor) {
     requireHistory(actor)
     return this.repository.listRatings(actor.userId)
   }
 
-  cancelMatchmaking(actor: OnlineActor) {
+  async cancelMatchmaking(actor: OnlineActor) {
     requirePlay(actor)
-    return this.repository.cancelMatchmaking(actor.userId)
+    const result = await this.repository.cancelMatchmaking(actor.userId)
+    metrics.increment('xiangqi_matchmaking_cancellations', {
+      result: result.cancelled ? 'cancelled' : 'noop',
+    })
+    return result
   }
 
   async createInvite(actor: OnlineActor, matchId: string, allowedSide?: unknown) {
@@ -533,6 +557,8 @@ export class OnlineMatchService {
     const kind = input.kind
     if (kind !== 'undo' && kind !== 'draw' && kind !== 'swap')
       throw new OnlineMatchError('invalid_proposal')
+    if (kind === 'undo' && record.match.competitionMode === 'rated')
+      throw new OnlineMatchError('rated_undo_forbidden', 409, '排位对局禁止悔棋')
     if (record.proposal) throw new OnlineMatchError('proposal_pending', 409, '已有待处理协商')
     if (kind === 'swap' ? record.match.phase !== 'waiting' : record.match.phase !== 'playing') {
       throw new OnlineMatchError('proposal_not_allowed')
@@ -572,6 +598,8 @@ export class OnlineMatchService {
       proposal: { action: 'resolve', id: active.id, status: accept ? 'accepted' : 'rejected' },
     }
     if (accept && active.kind === 'undo') {
+      if (record.match.competitionMode === 'rated')
+        throw new OnlineMatchError('rated_undo_forbidden', 409, '排位对局禁止悔棋')
       const moves = record.state.moves.slice(0, -1)
       const turn =
         record.match.variant === 'gomoku'
@@ -840,6 +868,14 @@ export class OnlineMatchService {
       if (error instanceof RepositoryNotFoundError) throw new OnlineMatchError('not_found', 404)
       if (error instanceof RepositoryRevisionConflictError) {
         throw new OnlineMatchError('revision_conflict', 409, String(error.currentRevision ?? ''))
+      }
+      if (error instanceof MatchmakingCooldownError) {
+        throw new OnlineMatchError(
+          'matchmaking_cooldown',
+          429,
+          `取消匹配过于频繁，请在 ${error.retryAfterSeconds} 秒后重试`,
+          error.retryAfterSeconds,
+        )
       }
       if (error instanceof ActiveMatchQuotaError) {
         throw new OnlineMatchError(

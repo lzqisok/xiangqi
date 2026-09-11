@@ -1,4 +1,6 @@
+import { MatchRatingPanel, RatingLedgerPanel } from './RatingPanel'
 import { useEffect, useMemo, useState } from 'react'
+import { AccountApiError } from '../auth/api'
 import AccountEntry from '../auth/AccountEntry'
 import { useAuth } from '../auth/AuthContext'
 import Board from '../components/Board'
@@ -210,7 +212,13 @@ function OnlineAccountApp() {
       const result = await action()
       location.href = onlineRoomUrl(location.href, result.match.id, game)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '公网对局操作失败')
+      setError(
+        cause instanceof AccountApiError && cause.code === 'matchmaking_cooldown'
+          ? `取消匹配过于频繁，请在 ${cause.retryAfterSeconds ?? 600} 秒后重试。`
+          : cause instanceof Error
+            ? cause.message
+            : '公网对局操作失败',
+      )
     } finally {
       setBusy(false)
     }
@@ -352,6 +360,13 @@ function OnlineAccountApp() {
           >
             {busy ? '正在匹配…' : competitionMode === 'rated' ? '开始排位匹配' : '开始休闲匹配'}
           </button>
+          {competitionMode === 'rated' && (
+            <p>
+              公平竞赛：排位禁止悔棋及使用引擎辅助。匹配开局即计入规则，尚未走子也不能通过单方断线免扣分。双方断线宽限均届满则按放弃处理，不计分。同一分池与同一对手
+              24 小时最多匹配 3 局排位，达到上限后等待其他对手。
+            </p>
+          )}
+          <p>10 分钟内成功取消匹配 5 次后，新匹配暂停 10 分钟。</p>
         </article>
 
         <article className="card online-create-card">
@@ -409,6 +424,7 @@ function OnlineAccountApp() {
         </div>
       </section>
 
+      <RatingLedgerPanel />
       <section className="card online-list-section">
         <div className="online-section-title">
           <div>
@@ -728,6 +744,7 @@ function OnlineMatchRoom({
               {match.proposal.canRespond && (
                 <>
                   <button
+                    disabled={match.competitionMode === 'rated' && match.proposal.kind === 'undo'}
                     onClick={() =>
                       send('match-proposal-respond', {
                         proposalId: match.proposal!.id,
@@ -760,13 +777,20 @@ function OnlineMatchRoom({
               )}
             </section>
           )}
+          {readOnly !== 'public' && match.role !== 'spectator' && (
+            <MatchRatingPanel matchId={match.id} revision={match.revision} />
+          )}
           <section className="card online-match-tools">
             <small>MATCH ACTIONS</small>
             <h2>对局操作</h2>
+            {match.competitionMode === 'rated' && (
+              <p>排位对局禁止悔棋，单方断线超过宽限按负局计分。</p>
+            )}
             {color && match.phase === 'playing' && !readOnly && (
               <div className="online-choice-row">
                 <button
-                  disabled={pending || !match.moves.length}
+                  disabled={pending || !match.moves.length || match.competitionMode === 'rated'}
+                  title={match.competitionMode === 'rated' ? '排位对局禁止悔棋' : undefined}
                   onClick={() => send('match-propose', { kind: 'undo' })}
                 >
                   申请悔棋

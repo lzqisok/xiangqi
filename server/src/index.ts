@@ -1,3 +1,4 @@
+import { engineAccessAllowed } from './online/engineAccess.js'
 import './env.js'
 import express from 'express'
 import { createServer } from 'http'
@@ -570,6 +571,8 @@ if (onlineService && authRuntime) {
   app.use('/api/me/matches', onlineRouters.meMatchesRouter)
   app.use('/api/me/ratings', onlineRouters.meRatingsRouter)
   app.use(onlineRouters.errorMiddleware)
+  await assertSchemaReady(database!)
+  await onlineRepository!.interruptRatedAfterRestart()
   void onlineManager
     ?.restore()
     .catch((error) => logRuntimeError('online_match_recovery_failed', error))
@@ -579,6 +582,12 @@ if (authRuntime) app.use(authRuntime.errorMiddleware)
 const liveRapfiEngines = new Set<RapfiEngine>()
 registerRapfiWebSocketServer(gomokuWss, {
   liveEngines: liveRapfiEngines,
+  canUseEngine: (request) => {
+    const userId = socketActors.get(request)?.userId
+    return engineAccessAllowed(
+      userId && onlineRepository ? () => onlineRepository.hasActiveRatedMatch(userId) : undefined,
+    )
+  },
   originAllowed: (request) => requestOriginAllowed(request, platformConfig),
   reserveProcess: () => engineGovernor.reserveProcess('rapfi'),
   reserveTask: (owner) => engineGovernor.reserveTask(owner, 'finite'),
@@ -626,6 +635,36 @@ wss.on('connection', async (ws, request) => {
   let infoEngine: PikafishEngine | null = null
   let releaseAnalysisTask: (() => void) | undefined
 
+  const canUseEngine = () =>
+    engineAccessAllowed(
+      actor && onlineRepository
+        ? () => onlineRepository.hasActiveRatedMatch(actor.userId)
+        : undefined,
+    )
+  let lastDeniedOutput: string | undefined
+  const sendEngineOutput = async (payload: string) => {
+    if (!(await canUseEngine()) || onlineManager?.isSubscribed(ws)) {
+      const { requestId } = JSON.parse(payload) as { requestId?: string }
+      const key = requestId || 'stream'
+      if (lastDeniedOutput !== key) {
+        lastDeniedOutput = key
+        sendError(
+          ws,
+          '排位期间禁止辅助，或暂时无法校验排位状态',
+          requestId,
+          'online_match_analysis_forbidden',
+        )
+      }
+      localAnalysisEngine?.stopAnalysis()
+      if (localAnalysisEngine) detachAnalysisHandler(localAnalysisEngine)
+      localAnalysisRequestId = undefined
+      releaseAnalysisTask?.()
+      releaseAnalysisTask = undefined
+      return
+    }
+    if (ws.readyState === WebSocket.OPEN) ws.send(payload)
+  }
+
   const attachAnalysisHandler = (engine: PikafishEngine) => {
     if (infoHandler && infoEngine) {
       infoEngine.removeListener('info', infoHandler)
@@ -637,7 +676,9 @@ wss.on('connection', async (ws, request) => {
         analysis.requestId === localAnalysisRequestId &&
         ws.readyState === WebSocket.OPEN
       ) {
-        ws.send(JSON.stringify({ type: 'info', requestId: localAnalysisRequestId, data: info }))
+        void sendEngineOutput(
+          JSON.stringify({ type: 'info', requestId: localAnalysisRequestId, data: info }),
+        )
       }
     }
     infoEngine = engine
@@ -750,10 +791,10 @@ wss.on('connection', async (ws, request) => {
         'analyze-nodes',
         'analyze',
       ]).has(msg.type)
-      if (engineMessage && onlineManager?.isSubscribed(ws)) {
+      if (engineMessage && (onlineManager?.isSubscribed(ws) || !(await canUseEngine()))) {
         sendError(
           ws,
-          '公网实战连接禁止使用分析和提示',
+          '活跃排位账号或公网实战连接禁止使用分析和提示',
           msg.requestId,
           'online_match_analysis_forbidden',
         )
@@ -795,7 +836,7 @@ wss.on('connection', async (ws, request) => {
             actor ? `user:${actor.userId}` : 'local',
           )
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(
+            await sendEngineOutput(
               JSON.stringify({
                 type: 'game-lease',
                 requestId: msg.requestId,
@@ -856,7 +897,7 @@ wss.on('connection', async (ws, request) => {
             if (!result.move) {
               sendError(ws, 'Engine returned no move', requestId)
             } else if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
-              ws.send(
+              await sendEngineOutput(
                 JSON.stringify({
                   type: 'bestmove',
                   requestId,
@@ -900,7 +941,7 @@ wss.on('connection', async (ws, request) => {
             if (!result.move) {
               sendError(ws, 'Engine returned no hint', requestId)
             } else if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
-              ws.send(
+              await sendEngineOutput(
                 JSON.stringify({
                   type: 'bestmove',
                   requestId,
@@ -946,7 +987,7 @@ wss.on('connection', async (ws, request) => {
               getSearchLimit(msg),
             )
             if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'candidates', requestId, candidates }))
+              await sendEngineOutput(JSON.stringify({ type: 'candidates', requestId, candidates }))
             }
           } catch (err) {
             logRuntimeError('engine_candidates_failed', err)
@@ -1006,7 +1047,7 @@ wss.on('connection', async (ws, request) => {
                 bestMove: candidate.move,
                 pv: candidate.pv,
               })
-              ws.send(
+              await sendEngineOutput(
                 JSON.stringify({
                   type: 'review-progress',
                   requestId,
@@ -1017,7 +1058,9 @@ wss.on('connection', async (ws, request) => {
             }
 
             if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'review-result', requestId, positions }))
+              await sendEngineOutput(
+                JSON.stringify({ type: 'review-result', requestId, positions }),
+              )
             }
           } catch (err) {
             logRuntimeError('engine_review_failed', err)
@@ -1084,7 +1127,7 @@ wss.on('connection', async (ws, request) => {
                 bestMove: candidate.move,
                 pv: candidate.pv,
               })
-              ws.send(
+              await sendEngineOutput(
                 JSON.stringify({
                   type: 'node-analysis-progress',
                   requestId,
@@ -1095,7 +1138,9 @@ wss.on('connection', async (ws, request) => {
             }
 
             if (generation === requestGeneration && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'node-analysis-result', requestId, positions }))
+              await sendEngineOutput(
+                JSON.stringify({ type: 'node-analysis-result', requestId, positions }),
+              )
             }
           } catch (err) {
             logRuntimeError('engine_node_analysis_failed', err)

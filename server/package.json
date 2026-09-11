@@ -17,7 +17,8 @@
     "test": "tsx --test \"src/**/*.test.ts\"",
     "staging:business-load": "node scripts/staging-business-load.mjs",
     "staging:faults": "node scripts/staging-faults.mjs",
-    "test:acceptance-tools": "node --test scripts/acceptance-tools.test.mjs"
+    "test:acceptance-tools": "node --test scripts/acceptance-tools.test.mjs",
+    "online:interrupt": "tsx src/online/interrupt-cli.ts"
   },
   "dependencies": {
     "argon2": "^0.45.1",

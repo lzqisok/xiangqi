@@ -41,7 +41,7 @@ test('only normal timed rated matchmaking conclusions are eligible', () => {
   assert.equal(isRatedMatchEligible(match({ competitionMode: 'casual' })), false)
   assert.equal(isRatedMatchEligible(match({ matchmaking: false })), false)
   assert.equal(isRatedMatchEligible(match({ clockPreset: 'none' })), false)
-  assert.equal(isRatedMatchEligible(match({ statusReason: 'disconnect' })), false)
+  assert.equal(isRatedMatchEligible(match({ statusReason: 'disconnect' })), true)
   assert.equal(isRatedMatchEligible(match({ statusReason: 'abandoned' })), false)
 })
 
@@ -70,4 +70,13 @@ test('Elo calculation is zero-sum and uses a shared provisional K factor', () =>
   assert.equal(established.kFactor, 24)
   assert.equal(established.redDelta + established.blackDelta, 0)
   assert.ok(established.redDelta < 0)
+})
+
+test('unstarted and interrupted games cannot settle ratings', () => {
+  for (const overrides of [
+    { startedAt: null },
+    { phase: 'waiting' as const },
+    { statusReason: 'abandoned' as const },
+  ])
+    assert.equal(isRatedMatchEligible(match(overrides)), false)
 })

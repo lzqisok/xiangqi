@@ -115,6 +115,11 @@ function routeRules(
     return dimensions('match_read', 60, 60_000, true)
   if (request.method === 'GET' && path === '/api/online/lobby')
     return dimensions('lobby_read', 60, 60_000)
+  if (
+    request.method === 'GET' &&
+    (path === '/api/me/ratings' || path.startsWith('/api/me/ratings/'))
+  )
+    return dimensions('ratings_read', 120, 60_000)
   if (request.method === 'GET' && path === '/api/me/matches')
     return dimensions('history_read', 60, 60_000)
   return []

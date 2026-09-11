@@ -174,3 +174,56 @@ test('rated matchmaking requires a server-authoritative clock before repository 
     { code: 'rated_clock_required' },
   )
 })
+
+test('rated undo requests and legacy acceptance are rejected while casual undo remains available', async () => {
+  for (const variant of ['xiangqi', 'jieqi', 'gomoku'] as const) {
+    const source = record()
+    Object.assign(source.match, {
+      variant,
+      phase: 'playing',
+      status: 'playing',
+      competitionMode: 'rated',
+    })
+    const commits: unknown[] = []
+    const repository = {
+      findCommand: async () => null,
+      findAccessible: async () => source,
+      commitCommand: async (input: unknown) => {
+        commits.push(input)
+        return { record: source }
+      },
+    } as unknown as MySqlOnlineMatchRepository
+    const service = new OnlineMatchService(repository)
+    const actor = {
+      userId: 'black-user',
+      sessionId: 'test',
+      ipKey: 'test',
+      capabilities: ['online:play', 'online:watch'],
+    }
+    const input = {
+      matchId: source.match.id,
+      commandId: '00000000-0000-4000-8000-000000000020',
+      expectedRevision: 8,
+    }
+    await assert.rejects(service.propose(actor, { ...input, kind: 'undo' }), {
+      code: 'rated_undo_forbidden',
+    })
+    source.proposal = {
+      id: 'legacy',
+      kind: 'undo',
+      proposedByUserId: 'red-user',
+      deadline: new Date(Date.now() + 30000),
+    }
+    await assert.rejects(
+      service.respondProposal(actor, { ...input, proposalId: 'legacy', accept: true }),
+      { code: 'rated_undo_forbidden' },
+    )
+    assert.equal(commits.length, 0)
+    await service.respondProposal(actor, { ...input, proposalId: 'legacy', accept: false })
+    assert.equal(commits.length, 1)
+    source.proposal = null
+    source.match.competitionMode = 'casual'
+    await service.propose(actor, { ...input, kind: 'undo' })
+    assert.equal(commits.length, 2)
+  }
+})

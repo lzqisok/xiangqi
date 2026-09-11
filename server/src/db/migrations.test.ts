@@ -15,7 +15,7 @@ test('migration files are contiguous, immutable inputs with the expected latest 
   const migrations = await loadMigrations()
   assert.deepEqual(
     migrations.map((migration) => migration.version),
-    [1, 2, 3, 4, 5, 6, 7],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9],
   )
   assert.equal(migrations.at(-1)?.version, EXPECTED_SCHEMA_VERSION)
   assert.ok(migrations.every((migration) => /^[0-9a-f]{64}$/.test(migration.checksum)))
@@ -56,6 +56,8 @@ test('checked-in migration SQL does not contain down or destructive schema opera
     '0005_user_documents.sql',
     '0006_online_match_completion_reasons.sql',
     '0007_ratings.sql',
+    '0008_matchmaking_fairness.sql',
+    '0009_match_interruptions.sql',
   ]) {
     const sql = await readFile(path.join(defaultMigrationsDirectory(), file), 'utf8')
     assert.doesNotMatch(sql, /\b(?:DROP\s+(?:TABLE|COLUMN)|TRUNCATE)\b/i)

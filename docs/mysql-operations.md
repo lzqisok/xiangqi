@@ -52,6 +52,12 @@ pnpm --filter server db:check
 
 MySQL DDL 会隐式提交，不能声称把整批 DDL 包在一个可回滚事务中。迁移文件因此只向前、按版本记录，初始建表使用 `IF NOT EXISTS` 允许在单条原子 DDL 成功后安全重跑。发布兼容窗口使用“扩展 schema → 部署兼容代码 → 切换写路径 → 后续版本清理”，不提供自动 down migration。
 
+## 0008 匹配公平性迁移
+
+`0008_matchmaking_fairness.sql` 新增每账号一行的取消窗口与冷却状态，不修改已有对局或积分记录。发布前运行 migration 并通过 `db:check`，再部署预期 schema 8 的应用。原 migration 文件保持不变。
+
+DDL 可向前重跑建表，但旧应用预期 schema 7，不能直接视为可热回滚：旧版本健康检查会拒绝 schema 8。应用回滚需关闭公网入口，并采用已验证兼容 schema 8 的回滚包或维护窗口方案；本批未执行 staging 回滚演练。临时 MySQL 已验证空库完整迁移和从 0001 的顺序升级。
+
 ## 健康与关闭
 
 - `GET /health/live` 不访问外部依赖。
@@ -86,3 +92,9 @@ pnpm --filter server db:restore:verify
 ```
 
 恢复后会验证 migration 版本、账号关联、缺失状态与 revision、参与者匿名化、积分余额/结算/流水，并重放裁判状态核对精确公开投影；任何失败均非零退出。具体检查及负载工具见 [A 阶段验收说明](online-reliability-acceptance.md)。上线前仍须用真实备份执行一次并记录 RPO/RTO、样本对局投影结果和操作者；没有实际执行记录时不得勾选 TODO 的恢复演练项。
+
+## 0009 中止审计与发布顺序
+
+`0009_match_interruptions.sql` 新增对局中止审计，保存 source、operator_name、reason 和时间，随对局硬删除级联清理；后续审计保留设计在 D 阶段处理。当前应用预期 schema 9；应先执行 0008/0009 migration，再部署应用。旧应用要求精确旧 schema，未经验证不能直接热回滚。
+
+启动前会检查 schema 并中止未结束排位，记录为服务重启不计分；部署前应摘流并等待当前排位完成。运维人工中止命令为 `pnpm --filter server online:interrupt <matchId> <operator> <reason>`；仅可信主机数据库操作员可执行，不通过用户请求触发。终局已完成时不会覆盖结果，输出 interrupted=false。不执行自动历史积分重算。

@@ -26,6 +26,7 @@ const RATED_REASONS = new Set([
   'forbidden',
   'full-board',
   'timeout',
+  'disconnect',
 ])
 
 export const ratingPolicy = {
@@ -50,6 +51,7 @@ export function ratingPool(
 export function isRatedMatchEligible(match: MatchEntity): boolean {
   return (
     match.phase === 'finished' &&
+    match.startedAt !== null &&
     match.status !== 'playing' &&
     match.competitionMode === 'rated' &&
     match.matchmaking &&

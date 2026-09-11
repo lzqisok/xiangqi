@@ -1,3 +1,4 @@
+import { DatabaseUnavailableError } from '../db/errors.js'
 import type { WebSocket } from 'ws'
 import type { UserActor } from '../auth/types.js'
 import { OnlineMatchError, OnlineMatchService } from './service.js'
@@ -24,6 +25,7 @@ export class OnlineMatchManager {
   private readonly clockTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly matchPhases = new Map<string, OnlineMatchRecord['match']['phase']>()
 
+  private readonly failedVerdicts = new Set<string>()
   private readonly recovery: RecoveryTasks
   private scanTimer?: ReturnType<typeof setTimeout>
   private disposed = false
@@ -52,6 +54,10 @@ export class OnlineMatchManager {
     await this.recovery.submit('scan', async () => {
       try {
         const records = await this.service.repository.recoverActiveMatches()
+        const activeIds = new Set(records.map((record) => record.match.id))
+        for (const [id, phase] of this.matchPhases) {
+          if (phase === 'playing' && !activeIds.has(id)) await this.refresh(id)
+        }
         const restartDeadline = new Date(Date.now() + this.disconnectGraceMs)
         for (const record of records) {
           if (this.disposed) return
@@ -107,6 +113,13 @@ export class OnlineMatchManager {
     const matchId = String(message.matchId || '')
     if (!connection.matchId || connection.matchId !== matchId) {
       throw new OnlineMatchError('match_not_subscribed', 403, '请先订阅当前对局')
+    }
+    if (this.failedVerdicts.has(matchId)) {
+      const interrupted = await this.automaticVerdict(matchId, async () => null)
+      if (interrupted) {
+        await this.broadcast(interrupted)
+        return
+      }
     }
     const actor = connection.actor
     switch (message.type) {
@@ -331,6 +344,25 @@ export class OnlineMatchManager {
     }
   }
 
+  private async automaticVerdict(matchId: string, action: () => Promise<OnlineMatchRecord | null>) {
+    try {
+      if (this.failedVerdicts.has(matchId)) {
+        const interrupted = await this.service.repository.interruptMatch(
+          matchId,
+          'service_failure',
+          'automatic-recovery',
+          '数据库不可用导致裁决失败，排位中止且不计分',
+        )
+        this.failedVerdicts.delete(matchId)
+        if (interrupted) return interrupted
+      }
+      return await action()
+    } catch (error) {
+      if (error instanceof DatabaseUnavailableError) this.failedVerdicts.add(matchId)
+      throw error
+    }
+  }
+
   private scheduleDisconnect(matchId: string, userId: string, deadline: Date) {
     const key = this.playerKey(matchId, userId)
     if (this.disposed) return
@@ -340,10 +372,8 @@ export class OnlineMatchManager {
         this.disconnectTimers.delete(key)
         void this.recovery.submit(`disconnect:${key}`, async () => {
           if (this.playerSockets.has(key)) return
-          const record = await this.service.repository.adjudicateDisconnect(
-            matchId,
-            userId,
-            deadline,
+          const record = await this.automaticVerdict(matchId, () =>
+            this.service.repository.adjudicateDisconnect(matchId, userId, deadline),
           )
           if (record) await this.broadcast(record)
         })
@@ -364,12 +394,14 @@ export class OnlineMatchManager {
       () => {
         this.clockTimers.delete(record.match.id)
         void this.recovery.submit(`clock:${record.match.id}`, async () => {
-          const finished = await this.service.repository.adjudicateClock(
-            record.match.id,
-            deadlineAt,
+          const finished = await this.automaticVerdict(record.match.id, () =>
+            this.service.repository.adjudicateClock(record.match.id, deadlineAt),
           )
           if (finished) {
-            metrics.increment('xiangqi_online_clock_timeouts', { variant: finished.match.variant })
+            if (finished.match.statusReason === 'timeout')
+              metrics.increment('xiangqi_online_clock_timeouts', {
+                variant: finished.match.variant,
+              })
             await this.broadcast(finished)
           }
         })

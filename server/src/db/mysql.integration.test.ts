@@ -171,9 +171,9 @@ test(
   integration,
   async () => {
     await withTestDatabase(async (database) => {
-      assert.deepEqual(await migrate(database), [1, 2, 3, 4, 5, 6, 7])
+      assert.deepEqual(await migrate(database), [1, 2, 3, 4, 5, 6, 7, 8, 9])
       assert.deepEqual(await migrate(database), [])
-      assert.equal((await migrationStatus(database)).currentVersion, 7)
+      assert.equal((await migrationStatus(database)).currentVersion, 9)
 
       const accounts = new MySqlAccountRepository(database)
       const sessions = new MySqlSessionRepository(database)
@@ -1333,8 +1333,8 @@ test('a database at migration 0001 upgrades to the current version', integration
         [first.version, first.name, first.checksum],
       )
     })
-    assert.deepEqual(await migrate(database), [2, 3, 4, 5, 6, 7])
-    assert.equal((await migrationStatus(database)).currentVersion, 7)
+    assert.deepEqual(await migrate(database), [2, 3, 4, 5, 6, 7, 8, 9])
+    assert.equal((await migrationStatus(database)).currentVersion, 9)
   })
 })
 
@@ -1501,6 +1501,447 @@ test(
         await assert.rejects(verifyRestoredDatabase(database), /match_states/)
       } finally {
         manager.dispose()
+      }
+    })
+  },
+)
+
+test(
+  'rated disconnect settlement is atomic and idempotent even before the first move',
+  integration,
+  async () => {
+    await withTestDatabase(async (database) => {
+      await migrate(database)
+      const accounts = new MySqlAccountRepository(database)
+      const users = await Promise.all(
+        [1, 2].map((i) =>
+          accounts.create({
+            emailNormalized: `disconnect-${i}@example.com`,
+            emailDisplay: `disconnect-${i}@example.com`,
+            displayName: `断线棋手${i}`,
+            passwordHash: '$argon2id$placeholder',
+            passwordHashVersion: 1,
+            verificationTokenHash: randomBytes(32),
+            verificationExpiresAt: new Date(Date.now() + 86400000),
+          }),
+        ),
+      )
+      await database.query("UPDATE users SET status='active'")
+      const actors: OnlineActor[] = users.map((u) => ({
+        userId: u.id,
+        sessionId: randomUUID(),
+        ipKey: 'test',
+        capabilities: ['online:play', 'online:watch'],
+      }))
+      const repository = new MySqlOnlineMatchRepository(database)
+      const service = new OnlineMatchService(repository)
+      for (const bothOffline of [false, true]) {
+        const pair = await Promise.all(
+          actors.map((actor) =>
+            service.quickMatch(actor, {
+              variant: 'xiangqi',
+              competitionMode: 'rated',
+              clockPreset: '10m',
+              requestKey: randomUUID(),
+            }),
+          ),
+        )
+        const source = await service.get(actors[0], pair[0].record.match.id)
+        const id = source.match.id
+        const redId = source.participants.find((p) => p.side === 'red')!.userId
+        assert.ok(redId)
+        const deadline = new Date(Date.now() - 100)
+        await repository.setPresence(id, redId, false, deadline)
+        if (bothOffline) {
+          await repository.setPresence(id, users.find((u) => u.id !== redId)!.id, false, deadline)
+        } else {
+          await database.query(
+            "CREATE TRIGGER disconnect_rating_fault BEFORE INSERT ON rating_ledger FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='injected settlement failure'",
+          )
+          await assert.rejects(repository.adjudicateDisconnect(id, redId, deadline))
+          const rollback = await service.get(actors[0], id)
+          assert.equal(rollback.match.phase, 'playing')
+          assert.equal(rollback.match.revision, source.match.revision)
+          assert.deepEqual(await service.ratings(actors[0]), [])
+          await database.query('DROP TRIGGER disconnect_rating_fault')
+        }
+        const results = await Promise.all([
+          repository.adjudicateDisconnect(id, redId, deadline),
+          repository.adjudicateDisconnect(id, redId, deadline),
+        ])
+        assert.equal(results.filter(Boolean).length, 1)
+        const finished = await service.get(actors[0], id)
+        assert.equal(finished.match.statusReason, bothOffline ? 'abandoned' : 'disconnect')
+        assert.equal(finished.match.status, bothOffline ? 'draw' : 'black-wins')
+        for (const actor of actors) {
+          const ratings = await service.ratings(actor)
+          assert.equal(ratings[0].gamesPlayed, 1)
+          if (!bothOffline) assert.equal(ratings[0].rating, actor.userId === redId ? 1480 : 1520)
+        }
+        assert.equal((await verifyRestoredDatabase(database)).ok, true)
+      }
+    })
+  },
+)
+
+test(
+  'matchmaking fairness persists across sessions, clock switches and concurrent cancellation',
+  integration,
+  async () => {
+    await withTestDatabase(async (database) => {
+      await migrate(database)
+      const accounts = new MySqlAccountRepository(database)
+      const users = await Promise.all(
+        [1, 2, 3, 4].map((i) =>
+          accounts.create({
+            emailNormalized: `fair-${i}@example.com`,
+            emailDisplay: `fair-${i}@example.com`,
+            displayName: `公平棋手${i}`,
+            passwordHash: '$argon2id$placeholder',
+            passwordHashVersion: 1,
+            verificationTokenHash: randomBytes(32),
+            verificationExpiresAt: new Date(Date.now() + 86400000),
+          }),
+        ),
+      )
+      await database.query("UPDATE users SET status='active'")
+      const actors: OnlineActor[] = users.map((u) => ({
+        userId: u.id,
+        sessionId: randomUUID(),
+        ipKey: 'test',
+        capabilities: ['online:play', 'online:watch'],
+      }))
+      let service = new OnlineMatchService(new MySqlOnlineMatchRepository(database))
+      const quick = (index: number, overrides: Record<string, unknown> = {}) =>
+        service.quickMatch(
+          { ...actors[index], sessionId: randomUUID() },
+          {
+            variant: 'xiangqi',
+            gomokuRule: 'freestyle',
+            competitionMode: 'rated',
+            clockPreset: '10m',
+            requestKey: randomUUID(),
+            ...overrides,
+          },
+        )
+      const recentIds: string[] = []
+      for (const clockPreset of ['10m', '15m-10s', '30m']) {
+        const pair = await Promise.all([quick(0, { clockPreset }), quick(1, { clockPreset })])
+        assert.equal(pair[0].record.match.id, pair[1].record.match.id)
+        recentIds.push(pair[0].record.match.id)
+      }
+      // Even uncompleted games count, preventing simultaneous games bypassing a settlement-only cap.
+      service = new OnlineMatchService(new MySqlOnlineMatchRepository(database))
+      const blocked = await Promise.all([quick(0), quick(1)])
+      assert.notEqual(blocked[0].record.match.id, blocked[1].record.match.id)
+      assert.equal(blocked[0].record.match.phase, 'waiting')
+      assert.equal(blocked[1].record.match.phase, 'waiting')
+      const third = await quick(2)
+      assert.ok(blocked.some((r) => r.record.match.id === third.record.match.id))
+      const remaining = blocked.findIndex((r) => r.record.match.id !== third.record.match.id)
+      await service.cancelMatchmaking(actors[remaining])
+      // Pool and casual boundaries remain independent.
+      for (const overrides of [
+        { competitionMode: 'casual' },
+        { variant: 'jieqi' },
+        { variant: 'gomoku', gomokuRule: 'renju' },
+      ]) {
+        const pair = await Promise.all([quick(0, overrides), quick(1, overrides)])
+        assert.equal(pair[0].record.match.id, pair[1].record.match.id)
+      }
+      await database.query('UPDATE matches SET started_at = ? WHERE id IN (?, ?, ?)', [
+        new Date(Date.now() - 86400001),
+        ...recentIds,
+      ])
+      const renewed = await Promise.all([quick(0), quick(1)])
+      assert.equal(renewed[0].record.match.id, renewed[1].record.match.id)
+
+      // Switching conditions or retrying from another tab keeps the existing sole queue entry.
+      const queued = await quick(3)
+      const switched = await Promise.all([
+        quick(3, { variant: 'jieqi' }),
+        quick(3, { competitionMode: 'casual' }),
+      ])
+      assert.ok(switched.every((r) => r.record.match.id === queued.record.match.id))
+      const cancelResults = await Promise.all([
+        service.cancelMatchmaking(actors[3]),
+        service.cancelMatchmaking(actors[3]),
+      ])
+      assert.equal(cancelResults.filter((r) => r.cancelled).length, 1)
+      for (let i = 1; i < 5; i++) {
+        await quick(3, { variant: i % 2 ? 'gomoku' : 'jieqi' })
+        assert.equal((await service.cancelMatchmaking(actors[3])).cancelled, true)
+      }
+      assert.equal((await service.cancelMatchmaking(actors[3])).cancelled, false)
+      const limit = await database.query<{ cancellation_count: number }>(
+        'SELECT cancellation_count FROM matchmaking_cancellation_limits WHERE user_id = ?',
+        [actors[3].userId],
+      )
+      assert.equal(limit.rows[0].cancellation_count, 5)
+      service = new OnlineMatchService(new MySqlOnlineMatchRepository(database))
+      for (const overrides of [{}, { variant: 'gomoku' }, { competitionMode: 'casual' }]) {
+        await assert.rejects(
+          service.safe(() => quick(3, overrides)),
+          (error: unknown) =>
+            error instanceof Error &&
+            'code' in error &&
+            error.code === 'matchmaking_cooldown' &&
+            'retryAfterSeconds' in error &&
+            Number(error.retryAfterSeconds) > 0,
+        )
+      }
+      await database.query(
+        'UPDATE matchmaking_cancellation_limits SET window_started_at = ?, blocked_until = ? WHERE user_id = ?',
+        [new Date(Date.now() - 1200000), new Date(Date.now() - 1), actors[3].userId],
+      )
+      const requestKey = randomUUID()
+      const resumed = await quick(3, { requestKey })
+      assert.equal((await quick(3, { requestKey })).record.match.id, resumed.record.match.id)
+      await service.cancelMatchmaking(actors[3])
+      const reset = await database.query<{ cancellation_count: number }>(
+        'SELECT cancellation_count FROM matchmaking_cancellation_limits WHERE user_id = ?',
+        [actors[3].userId],
+      )
+      assert.equal(reset.rows[0].cancellation_count, 1)
+      const raceQueue = await quick(3)
+      const [cancelRace, joinRace] = await Promise.all([
+        service.cancelMatchmaking(actors[3]),
+        quick(0),
+      ])
+      if (cancelRace.cancelled) {
+        assert.notEqual(joinRace.record.match.id, raceQueue.record.match.id)
+        assert.equal(joinRace.record.match.phase, 'waiting')
+      } else {
+        assert.equal(joinRace.record.match.id, raceQueue.record.match.id)
+        assert.equal(joinRace.record.match.phase, 'playing')
+        assert.equal(
+          (await service.get(actors[3], raceQueue.record.match.id)).participants.filter(
+            (p) => p.side,
+          ).length,
+          2,
+        )
+      }
+      const finalCount = await database.query<{ cancellation_count: number }>(
+        'SELECT cancellation_count FROM matchmaking_cancellation_limits WHERE user_id = ?',
+        [actors[3].userId],
+      )
+      assert.equal(finalCount.rows[0].cancellation_count, cancelRace.cancelled ? 2 : 1)
+    })
+  },
+)
+
+test(
+  'B completion: authorized rating pages, invalid eligibility, interruption audit and account engine guard',
+  integration,
+  async () => {
+    await withTestDatabase(async (database) => {
+      await migrate(database)
+      const accounts = new MySqlAccountRepository(database)
+      const users = await Promise.all(
+        [1, 2, 3].map((i) =>
+          accounts.create({
+            emailNormalized: `b-complete-${i}@example.com`,
+            emailDisplay: `b-complete-${i}@example.com`,
+            displayName: `排位棋手${i}`,
+            passwordHash: '$argon2id$placeholder',
+            passwordHashVersion: 1,
+            verificationTokenHash: randomBytes(32),
+            verificationExpiresAt: new Date(Date.now() + 86400000),
+          }),
+        ),
+      )
+      await database.query("UPDATE users SET status = 'active'")
+      const actors = users.map((u) => ({
+        kind: 'user' as const,
+        userId: u.id,
+        sessionId: randomUUID(),
+        ipKey: 'test',
+        capabilities: ['online:play', 'online:watch'],
+        requestId: 'test',
+        authEpoch: 1,
+        expiresAt: new Date(Date.now() + 60000),
+        status: 'active' as const,
+      }))
+      const repository = new MySqlOnlineMatchRepository(database)
+      const service = new OnlineMatchService(repository)
+      const pair = async (variant = 'xiangqi', competitionMode = 'rated') => {
+        const first = await service.quickMatch(actors[0], {
+          variant,
+          competitionMode,
+          clockPreset: '10m',
+          gomokuRule: 'freestyle',
+          requestKey: randomUUID(),
+        })
+        await service.quickMatch(actors[1], {
+          variant,
+          competitionMode,
+          clockPreset: '10m',
+          gomokuRule: 'freestyle',
+          requestKey: randomUUID(),
+        })
+        return service.get(actors[0], first.record.match.id)
+      }
+      assert.equal(await repository.hasActiveRatedMatch(users[0].id), false)
+      const played = await pair()
+      assert.equal(await repository.hasActiveRatedMatch(users[0].id), true)
+      assert.equal(await repository.hasActiveRatedMatch(users[1].id), true)
+      assert.equal(await repository.hasActiveRatedMatch(users[2].id), false)
+      assert.equal((await service.ratingDetail(actors[0], played.match.id)).state, 'pending')
+      await service.resign(actors[0], {
+        matchId: played.match.id,
+        expectedRevision: played.match.revision,
+        commandId: randomUUID(),
+      })
+      assert.equal(await repository.hasActiveRatedMatch(users[0].id), false)
+      assert.equal((await service.ratingDetail(actors[0], played.match.id)).delta, -20)
+      await repository.voidRatingSettlement(played.match.id, '测试服务故障补偿')
+      const detail = await service.ratingDetail(actors[0], played.match.id)
+      assert.equal(detail.state, 'voided')
+      assert.equal(detail.before, 1500)
+      assert.equal(detail.after, 1480)
+      assert.equal(detail.voidReason, '测试服务故障补偿')
+      await assert.rejects(service.ratingDetail(actors[2], played.match.id))
+      // Identical microsecond timestamps must still paginate without duplicates or omissions.
+      await database.query('UPDATE rating_ledger SET created_at = ?', [
+        new Date('2026-09-01T00:00:00Z'),
+      ])
+      const page1 = await service.ratingLedger(actors[0], { limit: 1 })
+      assert.equal(page1.entries.length, 1)
+      assert.ok(page1.nextCursor)
+      const page2 = await service.ratingLedger(actors[0], { limit: 1, cursor: page1.nextCursor })
+      assert.equal(page2.entries.length, 1)
+      assert.notEqual(page1.entries[0].id, page2.entries[0].id)
+      assert.equal(page2.nextCursor, undefined)
+      assert.deepEqual(
+        new Set([...page1.entries, ...page2.entries].map((e) => e.type)),
+        new Set(['settlement', 'void']),
+      )
+      assert.ok([...page1.entries, ...page2.entries].every((e) => e.voided))
+      await assert.rejects(service.ratingLedger(actors[2], { cursor: page1.nextCursor }))
+      assert.deepEqual((await service.ratingLedger(actors[2], {})).entries, [])
+      await assert.rejects(service.ratingLedger(actors[0], { limit: 101 }))
+
+      const adminGame = await pair()
+      await service.propose(actors[0], {
+        matchId: adminGame.match.id,
+        expectedRevision: adminGame.match.revision,
+        commandId: randomUUID(),
+        kind: 'draw',
+      })
+      const stopped = await repository.interruptMatch(
+        adminGame.match.id,
+        'admin_abort',
+        'operator-test',
+        '管理员中止测试',
+      )
+      assert.equal(stopped!.match.statusReason, 'abandoned')
+      assert.equal(stopped!.proposal, null)
+      assert.equal(
+        await repository.interruptMatch(adminGame.match.id, 'admin_abort', 'operator-test', '重复'),
+        null,
+      )
+      assert.equal(
+        (await service.ratingDetail(actors[0], adminGame.match.id)).reason,
+        'admin_abort',
+      )
+      const restarted = await pair()
+      const casual = await pair('xiangqi', 'casual')
+      await repository.interruptRatedAfterRestart()
+      await repository.interruptRatedAfterRestart()
+      assert.equal((await service.get(actors[0], restarted.match.id)).match.phase, 'finished')
+      assert.equal(
+        (await service.ratingDetail(actors[0], restarted.match.id)).reason,
+        'service_restart',
+      )
+      assert.equal((await service.get(actors[0], casual.match.id)).match.phase, 'playing')
+      assert.equal((await service.ratings(actors[0]))[0].gamesPlayed, 0)
+      const audit = await database.query<{ operator_name: string }>(
+        'SELECT operator_name FROM match_interruptions WHERE match_id = ?',
+        [adminGame.match.id],
+      )
+      assert.equal(audit.rows[0].operator_name, 'operator-test')
+      const invalid = await pair('jieqi')
+      await database.query(
+        'UPDATE match_participants SET user_id = NULL WHERE match_id = ? AND user_id = ?',
+        [invalid.match.id, users[1].id],
+      )
+      await service.resign(actors[0], {
+        matchId: invalid.match.id,
+        expectedRevision: invalid.match.revision,
+        commandId: randomUUID(),
+      })
+      assert.equal(
+        (await service.ratingDetail(actors[0], invalid.match.id)).reason,
+        'ineligible_or_legacy',
+      )
+
+      const failedService = await pair('gomoku')
+      await repository.interruptMatch(
+        failedService.match.id,
+        'service_failure',
+        'automatic-recovery',
+        '数据库中断',
+      )
+      assert.equal(
+        (await service.ratingDetail(actors[0], failedService.match.id)).reason,
+        'service_failure',
+      )
+      const race = await pair('gomoku')
+      const deadline = new Date(Date.now() - 100).toISOString()
+      await database.query(
+        "UPDATE match_states SET referee_state = JSON_SET(referee_state, '$.clock.deadlineAt', ?) WHERE match_id = ?",
+        [deadline, race.match.id],
+      )
+      const raced = await Promise.all([
+        repository.interruptMatch(race.match.id, 'admin_abort', 'operator-test', '并发中止'),
+        repository.adjudicateClock(race.match.id, deadline),
+      ])
+      assert.equal(raced.filter(Boolean).length, 1)
+      const raceDetail = await service.ratingDetail(actors[0], race.match.id)
+      assert.equal(raceDetail.state, raced[0] ? 'unrated' : 'settled')
+
+      const { createOnlineRouters } = await import('../online/routes.js')
+      const app = express()
+      app.use((request, response, next) => {
+        response.locals.testActor = actors[Number(request.headers['x-test-user'] || 0)]
+        next()
+      })
+      const current = (response: express.Response) =>
+        response.locals.testActor as (typeof actors)[number]
+      const routers = createOnlineRouters(service, {
+        currentActor: current,
+        requireUser: current,
+        requireCsrf: (_r, response) => current(response),
+      })
+      app.use('/api/me/ratings', routers.meRatingsRouter)
+      app.use('/api/online', routers.router)
+      app.use(routers.errorMiddleware)
+      const http = createServer(app)
+      await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve))
+      const base = `http://127.0.0.1:${(http.address() as import('node:net').AddressInfo).port}`
+      try {
+        const mine = await fetch(`${base}/api/me/ratings/matches/${played.match.id}`)
+        assert.equal(mine.status, 200)
+        assert.equal((await mine.json()).state, 'voided')
+        const denied = await fetch(`${base}/api/me/ratings/matches/${played.match.id}`, {
+          headers: { 'x-test-user': '2' },
+        })
+        assert.equal(denied.status, 404)
+        const malicious = await fetch(`${base}/api/me/ratings/ledger?userId=${users[0].id}`, {
+          headers: { 'x-test-user': '2' },
+        })
+        assert.deepEqual((await malicious.json()).entries, [])
+        assert.equal((await fetch(`${base}/api/me/ratings/ledger?limit=0`)).status, 400)
+        assert.equal(
+          (
+            await fetch(`${base}/api/online/matches/${played.match.id}/interrupt`, {
+              method: 'POST',
+            })
+          ).status,
+          404,
+        )
+      } finally {
+        await new Promise<void>((resolve) => http.close(() => resolve()))
       }
     })
   },

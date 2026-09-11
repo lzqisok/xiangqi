@@ -111,3 +111,14 @@ export function createOnlineRematch(matchId: string) {
     method: 'POST',
   })
 }
+
+export function getMatchRating(matchId: string) {
+  return accountRequest<import('./types').MatchRatingDetail>(
+    `/api/me/ratings/matches/${encodeURIComponent(matchId)}`,
+  )
+}
+export function listRatingLedger(cursor?: string) {
+  return accountRequest<{ entries: import('./types').RatingLedgerEntry[]; nextCursor?: string }>(
+    `/api/me/ratings/ledger?limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+  )
+}
